@@ -35,7 +35,7 @@ Oracle ──Debezium source(LogMiner)──▶ Kafka ──┬─▶ Debezium J
 
 | 모듈 | 내용 | 비고 |
 |---|---|---|
-| `deploy/` | docker-compose: Oracle XE(SRC/TGT 스키마), Kafka(KRaft 단일 노드), Kafka Connect(커넥터 플러그인 포함), MinIO, PostgreSQL(메타데이터 + Iceberg JDBC 카탈로그) | smoke test 스크립트 포함 |
+| `deploy/` | **베어메탈 기동 스크립트** (2026-07-23 결정: docker-compose는 나중에): Kafka(KRaft 단일 노드), Kafka Connect(커넥터 플러그인 포함), MinIO, PostgreSQL(메타데이터 + Iceberg JDBC 카탈로그). 바이너리·데이터는 `~/deltazium-runtime/`, Oracle은 미연결(추후 결정) | smoke test 스크립트 포함. 상세: `deploy/README.md` |
 | `connectors/` | 커넥터 설정 JSON 템플릿 4종: source / jdbc-sink / iceberg-sink / recovery-sink | backend가 이 템플릿을 렌더링해 Connect REST로 배포 |
 | `backend/` | Spring Boot 3 제어면: Connect REST 프록시, 테이블 등록(사전 점검), DDL 승인 워크플로, 복구 잡 트리거, 상태·lag 조회 | 메타데이터는 PostgreSQL |
 | `recovery-job/` | 플레인 Java: Iceberg scan(SCN 범위) → envelope 재조립 → 복구 토픽 발행 | Spring 의존 없음. backend가 프로세스로 기동 |
@@ -46,8 +46,9 @@ Oracle ──Debezium source(LogMiner)──▶ Kafka ──┬─▶ Debezium J
 ## 빌드·테스트
 
 ```
-docker compose -f deploy/docker-compose.yml up -d   # 인프라 기동
+./deploy/start-infra.sh                             # 인프라 기동 (pg→minio→kafka→connect)
 ./deploy/smoke-test.sh                              # 전 컴포넌트 헬스체크
+./deploy/stop-infra.sh                              # 정지 (데이터 보존)
 ./gradlew build                                     # backend + recovery-job
 ./gradlew :backend:test
 cd ui && npm run dev                                # UI 개발 서버
