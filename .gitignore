@@ -1,0 +1,14 @@
+# Build
+build/
+.gradle/
+node_modules/
+dist/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 로컬 상태
+*.log
+.env
