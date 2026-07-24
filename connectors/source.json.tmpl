@@ -1,0 +1,25 @@
+{
+  "name": "{{connector_name}}",
+  "config": {
+    "connector.class": "io.debezium.connector.oracle.OracleConnector",
+    "tasks.max": "1",
+
+    "database.hostname": "{{oracle_host}}",
+    "database.port": "{{oracle_port}}",
+    "database.user": "{{oracle_user}}",
+    "database.password": "{{oracle_password}}",
+    "database.dbname": "{{oracle_dbname}}",
+
+    "topic.prefix": "{{topic_prefix}}",
+    "table.include.list": "{{table_include_list}}",
+
+    "snapshot.mode": "initial",
+    "log.mining.strategy": "redo_log_catalog",
+
+    "provide.transaction.metadata": "true",
+    "include.schema.changes": "true",
+
+    "schema.history.internal.kafka.bootstrap.servers": "{{kafka_bootstrap}}",
+    "schema.history.internal.kafka.topic": "{{topic_prefix}}-schema-history"
+  }
+}

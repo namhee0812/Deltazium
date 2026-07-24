@@ -1,0 +1,20 @@
+{
+  "name": "{{connector_name}}",
+  "config": {
+    "connector.class": "io.debezium.connector.jdbc.JdbcSinkConnector",
+    "tasks.max": "1",
+
+    "topics": "{{recovery_topics}}",
+
+    "connection.url": "{{target_jdbc_url}}",
+    "connection.username": "{{target_user}}",
+    "connection.password": "{{target_password}}",
+
+    "insert.mode": "upsert",
+    "delete.enabled": "true",
+    "primary.key.mode": "record_key",
+    "schema.evolution": "none",
+
+    "collection.name.format": "{{collection_name_format}}"
+  }
+}

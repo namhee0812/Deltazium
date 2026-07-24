@@ -1,0 +1,27 @@
+{
+  "name": "{{connector_name}}",
+  "config": {
+    "connector.class": "org.apache.iceberg.connect.IcebergSinkConnector",
+    "tasks.max": "1",
+
+    "topics": "{{topics}}",
+
+    "iceberg.catalog.catalog-impl": "org.apache.iceberg.jdbc.JdbcCatalog",
+    "iceberg.catalog.uri": "{{catalog_jdbc_url}}",
+    "iceberg.catalog.jdbc.user": "{{catalog_jdbc_user}}",
+    "iceberg.catalog.jdbc.password": "{{catalog_jdbc_password}}",
+    "iceberg.catalog.warehouse": "{{warehouse}}",
+
+    "iceberg.catalog.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
+    "iceberg.catalog.s3.endpoint": "{{s3_endpoint}}",
+    "iceberg.catalog.s3.path-style-access": "true",
+    "iceberg.catalog.s3.access-key-id": "{{s3_access_key}}",
+    "iceberg.catalog.s3.secret-access-key": "{{s3_secret_key}}",
+    "iceberg.catalog.client.region": "us-east-1",
+
+    "iceberg.tables": "{{iceberg_tables}}",
+    "iceberg.tables.auto-create-enabled": "false",
+
+    "iceberg.control.commit.interval-ms": "60000"
+  }
+}
