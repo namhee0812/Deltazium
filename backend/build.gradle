@@ -1,0 +1,11 @@
+plugins {
+    id 'org.springframework.boot' version '3.5.16'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    // 메타데이터 DB(PostgreSQL) 연동은 마일스톤 4(테이블 등록·DDL 승인)에서 추가
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}

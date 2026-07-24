@@ -1,0 +1,9 @@
+server:
+  port: 8090   # 8080은 이 서버의 기존 서비스가 사용 중
+
+deltazium:
+  connect:
+    base-url: http://localhost:8083
+  connectors:
+    # 커넥터 템플릿 디렉터리 (repo의 connectors/). 상대 경로는 실행 위치 기준.
+    template-dir: ../connectors

@@ -1,0 +1,7 @@
+// 플레인 Java — Spring 의존 금지 (CLAUDE.md). backend가 프로세스로 기동한다.
+dependencies {
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.4'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
