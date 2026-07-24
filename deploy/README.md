@@ -25,10 +25,16 @@ Connect 플러그인 (`~/deltazium-runtime/connect-plugins/`):
 ## 사용법
 
 ```bash
-./deploy/start-infra.sh   # 멱등 — 떠 있는 컴포넌트는 건너뜀
-./deploy/smoke-test.sh    # 전 컴포넌트 + Connect 플러그인 3종 확인
-./deploy/stop-infra.sh    # 정지 (데이터 보존)
+./deploy/install-runtime.sh  # 최초 1회: 바이너리 다운로드 + 플러그인 설치 (멱등)
+./deploy/start-infra.sh      # 멱등 — 떠 있는 컴포넌트는 건너뜀
+./deploy/smoke-test.sh       # 전 컴포넌트 + Connect 플러그인 3종 확인
+./deploy/stop-infra.sh       # 정지 (데이터 보존)
 ```
+
+주의사항 (실험으로 확인, docs/experiments/2026-07-24-iceberg-sink-schema.md):
+- Iceberg 배포판에 JDBC 드라이버 미포함 → install-runtime.sh가 plugin lib에 PG 드라이버 추가
+- Connect worker에 `consumer.auto.offset.reset=earliest` 설정 — 커넥터 생성 전 발행분 유실 방지
+- iceberg-sink는 idle 토픽에서 마지막 커밋이 다음 레코드 유입까지 지연될 수 있음
 
 설정 변경은 `deploy/kafka/server.properties`, `deploy/connect/connect-distributed.properties` 템플릿을 수정 — start-infra.sh가 `${DZ_*}` 변수를 치환해 `~/deltazium-runtime/conf/`에 렌더링한다. 포트·경로는 전부 `deploy/env.sh`.
 
