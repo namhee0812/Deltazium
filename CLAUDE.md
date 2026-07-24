@@ -54,8 +54,8 @@ Oracle ──Debezium source(LogMiner)──▶ Kafka ──┬─▶ Debezium J
 cd ui && npm run dev                                # UI 개발 서버
 ```
 
-- **커밋은 Claude가 수행한다** (이 리포 한정 — 사용자 레벨 "커밋 금지" 규칙보다 우선).
-  단, **관련 모듈 테스트 통과 후에만** 커밋한다. `git push`는 하지 않는다.
+- **커밋·push는 Claude가 수행한다** (이 리포 한정 — 사용자 레벨 규칙보다 우선. 2026-07-24 사용자 지시).
+  단, **관련 모듈 테스트 통과 후에만** 커밋하고, push 단위는 의미 있는 작업 묶음별로 Claude가 정한다.
   커밋 메시지: prefix(`feat:` `fix:` `docs:` `refactor:` `test:` `build:`) + 한국어 본문, `Co-Authored-By` 없음.
 - recovery-job은 envelope 재조립의 왕복 테스트 필수 (원본 envelope → Iceberg 레코드 → 재조립 envelope 동등성).
 
