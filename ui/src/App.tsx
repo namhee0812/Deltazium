@@ -1,110 +1,91 @@
 import { useEffect, useState } from 'react'
+import { api } from '@/lib/api'
 import { ConnectionsPanel } from '@/features/connections/ConnectionsPanel'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { DdlPanel } from '@/features/ddl/DdlPanel'
+import { TablesPanel } from '@/features/tables/TablesPanel'
+import { TopologyPanel } from '@/features/topology/TopologyPanel'
+
+type View = 'topology' | 'tables' | 'ddl' | 'connections'
+
+const VIEWS: [View, string][] = [
+  ['topology', '토폴로지'],
+  ['tables', '테이블 모니터링'],
+  ['ddl', 'DDL 이력'],
+  ['connections', 'DB 연결'],
+]
 
 type ConnectorStates = Record<string, { status?: { connector?: { state?: string } } }>
 
-/**
- * 셸 + 탭 구성. 토폴로지 캔버스·테이블 그리드·DDL 타임라인(ui-reference 기준)은
- * backend API가 갖춰지는 대로 마일스톤 7에서 구현한다.
- */
 function App() {
-  const [connectors, setConnectors] = useState<ConnectorStates | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [view, setView] = useState<View>('topology')
+  const [summary, setSummary] = useState<{ running: number; failed: number } | null>(null)
 
-  const load = () => {
-    setError(null)
-    fetch('/api/connectors')
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return r.json()
-      })
-      .then(setConnectors)
-      .catch((e: Error) => setError(e.message))
-  }
-
-  useEffect(load, [])
+  useEffect(() => {
+    const load = () =>
+      api<ConnectorStates>('/api/connectors')
+        .then((cs) => {
+          const states = Object.values(cs).map((c) => c.status?.connector?.state)
+          setSummary({
+            running: states.filter((s) => s === 'RUNNING').length,
+            failed: states.filter((s) => s !== 'RUNNING').length,
+          })
+        })
+        .catch(() => setSummary(null))
+    load()
+    const id = setInterval(load, 5000)
+    return () => clearInterval(id)
+  }, [])
 
   return (
-    <div className="min-h-screen bg-background p-8">
-      <div className="mx-auto max-w-4xl space-y-6">
-        <header>
-          <h1 className="text-2xl font-semibold tracking-tight">Deltazium</h1>
-          <p className="text-sm text-muted-foreground">
-            Debezium + Kafka CDC 파이프라인 제어면
-          </p>
-        </header>
+    <div className="flex h-screen flex-col bg-background text-foreground">
+      <header className="flex items-center gap-5 border-b border-border bg-card px-5 py-2.5">
+        <div className="font-semibold tracking-tight">
+          Delta<span className="text-primary">zium</span>{' '}
+          <span className="font-normal text-muted-foreground">Console</span>
+        </div>
+        <nav className="flex gap-4">
+          {VIEWS.map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setView(k)}
+              className={`border-b-2 px-0.5 py-1 text-[13px] transition-colors ${
+                view === k
+                  ? 'border-primary font-semibold text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+        <div className="ml-auto flex gap-4 font-mono text-xs text-muted-foreground">
+          {summary === null ? (
+            <span className="text-crit">● backend 연결 안 됨</span>
+          ) : (
+            <>
+              <span>
+                <span className="text-ok">●</span> {summary.running} running
+              </span>
+              {summary.failed > 0 && (
+                <span>
+                  <span className="text-crit">●</span> {summary.failed} not running
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      </header>
 
-        <Tabs defaultValue="connections">
-          <TabsList>
-            <TabsTrigger value="connections">DB 연결</TabsTrigger>
-            <TabsTrigger value="connectors">커넥터</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="connections">
-            <Card>
-              <CardHeader>
-                <CardTitle>DB 연결 저장소</CardTitle>
-                <CardDescription>현재 Oracle 지원 — 종류는 점차 확장</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ConnectionsPanel />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="connectors">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  커넥터 상태
-                  <Button variant="outline" size="sm" onClick={load}>
-                    새로고침
-                  </Button>
-                </CardTitle>
-                <CardDescription>backend(/api/connectors) 경유 Connect 조회</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {error && (
-                  <p className="text-sm text-destructive">
-                    backend에 연결할 수 없습니다: {error}
-                  </p>
-                )}
-                {!error && connectors && Object.keys(connectors).length === 0 && (
-                  <p className="text-sm text-muted-foreground">배포된 커넥터가 없습니다.</p>
-                )}
-                {!error && connectors && (
-                  <ul className="space-y-2">
-                    {Object.entries(connectors).map(([name, info]) => (
-                      <li key={name} className="flex items-center gap-2">
-                        <span className="font-mono text-sm">{name}</span>
-                        <Badge
-                          variant={
-                            info.status?.connector?.state === 'RUNNING'
-                              ? 'default'
-                              : 'destructive'
-                          }
-                        >
-                          {info.status?.connector?.state ?? 'UNKNOWN'}
-                        </Badge>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-      </div>
+      <main className="min-h-0 flex-1">
+        {view === 'topology' && <TopologyPanel />}
+        {view === 'tables' && <TablesPanel />}
+        {view === 'ddl' && <DdlPanel />}
+        {view === 'connections' && (
+          <div className="mx-auto max-w-4xl p-6">
+            <ConnectionsPanel />
+          </div>
+        )}
+      </main>
     </div>
   )
 }
