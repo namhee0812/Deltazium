@@ -1,0 +1,16 @@
+spring:
+  datasource:
+    # 테스트는 H2 PostgreSQL 모드 — 런타임 PG(5433) 기동 여부와 무관하게 빌드 가능해야 한다
+    url: jdbc:h2:mem:deltazium-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+  sql:
+    init:
+      mode: always
+
+# 테스트 리소스의 application.yml은 메인 것을 대체하므로 필수 커스텀 키를 함께 정의한다
+deltazium:
+  connect:
+    base-url: http://localhost:8083
+  connectors:
+    template-dir: ../connectors

@@ -1,6 +1,15 @@
 server:
   port: 8090   # 8080은 이 서버의 기존 서비스가 사용 중
 
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5433/deltazium
+    username: deltazium
+    password: ""
+  sql:
+    init:
+      mode: always   # schema.sql은 IF NOT EXISTS라 재기동 안전
+
 deltazium:
   connect:
     base-url: http://localhost:8083

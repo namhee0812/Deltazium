@@ -5,7 +5,11 @@ plugins {
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
-    // 메타데이터 DB(PostgreSQL) 연동은 마일스톤 4(테이블 등록·DDL 승인)에서 추가
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    runtimeOnly 'org.postgresql:postgresql'
+    // Oracle 연결 테스트용 (Debezium 플러그인과 동일 계열 드라이버)
+    implementation 'com.oracle.database.jdbc:ojdbc11:23.26.2.0.0'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'com.h2database:h2:2.4.240'
 }
