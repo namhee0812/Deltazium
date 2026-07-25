@@ -28,7 +28,8 @@
    **before를 버려서** 5.1의 무손실 재조립 불변식을 깬다. 커스텀 SMT는 절대 규칙 위반.
    → 마일스톤 3에서 스키마 검증 테스트를 먼저 만들고, envelope-as-is 저장(source struct 유지)으로
    5.1을 개정할지 사용자와 논의 필요. (재조립 관점에선 envelope-as-is가 오히려 무손실에 유리)
-2. **jdbc-sink 토픽→타깃 테이블 매핑.** 토픽명 `<prefix>.<schema>.<table>`을 타깃 `TGT.<table>`로
-   보내는 `collection.name.format`/RegexRouter 조합은 Oracle 스키마 한정자 처리 방식을
-   실 Oracle 배선에서 확인 후 고정한다.
+2. ~~jdbc-sink 토픽→타깃 테이블 매핑~~ **확정(2026-07-25)**: RegexRouter로 토픽명에서
+   `<prefix>.<schema>.` 접두를 제거해 테이블명만 남기고, apply는 **TARGET 연결 계정의
+   기본 스키마**에 수행한다 (`collection.name.format=${topic}`). 스키마 한정자 문제 회피 —
+   타깃 스키마 = TARGET 접속 계정 스키마라는 규약. 실 Oracle 배선에서 최종 검증 예정.
 3. source의 `database.pdb.name`: 대상 Oracle이 CDB/PDB 구성일 때만 추가.

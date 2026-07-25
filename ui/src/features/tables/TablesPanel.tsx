@@ -9,10 +9,18 @@ import {
 import { Spark } from '@/components/Spark'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { api } from '@/lib/api'
 import { genMetrics, mockTables, tickMetrics } from '@/lib/mock'
 import type { CdcTable, TableMetrics } from '@/lib/mock'
 
-/* 테이블 모니터링 그리드 (ui-reference v2·v3) — 등록 API 전까지 mock 데이터 */
+/* 테이블 모니터링 그리드 (ui-reference v2·v3).
+   등록 테이블은 실데이터(/api/registrations), 메트릭(lag·DML 등)은 수집 기능 전까지 mock */
+
+interface RegisteredTable {
+  id: number
+  schemaName: string
+  tableName: string
+}
 
 const COLOR = { ok: '#56D89C', warn: '#F5B453', crit: '#F0647A', accent: '#53C8E8' }
 const sColor = (s: CdcTable['status']) => COLOR[s]
@@ -25,22 +33,45 @@ const suppLogBadge: Record<CdcTable['suppLog'], string> = {
 
 const columnHelper = createColumnHelper<CdcTable>()
 
-export function TablesPanel() {
+export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
+  const [registered, setRegistered] = useState<CdcTable[] | null>(null)
   const [metrics, setMetrics] = useState<Record<number, TableMetrics>>({})
   const [selectedId, setSelectedId] = useState<number>(4)
   const [globalFilter, setGlobalFilter] = useState('')
 
   useEffect(() => {
-    setMetrics(Object.fromEntries(mockTables.map((t) => [t.id, genMetrics(t)])))
+    api<RegisteredTable[]>('/api/registrations')
+      .then((rows) =>
+        setRegistered(
+          rows.map((r) => ({
+            id: r.id,
+            schema: r.schemaName,
+            name: r.tableName,
+            targets: ['Oracle TGT'],
+            suppLog: 'full' as const,
+            status: 'ok' as const,
+          })),
+        ),
+      )
+      .catch(() => setRegistered(null))
+  }, [refreshKey])
+
+  // 등록 테이블이 있으면 실데이터, 없으면 mock 시드
+  const rows = registered && registered.length > 0 ? registered : mockTables
+  const isMockRows = !(registered && registered.length > 0)
+
+  useEffect(() => {
+    setMetrics(Object.fromEntries(rows.map((t) => [t.id, genMetrics(t)])))
     const id = setInterval(() => {
       setMetrics((m) => {
         const next: Record<number, TableMetrics> = {}
-        for (const t of mockTables) next[t.id] = m[t.id] ? tickMetrics(t, m[t.id]) : genMetrics(t)
+        for (const t of rows) next[t.id] = m[t.id] ? tickMetrics(t, m[t.id]) : genMetrics(t)
         return next
       })
     }, 1800)
     return () => clearInterval(id)
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registered])
 
   const columns = useMemo(
     () => [
@@ -134,7 +165,7 @@ export function TablesPanel() {
   )
 
   const table = useReactTable({
-    data: mockTables,
+    data: rows,
     columns,
     state: { globalFilter },
     onGlobalFilterChange: setGlobalFilter,
@@ -144,7 +175,7 @@ export function TablesPanel() {
       `${row.original.schema}.${row.original.name}`.toLowerCase().includes(value.toLowerCase()),
   })
 
-  const sel = mockTables.find((t) => t.id === selectedId)
+  const sel = rows.find((t) => t.id === selectedId)
   const selM = metrics[selectedId]
 
   return (
@@ -157,7 +188,9 @@ export function TablesPanel() {
             placeholder="스키마.테이블 검색"
             className="w-56"
           />
-          <Badge variant="outline" className="text-warn">mock 데이터</Badge>
+          <Badge variant="outline" className="text-warn">
+            {isMockRows ? 'mock 데이터' : '메트릭 mock (수집 기능 전)'}
+          </Badge>
           <span className="ml-auto font-mono text-[11px] text-muted-foreground">
             {table.getRowModel().rows.length} tables
           </span>

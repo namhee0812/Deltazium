@@ -16,3 +16,7 @@ deltazium:
   connectors:
     # 커넥터 템플릿 디렉터리 (repo의 connectors/). 상대 경로는 실행 위치 기준.
     template-dir: ../connectors
+  kafka:
+    bootstrap: localhost:9092
+  # Debezium topic.prefix — 토픽명은 <prefix>.<schema>.<table>
+  topic-prefix: dz

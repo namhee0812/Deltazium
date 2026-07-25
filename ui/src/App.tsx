@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { ConnectionsPanel } from '@/features/connections/ConnectionsPanel'
 import { DdlPanel } from '@/features/ddl/DdlPanel'
+import { RegistrationWizard } from '@/features/registration/RegistrationWizard'
 import { TablesPanel } from '@/features/tables/TablesPanel'
 import { TopologyPanel } from '@/features/topology/TopologyPanel'
+import { Button } from '@/components/ui/button'
 
 type View = 'topology' | 'tables' | 'ddl' | 'connections'
 
@@ -19,6 +21,8 @@ type ConnectorStates = Record<string, { status?: { connector?: { state?: string 
 function App() {
   const [view, setView] = useState<View>('topology')
   const [summary, setSummary] = useState<{ running: number; failed: number } | null>(null)
+  const [wizardOpen, setWizardOpen] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
     const load = () =>
@@ -58,7 +62,10 @@ function App() {
             </button>
           ))}
         </nav>
-        <div className="ml-auto flex gap-4 font-mono text-xs text-muted-foreground">
+        <Button size="sm" className="ml-auto" onClick={() => setWizardOpen(true)}>
+          ＋ CDC 등록
+        </Button>
+        <div className="flex gap-4 font-mono text-xs text-muted-foreground">
           {summary === null ? (
             <span className="text-crit">● backend 연결 안 됨</span>
           ) : (
@@ -78,7 +85,7 @@ function App() {
 
       <main className="min-h-0 flex-1">
         {view === 'topology' && <TopologyPanel />}
-        {view === 'tables' && <TablesPanel />}
+        {view === 'tables' && <TablesPanel refreshKey={refreshKey} />}
         {view === 'ddl' && <DdlPanel />}
         {view === 'connections' && (
           <div className="mx-auto max-w-4xl p-6">
@@ -86,6 +93,15 @@ function App() {
           </div>
         )}
       </main>
+
+      <RegistrationWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onRegistered={() => {
+          setRefreshKey((k) => k + 1)
+          setView('tables')
+        }}
+      />
     </div>
   )
 }
