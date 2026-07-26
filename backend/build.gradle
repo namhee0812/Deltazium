@@ -9,6 +9,10 @@ dependencies {
     runtimeOnly 'org.postgresql:postgresql'
     // Oracle 연결 테스트용 (Debezium 플러그인과 동일 계열 드라이버)
     implementation 'com.oracle.database.jdbc:ojdbc11:23.26.2.0.0'
+    // Iceberg changelog 테이블 사전 생성 (5.1절 개정: backend가 생성, sink는 append만)
+    implementation 'org.apache.iceberg:iceberg-core:1.11.0'
+    implementation 'org.apache.iceberg:iceberg-aws:1.11.0'
+    runtimeOnly 'org.apache.iceberg:iceberg-aws-bundle:1.11.0'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'com.h2database:h2:2.4.240'

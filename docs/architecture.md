@@ -61,25 +61,41 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 
 ## 5. Iceberg changelog 테이블 스펙 (고정 — 임의 변경 금지)
 
-### 5.1 스키마
+> **2026-07-26 개정.** 원안(평탄화 스키마: op/before/after/scn/tx_id/ts_ms/source_table)은
+> 스톡 커넥터·SMT 조합으로 구현 경로가 없음이 실증되어(스톡 SMT는 중첩 필드 승격 불가,
+> Debezium·Iceberg의 변환 SMT는 before를 소실 — docs/experiments/2026-07-24-iceberg-sink-schema.md)
+> **envelope-as-is 저장**으로 개정했다. 재조립 관점에서는 오히려 완전 무손실이 된다.
 
-소스 테이블당 changelog 테이블 1개. 컬럼:
+### 5.1 스키마 (envelope-as-is)
+
+소스 테이블당 changelog 테이블 1개 (`changelog.<schema>_<table>` 소문자). 컬럼 = **Debezium envelope 구조 그대로**:
 
 | 컬럼 | 타입 | 원천 |
 |---|---|---|
 | `op` | string | envelope op (c/u/d/r) |
 | `before` | struct (소스 테이블 스키마) | envelope before (nullable) |
 | `after` | struct (소스 테이블 스키마) | envelope after (nullable) |
-| `scn` | long | source.scn |
-| `tx_id` | string | source.txId |
-| `ts_ms` | timestamp | source.ts_ms (소스 커밋 시각) |
-| `source_table` | string | source.schema + table |
+| `source` | struct | envelope source 전체 (scn·txId·ts_ms·schema·table 포함, **scn은 string**) |
+| `ts_ms` | long | envelope ts_ms (커넥터 처리 시각) |
 
-**설계 불변식: 이 컬럼들만으로 Debezium envelope을 손실 없이 재조립할 수 있어야 한다.** recovery-job의 왕복 테스트(원본 envelope → Iceberg 레코드 → 재조립 envelope 동등성)가 이 불변식의 회귀 방어선이다.
+- 테이블은 **backend가 사전 생성**한다 (`auto-create-enabled=false` 유지). 사전 생성 시
+  기본 골격(op/ts_ms/source 핵심 필드)만 정의하고, before/after 등 나머지는
+  sink의 `evolve-schema-enabled=true`가 첫 레코드에서 채운다 — Oracle→Iceberg 타입
+  매핑을 backend가 중복 구현하지 않기 위함.
+- 토픽→테이블 라우팅: 단일 iceberg-sink + `route-field=source.table` + 테이블별 route-regex.
+  **제약: 서로 다른 스키마에 같은 이름의 테이블은 동시 등록 불가** (route 충돌) — 등록 시점에 거부.
+
+**설계 불변식: changelog 한 행에서 Debezium envelope을 손실 없이 재조립할 수 있어야 한다.**
+envelope-as-is라 자명하게 성립하며, recovery-job의 왕복 테스트가 회귀 방어선이다.
 
 ### 5.2 파티셔닝·특성
 
-- Hidden partitioning: `days(ts_ms)` (볼륨 크면 `hours`). "SCN X부터" 스캔이 파티션 프루닝으로 저렴해야 함.
+- Hidden partitioning: `truncate(source.ts_ms, 86400000)` — source.ts_ms(epoch millis, long)의
+  1일 단위 truncate. long 타입이라 `days()` 변환은 불가하고 truncate가 동등한 프루닝을 제공한다.
+  (볼륨 크면 3600000=1시간)
+- "SCN X부터" 스캔: 1차 프루닝은 ts_ms 파티션(복구 지점의 시각을 알므로), scn 정밀 절단은
+  불필요 — 경계 중복은 PK upsert 멱등으로 안전(6.2절). scn은 string이라 비교는 재생 시점에
+  long 캐스팅으로 한다.
 - **append-only.** equality delete 없음 → compaction 압박 낮음, small file 정리는 볼륨 보고 추후(10절).
 - 보존 정책 = 오래된 파티션 drop.
 - 저장 순서는 무순서 허용 — 순서 복원은 재생 시점 책임(6.2절).
@@ -98,7 +114,8 @@ recovery-job은 **Iceberg scan → envelope 재조립 → 복구 토픽 발행**
 
 ### 6.2 순서와 멱등
 
-- 재생 쿼리: `WHERE scn >= X ORDER BY scn, tx_id`. 전역 순서는 여기서 복원한다.
+- 재생 쿼리(개념): `WHERE CAST(source.scn AS long) >= X ORDER BY CAST(source.scn AS long), source.txId`.
+  전역 순서는 여기서 복원한다 (scn 캐스팅은 recovery-job 책임 — 5.1 개정으로 scn이 string).
 - 경계 중복 적용은 필연 — **PK upsert 멱등이 전제**라서 안전하다 (I/U는 덮어쓰기, D는 no-op). 정밀한 경계 절단이 필요 없어지는 근거.
 
 ### 6.3 Kafka retention과의 관계

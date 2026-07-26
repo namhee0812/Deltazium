@@ -8,6 +8,8 @@ import java.util.stream.Collectors;
 import io.deltazium.backend.connect.ConnectorDeployService;
 import io.deltazium.backend.dictionary.OracleDictionaryService;
 import io.deltazium.backend.dictionary.SourceTableInfo;
+import io.deltazium.backend.iceberg.ChangelogTableService;
+import io.deltazium.backend.iceberg.IcebergProperties;
 import io.deltazium.backend.registry.DbConnection;
 import io.deltazium.backend.registry.DbConnectionService;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,6 +30,8 @@ public class RegistrationService {
     private final DbConnectionService connections;
     private final OracleDictionaryService dictionary;
     private final ConnectorDeployService deploy;
+    private final ChangelogTableService changelog;
+    private final IcebergProperties iceberg;
     private final String kafkaBootstrap;
     private final String topicPrefix;
 
@@ -35,12 +39,16 @@ public class RegistrationService {
                                DbConnectionService connections,
                                OracleDictionaryService dictionary,
                                ConnectorDeployService deploy,
+                               ChangelogTableService changelog,
+                               IcebergProperties iceberg,
                                @Value("${deltazium.kafka.bootstrap}") String kafkaBootstrap,
                                @Value("${deltazium.topic-prefix}") String topicPrefix) {
         this.repository = repository;
         this.connections = connections;
         this.dictionary = dictionary;
         this.deploy = deploy;
+        this.changelog = changelog;
+        this.iceberg = iceberg;
         this.kafkaBootstrap = kafkaBootstrap;
         this.topicPrefix = topicPrefix;
     }
@@ -100,6 +108,11 @@ public class RegistrationService {
             if (repository.exists(info.schema(), info.table())) {
                 throw new IllegalArgumentException("이미 등록된 테이블: " + qualified);
             }
+            if (repository.existsTableNameInOtherSchema(info.schema(), info.table())) {
+                throw new IllegalArgumentException(
+                        "다른 스키마에 같은 이름의 테이블이 이미 등록됨: " + info.table()
+                        + " — iceberg 라우팅(route-field=source.table) 충돌로 동시 등록 불가 (5.1절)");
+            }
         }
 
         for (String qualified : tables) {
@@ -113,7 +126,7 @@ public class RegistrationService {
         return repository.findAll();
     }
 
-    /** 등록 테이블 전체 목록 기준으로 source·jdbc-sink 설정을 갱신 배포 (멱등 PUT). */
+    /** 등록 테이블 전체 목록 기준으로 source·jdbc-sink·iceberg-sink 설정을 갱신 배포 (멱등 PUT). */
     private void deployConnectors(DbConnection source, DbConnection target) {
         List<RegisteredTable> all = repository.findAll();
         String includeList = all.stream().map(RegisteredTable::qualified)
@@ -121,6 +134,11 @@ public class RegistrationService {
         String topics = all.stream()
                 .map(t -> topicPrefix + "." + t.qualified())
                 .collect(Collectors.joining(","));
+
+        // changelog 테이블 사전 생성 (5.1절: auto-create 금지, backend가 생성)
+        for (RegisteredTable t : all) {
+            changelog.ensureChangelogTable(t.schemaName(), t.tableName());
+        }
 
         Map<String, String> sourceVars = new HashMap<>();
         sourceVars.put("connector_name", "dz-source");
@@ -141,6 +159,29 @@ public class RegistrationService {
         sinkVars.put("target_user", target.username());
         sinkVars.put("target_password", target.password());
         deploy.deploy("jdbc-sink", sinkVars);
+
+        // iceberg-sink: changelog 병행 적재. 라우팅은 source.table → 테이블별 route-regex
+        Map<String, String> icebergVars = new HashMap<>();
+        icebergVars.put("connector_name", "dz-iceberg-sink");
+        icebergVars.put("topics", topics);
+        icebergVars.put("catalog_jdbc_url", iceberg.catalogUri());
+        icebergVars.put("catalog_jdbc_user", iceberg.catalogUser());
+        icebergVars.put("catalog_jdbc_password", iceberg.catalogPassword());
+        icebergVars.put("warehouse", iceberg.warehouse());
+        icebergVars.put("s3_endpoint", iceberg.s3Endpoint());
+        icebergVars.put("s3_access_key", iceberg.s3AccessKey());
+        icebergVars.put("s3_secret_key", iceberg.s3SecretKey());
+        icebergVars.put("iceberg_tables", all.stream()
+                .map(t -> changelog.changelogTableName(t.schemaName(), t.tableName()))
+                .collect(Collectors.joining(",")));
+        Map<String, String> routeRegex = new HashMap<>();
+        for (RegisteredTable t : all) {
+            routeRegex.put(
+                    "iceberg.table." + changelog.changelogTableName(t.schemaName(), t.tableName())
+                            + ".route-regex",
+                    "^" + t.tableName() + "$");
+        }
+        deploy.deploy("iceberg-sink", icebergVars, routeRegex);
     }
 
     private DbConnection requireRole(long connectionId, String role) {

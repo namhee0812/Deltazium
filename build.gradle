@@ -16,5 +16,7 @@ subprojects {
 
     tasks.withType(Test).configureEach {
         useJUnitPlatform()
+        // 통합 테스트 스위치(-Dintegration=true)를 테스트 JVM으로 전달
+        systemProperty 'integration', System.getProperty('integration', 'false')
     }
 }

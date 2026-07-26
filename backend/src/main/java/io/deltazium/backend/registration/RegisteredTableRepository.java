@@ -33,6 +33,14 @@ public class RegisteredTableRepository {
         return cnt != null && cnt > 0;
     }
 
+    /** 다른 스키마에 같은 이름의 테이블이 있는지 — iceberg route-field(source.table) 충돌 검사용 */
+    public boolean existsTableNameInOtherSchema(String schema, String table) {
+        Integer cnt = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM registered_tables WHERE table_name = ? AND schema_name <> ?",
+                Integer.class, table, schema);
+        return cnt != null && cnt > 0;
+    }
+
     public void insert(String schema, String table, long sourceConnId, long targetConnId) {
         jdbc.update("""
                 INSERT INTO registered_tables (schema_name, table_name, source_connection_id, target_connection_id)

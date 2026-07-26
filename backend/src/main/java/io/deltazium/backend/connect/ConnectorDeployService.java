@@ -6,6 +6,7 @@ import java.util.Set;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.deltazium.backend.template.TemplateRenderer;
 import org.springframework.stereotype.Service;
 
@@ -35,6 +36,14 @@ public class ConnectorDeployService {
      * @return Connect 응답 (배포된 커넥터 정보)
      */
     public JsonNode deploy(String template, Map<String, String> vars) {
+        return deploy(template, vars, Map.of());
+    }
+
+    /**
+     * extraConfig: 템플릿의 고정 placeholder로 표현할 수 없는 동적 키
+     * (예: iceberg-sink의 테이블별 route-regex). 렌더링된 config 위에 병합된다.
+     */
+    public JsonNode deploy(String template, Map<String, String> vars, Map<String, String> extraConfig) {
         if (!TEMPLATES.contains(template)) {
             throw new IllegalArgumentException("알 수 없는 템플릿: " + template);
         }
@@ -43,7 +52,8 @@ public class ConnectorDeployService {
             throw new IllegalArgumentException("connector_name은 필수다");
         }
         String rendered = renderer.render(template, vars);
-        JsonNode config = parse(rendered).get("config");
+        ObjectNode config = (ObjectNode) parse(rendered).get("config");
+        extraConfig.forEach(config::put);
         return connect.upsert(name, config);
     }
 

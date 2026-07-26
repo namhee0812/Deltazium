@@ -21,13 +21,12 @@
 
 ## 미결 (마일스톤 2·3에서 실배선으로 확정)
 
-1. **envelope → changelog 스키마(5.1절) 변환.** Iceberg sink는 레코드 value를 그대로 쓰므로
-   raw envelope이면 컬럼이 `op/before/after/source(struct)/ts_ms`가 되고, 5.1의
-   `scn/tx_id/ts_ms/source_table` 평탄화와 다르다. 스톡 SMT 체인으로는 "source 하위 필드만 승격,
-   before/after는 struct 유지"가 안 되고, Debezium ExtractNewRecordState나 Iceberg DebeziumTransform은
-   **before를 버려서** 5.1의 무손실 재조립 불변식을 깬다. 커스텀 SMT는 절대 규칙 위반.
-   → 마일스톤 3에서 스키마 검증 테스트를 먼저 만들고, envelope-as-is 저장(source struct 유지)으로
-   5.1을 개정할지 사용자와 논의 필요. (재조립 관점에선 envelope-as-is가 오히려 무손실에 유리)
+1. ~~envelope → changelog 스키마 변환~~ **해소(2026-07-26)**: 5.1절을 envelope-as-is로 개정.
+   changelog 테이블은 backend가 사전 생성(기본 골격 + `truncate(source.ts_ms, 1일)` 파티션),
+   sink는 `evolve-schema-enabled=true`로 before/after를 첫 레코드에서 채운다.
+   라우팅: 단일 iceberg-sink + `route-field=source.table` + 테이블별 route-regex
+   (동명 테이블의 스키마 간 동시 등록은 등록 시점 거부).
+   **주의: JdbcCatalog는 catalog_name으로 스코핑 — backend와 sink 모두 "iceberg" 이름 사용.**
 2. ~~jdbc-sink 토픽→타깃 테이블 매핑~~ **확정(2026-07-25)**: RegexRouter로 토픽명에서
    `<prefix>.<schema>.` 접두를 제거해 테이블명만 남기고, apply는 **TARGET 연결 계정의
    기본 스키마**에 수행한다 (`collection.name.format=${topic}`). 스키마 한정자 문제 회피 —

@@ -335,12 +335,14 @@ export function RegistrationWizard({
                   {connections.find((c) => c.id === targetId)?.name}
                 </div>
                 <div className="mt-2 text-muted-foreground">
-                  배포되는 커넥터: dz-source (LogMiner 캡처) · dz-jdbc-sink (PK upsert apply)
+                  배포되는 커넥터: dz-source (LogMiner 캡처) · dz-jdbc-sink (PK upsert apply) ·
+                  dz-iceberg-sink (changelog 병행 적재)
                 </div>
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                초기 스냅샷(initial) 후 실시간 CDC로 전환됩니다. iceberg-sink(changelog)는
-                스키마 확정(architecture.md 5.1절 개정) 후 배선됩니다.
+                초기 스냅샷(initial) 후 실시간 CDC로 전환됩니다. changelog 테이블
+                (changelog.&lt;스키마&gt;_&lt;테이블&gt;)은 배포 시 자동 사전 생성됩니다 —
+                별도 설정이 필요 없습니다.
               </p>
             </div>
           )}

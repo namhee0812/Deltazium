@@ -17,3 +17,12 @@ deltazium:
   kafka:
     bootstrap: localhost:9092
   topic-prefix: dz
+  iceberg:
+    catalog-uri: jdbc:postgresql://localhost:5433/iceberg_catalog
+    catalog-user: deltazium
+    catalog-password: deltazium
+    warehouse: s3://deltazium-warehouse/warehouse
+    s3-endpoint: http://localhost:9010
+    s3-access-key: deltazium
+    s3-secret-key: deltazium123
+    namespace: changelog
