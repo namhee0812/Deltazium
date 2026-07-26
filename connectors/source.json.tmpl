@@ -20,6 +20,9 @@
     "include.schema.changes": "true",
 
     "schema.history.internal.kafka.bootstrap.servers": "{{kafka_bootstrap}}",
-    "schema.history.internal.kafka.topic": "{{topic_prefix}}-schema-history"
+    "schema.history.internal.kafka.topic": "{{topic_prefix}}-schema-history",
+
+    "schema.history.internal.store.only.captured.tables.ddl": "true",
+    "schema.history.internal.store.only.captured.databases.ddl": "true"
   }
 }
