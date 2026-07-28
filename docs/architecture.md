@@ -141,8 +141,16 @@ retention을 넘긴 과거 구간은 Kafka에 없다 — 그 구간의 유일한
 등록 API가 배포 전 검사:
 
 - **PK 존재 — 필수.** 없으면 등록 거부 (at-least-once + upsert 멱등의 전제, 6.2절).
-- supplemental logging (테이블 단위) — 미설정 시 안내 + DDL 제시.
+  (unique index 대체 허용 안 함 — 2026-07-25 결정, PK만)
+- supplemental logging (ALL) COLUMNS (테이블 단위) — 미설정 시 실행될 DDL을 보여주고
+  **"적용하겠습니까?" 승인 후에만 적용**, 권한 부족 시 Oracle 에러 그대로 노출 (2026-07-25 결정).
 - ARCHIVELOG 모드, LogMiner 권한 — 소스 수준 점검.
+  **캡처 계정 최소 권한 8개 (2026-07-28 확정, 실검증 기반):**
+  `CREATE SESSION` · `LOGMINING` · `SELECT ANY DICTIONARY`(V$ 뷰 일괄 커버) ·
+  `SELECT ANY TABLE` · `EXECUTE ON DBMS_LOGMNR` · `EXECUTE ON DBMS_LOGMNR_D`
+  (redo_log_catalog 전략 필수 — online catalog면 불필요하나 DDL 워크플로 전제가 깨짐) ·
+  `FLASHBACK ANY TABLE`(초기 스냅샷 전용, `no_data`면 생략 가능) ·
+  `CREATE TABLE`(+quota, LOG_MINING_FLUSH 테이블용).
 - 통과 시: source의 `table.include.list` 갱신 + sink 토픽 목록 갱신을 Connect REST로 배포.
 
 ## 9. 리스크와 검증 순서
