@@ -95,6 +95,54 @@ public class OracleDictionaryService {
         }
     }
 
+    /** 캡처 계정 최소 권한 8개 (architecture.md 8절, 2026-07-28 확정). CREATE SESSION은 접속 성공이 곧 증명. */
+    static final List<String> REQUIRED_SYS_PRIVS = List.of(
+            "LOGMINING", "SELECT ANY DICTIONARY", "SELECT ANY TABLE",
+            "FLASHBACK ANY TABLE", "CREATE TABLE");
+
+    static final List<String> REQUIRED_EXEC_PACKAGES = List.of("DBMS_LOGMNR", "DBMS_LOGMNR_D");
+
+    /**
+     * LogMiner 권한 점검 — 권한명 → 보유 여부.
+     * 권한은 계정 스스로 부여할 수 없으므로(DBA 필요) 적용 API는 없다.
+     * 누락 시 UI가 DBA용 GRANT 스크립트를 보여주고 배포를 차단한다.
+     */
+    public Map<String, Boolean> privilegeChecks(DbConnection source) {
+        Map<String, Boolean> result = new LinkedHashMap<>();
+        try (Connection conn = open(source)) {
+            result.put("CREATE SESSION", true); // 접속 성공
+
+            var sysPrivs = new java.util.HashSet<String>();
+            try (Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT privilege FROM session_privs")) {
+                while (rs.next()) {
+                    sysPrivs.add(rs.getString(1));
+                }
+            }
+            for (String p : REQUIRED_SYS_PRIVS) {
+                result.put(p, sysPrivs.contains(p));
+            }
+
+            // EXECUTE는 직접/PUBLIC/롤 경유 모두 인정
+            String sql = """
+                    SELECT table_name FROM all_tab_privs
+                     WHERE privilege = 'EXECUTE' AND table_name = ?
+                       AND (grantee = USER OR grantee = 'PUBLIC'
+                            OR grantee IN (SELECT role FROM session_roles))""";
+            for (String pkg : REQUIRED_EXEC_PACKAGES) {
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    ps.setString(1, pkg);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        result.put("EXECUTE ON " + pkg, rs.next());
+                    }
+                }
+            }
+            return result;
+        } catch (SQLException e) {
+            throw new DictionaryException("권한 점검 실패: " + e.getMessage(), e);
+        }
+    }
+
     /**
      * 테이블별 ALL COLUMNS supplemental logging 적용 시도.
      * 반환: qualified name → "OK" 또는 Oracle 에러 메시지 (권한 부족 등은 메시지 그대로).

@@ -50,6 +50,12 @@ public class RegistrationController {
         return service.databaseChecks(sourceConnectionId);
     }
 
+    /** LogMiner 권한 점검 — 권한명 → 보유 여부. */
+    @GetMapping("/privilege-checks/{sourceConnectionId}")
+    public Map<String, Boolean> privilegeChecks(@PathVariable long sourceConnectionId) {
+        return service.privilegeChecks(sourceConnectionId);
+    }
+
     /** supp.log(ALL) 적용 — UI에서 "적용하겠습니까?" YES를 받은 뒤에만 호출된다. */
     @PostMapping("/supplemental-logging")
     public Map<String, String> applySupplementalLogging(@RequestBody TablesRequest req) {

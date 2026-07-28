@@ -68,6 +68,11 @@ public class RegistrationService {
         return dictionary.databaseChecks(requireRole(sourceConnectionId, "SOURCE"));
     }
 
+    /** LogMiner 권한 점검 — 누락 시 UI가 DBA용 GRANT 스크립트 안내 (자체 적용 불가). */
+    public Map<String, Boolean> privilegeChecks(long sourceConnectionId) {
+        return dictionary.privilegeChecks(requireRole(sourceConnectionId, "SOURCE"));
+    }
+
     /** 사용자가 UI에서 승인한 경우에만 호출 — 테이블별 supp.log(ALL) 적용 시도. */
     public Map<String, String> applySupplementalLogging(long sourceConnectionId, List<String> tables) {
         return dictionary.applySupplementalLogging(requireRole(sourceConnectionId, "SOURCE"), tables);

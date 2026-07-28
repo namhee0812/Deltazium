@@ -47,6 +47,7 @@ export function RegistrationWizard({
   const [picked, setPicked] = useState<string[]>([])
 
   const [dbChecks, setDbChecks] = useState<Record<string, string> | null>(null)
+  const [privChecks, setPrivChecks] = useState<Record<string, boolean> | null>(null)
   const [suppResults, setSuppResults] = useState<Record<string, string> | null>(null)
 
   const [busy, setBusy] = useState(false)
@@ -61,6 +62,7 @@ export function RegistrationWizard({
     setCandidates(null)
     setPicked([])
     setDbChecks(null)
+    setPrivChecks(null)
     setSuppResults(null)
     setError(null)
     api<DbConnection[]>('/api/connections').then(setConnections).catch(() => setConnections([]))
@@ -90,6 +92,9 @@ export function RegistrationWizard({
   const loadChecks = () =>
     run(async () => {
       setDbChecks(await api<Record<string, string>>(`/api/registrations/db-checks/${sourceId}`))
+      setPrivChecks(
+        await api<Record<string, boolean>>(`/api/registrations/privilege-checks/${sourceId}`),
+      )
     })
 
   const pickedInfos = (candidates ?? []).filter((t) => picked.includes(qualified(t)))
@@ -124,13 +129,26 @@ export function RegistrationWizard({
     setPicked((p) => (p.includes(q) ? p.filter((x) => x !== q) : [...p, q]))
 
   const archivelogOk = dbChecks?.archivelog === 'ARCHIVELOG'
+  const missingPrivs = Object.entries(privChecks ?? {})
+    .filter(([, ok]) => !ok)
+    .map(([name]) => name)
+  const privsOk = privChecks !== null && missingPrivs.length === 0
   const canNext = [
     sourceId != null,
     picked.length > 0,
     targetId != null,
-    dbChecks != null && archivelogOk && needSupp.length === 0,
+    dbChecks != null && archivelogOk && privsOk && needSupp.length === 0,
     true,
   ][step]
+
+  const sourceUser = connections.find((c) => c.id === sourceId)?.username ?? '<캡처계정>'
+  const grantScript = missingPrivs
+    .map((p) =>
+      p.startsWith('EXECUTE ON')
+        ? `GRANT ${p.replace('EXECUTE ON', 'EXECUTE ON SYS.')} TO ${sourceUser};`
+        : `GRANT ${p} TO ${sourceUser};`,
+    )
+    .join('\n')
 
   const connCard = (c: DbConnection, selected: boolean, onClick: () => void) => (
     <div
@@ -279,6 +297,29 @@ export function RegistrationWizard({
                 </>
               )}
 
+              {privChecks !== null && (
+                <>
+                  <div className="mt-1 text-[13px] font-semibold">
+                    캡처 계정 권한 (최소 8개)
+                  </div>
+                  {Object.entries(privChecks).map(([name, ok]) => (
+                    <CheckRow key={name} ok={ok} label={name} detail={ok ? '보유' : '누락'} />
+                  ))}
+                  {missingPrivs.length > 0 && (
+                    <div className="rounded-[10px] border border-crit bg-crit/10 p-3 text-xs leading-relaxed">
+                      <p className="mb-2">
+                        누락 권한 {missingPrivs.length}개 — 계정 스스로 부여할 수 없어
+                        <b> DBA 계정으로</b> 아래 GRANT를 실행해야 합니다. 실행 후 [재점검]을
+                        눌러 확인하세요.
+                      </p>
+                      <pre className="overflow-x-auto rounded bg-background p-2 font-mono text-[11px]">
+                        {grantScript}
+                      </pre>
+                    </div>
+                  )}
+                </>
+              )}
+
               <div className="mt-1 text-[13px] font-semibold">
                 테이블 supplemental logging (ALL) COLUMNS
               </div>
@@ -300,6 +341,12 @@ export function RegistrationWizard({
                   />
                 )
               })}
+
+              {dbChecks !== null && (
+                <Button variant="outline" size="sm" disabled={busy} onClick={() => void loadChecks()}>
+                  재점검
+                </Button>
+              )}
 
               {needSupp.length > 0 && (
                 <div className="rounded-[10px] border border-warn bg-warn/10 p-3 text-xs leading-relaxed">
