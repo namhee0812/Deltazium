@@ -1,1 +1,105 @@
 # Deltazium
+
+Debezium + Kafka 기반 Oracle CDC 파이프라인과 이를 제어하는 웹 콘솔.
+
+같은 CDC 스트림을 두 갈래로 병행 적재한다 — **타깃 Oracle에 실 적재**(현재 상태 유지)와
+**Iceberg에 append-only changelog 보관**(특정 SCN 시점부터의 복구 재생용). 그 위에
+테이블 등록·사전 점검·DDL 승인·복구 트리거를 담당하는 제어면(Spring Boot + React)을 얹었다.
+
+> 상용 CDC 솔루션(DeltaStream) 개발 경험을 바탕으로, Kafka 스택에서 CDC 시맨틱
+> (envelope, 스냅샷 일관성, 멱등 apply, 복구 재생)을 검증하기 위해 만든 프로젝트다.
+
+## 아키텍처
+
+```
+Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─▶ Debezium JDBC sink ──▶ Oracle(TGT)
+                                                          └─▶ Iceberg sink (append) ─▶ Iceberg / MinIO(S3)
+                                                                카탈로그: JDBC (PostgreSQL)
+
+복구: recovery-job ──(Iceberg scan · envelope 재조립)──▶ 복구 토픽 ──▶ 동일 JDBC sink 설정 ──▶ Oracle(TGT)
+
+[Web UI(React)] ⇄ [backend(Spring Boot): Connect REST 프록시 · 테이블 등록 · 사전 점검 · DDL 승인 · 복구 트리거]
+```
+
+| 컴포넌트 | 역할 | 보존 |
+|---|---|---|
+| Kafka | 짧은 버퍼, fan-out (두 sink가 독립 consumer group — lag 격리) | retention 24h |
+| Iceberg/MinIO | 장기 이력, 복구 원본 | 파티션 drop으로 보존 관리 |
+| Oracle 타깃 | 현재 상태 | — |
+
+## 직접 작성한 것 / 가져다 쓴 것
+
+**직접 작성 (이 리포의 전부):**
+
+| 모듈 | 내용 |
+|---|---|
+| `backend/` | Spring Boot 3 제어면 — DB 연결 저장소(Oracle 연결 테스트 포함), 소스 딕셔너리 조회(와일드카드 패턴 전개), 사전 점검(PK·supplemental logging·LogMiner 권한 8종), supplemental logging 승인 후 적용, 커넥터 템플릿 렌더링·배포(Connect REST), Iceberg changelog 테이블 사전 생성(JdbcCatalog) |
+| `ui/` | React 19 + TypeScript 콘솔 — 토폴로지 캔버스(React Flow, 커넥터 상태 실시간), 5단계 CDC 등록 위저드, 테이블 모니터링 그리드(TanStack Table), DDL 타임라인 |
+| `recovery-job/` | 플레인 Java — Debezium envelope ↔ changelog 변환·재조립, 왕복 동등성 테스트 |
+| `connectors/` | 커넥터 설정 템플릿 4종 (설정 키 전수 공식 문서 검증) |
+| `deploy/` | 베어메탈 설치·기동·smoke test 스크립트 (멱등) |
+| `docs/` | 설계 기준 문서, 실측 실험 기록 |
+
+**가져다 쓴 것 (리포 밖에 바이너리로 설치):** Kafka 4.3.1(KRaft), Debezium Oracle/JDBC
+커넥터 3.6.0.Final(공식 플러그인 배포판), Apache Iceberg Kafka Connect sink 1.11.0
+(프리빌드 배포판이 없어 소스 빌드), MinIO, PostgreSQL 15.
+
+데이터 경로에는 기성 커넥터만 쓰고 자체 코드는 제어면·복구·UI에만 두는 것이 설계 원칙이다
+(apply 시맨틱을 단일 경로로 유지 — 복구 결과가 live 적재와 달라지는 사고를 차단).
+
+## 핵심 설계 판단 (근거는 docs/에)
+
+- **changelog 스키마를 실측으로 개정** — 원안(평탄화 스키마)이 스톡 커넥터·SMT 조합으로
+  구현 불가함을 실험으로 증명하고(스톡 SMT는 중첩 필드 승격 불가, 기존 변환 SMT는 before
+  이미지를 소실), envelope-as-is 저장 + backend 사전 생성 + `truncate(source.ts_ms, 1일)`
+  파티션으로 확정. → [docs/experiments/2026-07-24-iceberg-sink-schema.md](docs/experiments/2026-07-24-iceberg-sink-schema.md)
+- **멱등 apply 전제** — 전달 보장이 at-least-once이므로 apply는 PK 기반 upsert(MERGE)로
+  몇 번 적용해도 같은 결과가 되게 한다. 복구 재생의 경계 중복을 정밀 절단 없이 흡수하는 근거.
+  PK 없는 테이블은 등록 단계에서 거부.
+- **복구는 재발행 단일 경로** — recovery-job은 Iceberg scan → envelope 재조립 → 복구 토픽
+  발행까지만. apply는 live와 동일한 JDBC sink 설정이 담당.
+- **캡처 계정 최소 권한 8개 도출** — 실 배선에서 권한 실패를 재현하며 Debezium 문서의
+  보수적 목록(20여 개)을 8개로 압축. `DBMS_LOGMNR_D`가 필요한 이유(redo_log_catalog 전략)와
+  `FLASHBACK ANY TABLE`의 용도(초기 스냅샷 전용)를 구분해 문서화. → [docs/architecture.md 8절](docs/architecture.md)
+- **사전 점검이 배포를 게이트** — ARCHIVELOG·supplemental logging·권한을 등록 위저드에서
+  검사. 자가 적용 가능한 것(테이블 supp.log)은 DDL을 보여주고 사용자 승인 후에만 실행,
+  불가능한 것(권한)은 DBA용 GRANT 스크립트를 생성해 안내하고 통과 전 배포를 차단.
+
+## 화면
+
+| | |
+|---|---|
+| ![토폴로지](docs/images/topology.png) | ![등록 위저드](docs/images/wizard.png) |
+| 토폴로지 — 커넥터 상태 실시간, RUNNING 구간 흐름 애니메이션 | CDC 등록 위저드 — 딕셔너리 조회·사전 점검·배포 |
+| ![테이블 모니터링](docs/images/tables.png) | ![DDL 타임라인](docs/images/ddl.png) |
+| 테이블 모니터링 그리드 | DDL 이력 타임라인·승인 워크플로 |
+
+## 실행
+
+```bash
+./deploy/install-runtime.sh   # 최초 1회: Kafka·MinIO·플러그인 설치 (Iceberg sink는 소스 빌드)
+./deploy/start-infra.sh       # PostgreSQL → MinIO → Kafka → Connect 기동 (멱등)
+./deploy/smoke-test.sh        # 전 컴포넌트 + 플러그인 3종 헬스체크
+
+./gradlew build               # backend + recovery-job (테스트 포함)
+./gradlew :backend:bootRun    # 제어면 API (8090)
+cd ui && npm install && npm run dev   # 콘솔 (5173, /api → 8090 프록시)
+```
+
+Oracle은 별도 준비 필요 — ARCHIVELOG 모드, 캡처 계정 권한은 위저드 사전 점검이 안내한다.
+통합 테스트(실 인프라 대상): `./gradlew :backend:test -Dintegration=true`
+
+## 검증된 것 / 진행 중인 것
+
+- ✅ 초기 스냅샷 → Kafka → 타깃 Oracle apply(lag 0) + Iceberg changelog 커밋(evolve-schema로
+  before/after 자동 생성)까지 실 Oracle 대상 end-to-end 확인
+- ✅ envelope 왕복(재조립 동등성) 테스트, changelog 사전 생성 통합 테스트
+- 🔧 LogMiner 실시간 스트리밍 검증 (캡처 계정 권한 부여 후)
+- ⏳ 복구 리허설(SCN 지정 재발행 → 정합 검증), DDL 승인 워크플로 backend, 실 메트릭 수집
+  (테이블 그리드의 lag·DML 지표는 현재 mock)
+
+## 스택
+
+Java 21 · Spring Boot 3.5 · React 19 + TypeScript + Vite · Tailwind CSS 4 + shadcn/ui ·
+TanStack Table · React Flow · Kafka 4.3 (KRaft) · Debezium 3.6 · Apache Iceberg 1.11 ·
+MinIO · PostgreSQL 15
