@@ -28,8 +28,19 @@ Connect 플러그인 (`~/deltazium-runtime/connect-plugins/`):
 ./deploy/install-runtime.sh  # 최초 1회: 바이너리 다운로드 + 플러그인 설치 (멱등)
 ./deploy/start-infra.sh      # 멱등 — 떠 있는 컴포넌트는 건너뜀
 ./deploy/smoke-test.sh       # 전 컴포넌트 + Connect 플러그인 3종 확인
+./deploy/start-backend.sh    # 제어면 기동 (bootJar 빌드 포함, 재실행 = 재기동)
+./deploy/stop-backend.sh
 ./deploy/stop-infra.sh       # 정지 (데이터 보존)
 ```
+
+로그 위치 (문제 추적 순서: UI 이벤트 탭 → 커넥터 status trace → 아래 파일):
+
+| 로그 | 파일 |
+|---|---|
+| backend (등록·DDL·복구 API) | `~/deltazium-runtime/logs/backend.log` |
+| Kafka Connect (커넥터 상세) | `~/deltazium-runtime/logs/connect-YYYY-MM-DD-HH.log` |
+| Kafka 브로커 | `~/deltazium-runtime/logs/kafka.log` |
+| 복구 실행별 | `~/deltazium-runtime/logs/recovery-<테이블>-<id>.log` |
 
 주의사항 (실험으로 확인, docs/experiments/2026-07-24-iceberg-sink-schema.md):
 - Iceberg 배포판에 JDBC 드라이버 미포함 → install-runtime.sh가 plugin lib에 PG 드라이버 추가
