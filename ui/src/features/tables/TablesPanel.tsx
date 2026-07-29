@@ -140,11 +140,24 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     columnHelper.accessor((m) => `${m.schemaName}.${m.tableName}`, {
       id: 'table',
       header: 'TABLE',
-      cell: ({ row }) => (
-        <span className="font-mono">
-          {row.original.schemaName}.<b className="text-foreground">{row.original.tableName}</b>
-        </span>
-      ),
+      cell: ({ row }) => {
+        const state = sinkState(row.original)
+        return (
+          <span className="font-mono">
+            {row.original.schemaName}.<b className="text-foreground">{row.original.tableName}</b>
+            {state === 'PAUSED' && (
+              <span className="ml-2 rounded bg-warn/15 px-1.5 py-0.5 font-mono text-[10px] text-warn">
+                정지됨
+              </span>
+            )}
+            {state === 'FAILED' && (
+              <span className="ml-2 rounded bg-crit/15 px-1.5 py-0.5 font-mono text-[10px] text-crit">
+                장애
+              </span>
+            )}
+          </span>
+        )
+      },
     }),
     columnHelper.display({
       id: 'topic',

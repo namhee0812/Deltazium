@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/recovery")
 public class RecoveryController {
 
-    public record TriggerRequest(long registeredTableId, long fromScn) {
+    public record TriggerRequest(long registeredTableId, long fromScn, Boolean autoResume) {
     }
 
     public record VerifyRequest(long registeredTableId) {
@@ -35,7 +35,8 @@ public class RecoveryController {
 
     @PostMapping
     public RecoveryService.RecoveryRun trigger(@RequestBody TriggerRequest req) {
-        return service.trigger(req.registeredTableId(), req.fromScn());
+        return service.trigger(req.registeredTableId(), req.fromScn(),
+                Boolean.TRUE.equals(req.autoResume()));
     }
 
     @PostMapping("/verify")

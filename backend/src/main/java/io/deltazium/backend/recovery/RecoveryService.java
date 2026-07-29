@@ -44,7 +44,7 @@ public class RecoveryService {
 
     public record RecoveryRun(long id, String table, long fromScn, String status,
                               long published, long skipped, String logPath,
-                              LocalDateTime startedAt) {
+                              LocalDateTime startedAt, boolean autoResume) {
     }
 
     public record VerifyResult(long sourceCount, long targetCount,
@@ -102,6 +102,11 @@ public class RecoveryService {
     }
 
     public RecoveryRun trigger(long registeredTableId, long fromScn) {
+        return trigger(registeredTableId, fromScn, false);
+    }
+
+    /** @param autoResume true면 복구 apply 완료 감지 후 해당 테이블 jdbc-sink를 자동 재개 (go-live) */
+    public RecoveryRun trigger(long registeredTableId, long fromScn, boolean autoResume) {
         RegisteredTable table = find(registeredTableId);
         DbConnection target = connections.get(table.targetConnectionId());
 
@@ -122,11 +127,11 @@ public class RecoveryService {
         List<String> command = buildCommand(table, fromScn, keyColumns, recoveryTopic, logPath);
 
         RecoveryRun run = new RecoveryRun(id, table.qualified(), fromScn, "RUNNING",
-                0, 0, logPath, LocalDateTime.now());
+                0, 0, logPath, LocalDateTime.now(), autoResume);
         runs.put(id, run);
         events.record(table.schemaName(), table.tableName(), "RECOVERY_STARTED", "WARN",
-                "SCN " + fromScn + "부터 재발행 시작", null);
-        launchProcess(id, command, logPath, table);
+                "SCN " + fromScn + "부터 재발행 시작" + (autoResume ? " (완료 후 자동 재개)" : ""), null);
+        launchProcess(id, command, logPath, table, autoResume);
         return run;
     }
 
@@ -165,7 +170,8 @@ public class RecoveryService {
         deploy.resumeConnector("dz-recovery-sink-" + table.suffix());
     }
 
-    private void launchProcess(long id, List<String> command, String logPath, RegisteredTable table) {
+    private void launchProcess(long id, List<String> command, String logPath, RegisteredTable table,
+                               boolean autoResume) {
         Thread watcher = new Thread(() -> {
             try {
                 ProcessBuilder pb = new ProcessBuilder(command);
@@ -189,7 +195,7 @@ public class RecoveryService {
                         ok ? "재발행 완료 — " + published + "건 (건너뜀 " + skipped + ")"
                            : "재발행 실패 — 로그: " + logPath, null);
                 if (ok) {
-                    awaitApplyThenPauseSink(id, table, published);
+                    awaitApplyThenPauseSink(id, table, published, autoResume);
                 }
             } catch (Exception e) {
                 update(id, "FAILED", 0, 0);
@@ -204,8 +210,10 @@ public class RecoveryService {
     /**
      * recovery-sink의 apply 완료(lag 소진)를 기다렸다가 정지 — "평시 정지" 원칙(4절).
      * 발행 0건이면 바로 정지. 30분 내 소진 안 되면 정지하지 않고 경고만 남긴다.
+     * autoResume이면 완료 후 해당 테이블 jdbc-sink를 재개해 go-live까지 마친다.
      */
-    private void awaitApplyThenPauseSink(long id, RegisteredTable table, long published) {
+    private void awaitApplyThenPauseSink(long id, RegisteredTable table, long published,
+                                         boolean autoResume) {
         String group = "connect-dz-recovery-sink-" + table.suffix();
         String topic = "dz-recovery." + table.suffix();
         String connector = "dz-recovery-sink-" + table.suffix();
@@ -220,7 +228,8 @@ public class RecoveryService {
                 }
                 if (metrics.groupLag(group, topic) > 0) {
                     events.record(table.schemaName(), table.tableName(), "RECOVERY_DONE", "WARN",
-                            "apply가 30분 내 완료되지 않아 recovery-sink를 정지하지 않음 — lag 확인 필요", null);
+                            "apply가 30분 내 완료되지 않아 recovery-sink를 정지하지 않음 — lag 확인 필요"
+                            + (autoResume ? " (자동 재개도 보류됨 — 수동 재개 필요)" : ""), null);
                     return;
                 }
             }
@@ -228,16 +237,22 @@ public class RecoveryService {
             update(id, "APPLIED", published, 0);
             events.info(table.schemaName(), table.tableName(), "RECOVERY_DONE",
                     "apply 완료 확인 — " + connector + " 정지 (평시 정지 원칙)");
+            if (autoResume) {
+                deploy.resumeConnector("dz-jdbc-sink-" + table.suffix());
+                update(id, "LIVE", published, 0);
+                events.info(table.schemaName(), table.tableName(), "RESUMED",
+                        "복구 완료 후 자동 재개 (go-live) — 경계 중복은 PK upsert 멱등으로 흡수");
+            }
         } catch (Exception e) {
             events.record(table.schemaName(), table.tableName(), "RECOVERY_DONE", "WARN",
-                    "recovery-sink 정지 실패: " + e.getMessage(), null);
+                    "recovery-sink 정지/재개 실패: " + e.getMessage(), null);
         }
     }
 
     private void update(long id, String status, long published, long skipped) {
         runs.computeIfPresent(id, (k, r) -> new RecoveryRun(
                 r.id(), r.table(), r.fromScn(), status, published, skipped,
-                r.logPath(), r.startedAt()));
+                r.logPath(), r.startedAt(), r.autoResume()));
     }
 
     /** 6.4절 ⑤ 정합 검증 — 행 수 + ORA_HASH 체크섬 (활성·동일명 컬럼 기준). */
