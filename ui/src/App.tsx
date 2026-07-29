@@ -2,18 +2,20 @@ import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { ConnectionsPanel } from '@/features/connections/ConnectionsPanel'
 import { DdlPanel } from '@/features/ddl/DdlPanel'
+import { EventsPanel } from '@/features/events/EventsPanel'
 import { RecoveryPanel } from '@/features/recovery/RecoveryPanel'
 import { RegistrationWizard } from '@/features/registration/RegistrationWizard'
 import { TablesPanel } from '@/features/tables/TablesPanel'
 import { TopologyPanel } from '@/features/topology/TopologyPanel'
 import { Button } from '@/components/ui/button'
 
-type View = 'topology' | 'tables' | 'ddl' | 'recovery' | 'connections'
+type View = 'topology' | 'tables' | 'ddl' | 'events' | 'recovery' | 'connections'
 
 const VIEWS: [View, string][] = [
   ['topology', '토폴로지'],
   ['tables', '테이블 모니터링'],
   ['ddl', 'DDL 이력'],
+  ['events', '이벤트'],
   ['recovery', '복구'],
   ['connections', 'DB 연결'],
 ]
@@ -89,6 +91,7 @@ function App() {
         {view === 'topology' && <TopologyPanel />}
         {view === 'tables' && <TablesPanel refreshKey={refreshKey} />}
         {view === 'ddl' && <DdlPanel />}
+        {view === 'events' && <EventsPanel />}
         {view === 'recovery' && <RecoveryPanel />}
         {view === 'connections' && (
           <div className="mx-auto max-w-4xl p-6">

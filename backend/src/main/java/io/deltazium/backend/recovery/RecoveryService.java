@@ -20,6 +20,7 @@ import java.util.stream.Collectors;
 import io.deltazium.backend.connect.ConnectorDeployService;
 import io.deltazium.backend.dictionary.OracleDictionaryService;
 import io.deltazium.backend.dictionary.TableColumn;
+import io.deltazium.backend.events.TableEventService;
 import io.deltazium.backend.iceberg.ChangelogTableService;
 import io.deltazium.backend.iceberg.IcebergProperties;
 import io.deltazium.backend.registration.ColumnMapping;
@@ -59,6 +60,7 @@ public class RecoveryService {
     private final ConnectorDeployService deploy;
     private final ChangelogTableService changelog;
     private final IcebergProperties iceberg;
+    private final TableEventService events;
     private final String kafkaBootstrap;
     private final String launcher;
     private final String logDir;
@@ -73,6 +75,7 @@ public class RecoveryService {
                            ConnectorDeployService deploy,
                            ChangelogTableService changelog,
                            IcebergProperties iceberg,
+                           TableEventService events,
                            @Value("${deltazium.kafka.bootstrap}") String kafkaBootstrap,
                            @Value("${deltazium.recovery.launcher}") String launcher,
                            @Value("${deltazium.recovery.log-dir}") String logDir) {
@@ -83,6 +86,7 @@ public class RecoveryService {
         this.deploy = deploy;
         this.changelog = changelog;
         this.iceberg = iceberg;
+        this.events = events;
         this.kafkaBootstrap = kafkaBootstrap;
         this.launcher = launcher;
         this.logDir = logDir;
@@ -116,7 +120,9 @@ public class RecoveryService {
         RecoveryRun run = new RecoveryRun(id, table.qualified(), fromScn, "RUNNING",
                 0, 0, logPath, LocalDateTime.now());
         runs.put(id, run);
-        launchProcess(id, command, logPath);
+        events.record(table.schemaName(), table.tableName(), "RECOVERY_STARTED", "WARN",
+                "SCN " + fromScn + "부터 재발행 시작", null);
+        launchProcess(id, command, logPath, table);
         return run;
     }
 
@@ -153,7 +159,7 @@ public class RecoveryService {
                 io.deltazium.backend.registration.RegistrationService.fieldIncludeConfig(mappings));
     }
 
-    private void launchProcess(long id, List<String> command, String logPath) {
+    private void launchProcess(long id, List<String> command, String logPath, RegisteredTable table) {
         Thread watcher = new Thread(() -> {
             try {
                 ProcessBuilder pb = new ProcessBuilder(command);
@@ -170,9 +176,16 @@ public class RecoveryService {
                         skipped = Long.parseLong(m.group(2));
                     }
                 }
-                update(id, exit == 0 ? "DONE" : "FAILED", published, skipped);
+                boolean ok = exit == 0;
+                update(id, ok ? "DONE" : "FAILED", published, skipped);
+                events.record(table.schemaName(), table.tableName(),
+                        ok ? "RECOVERY_DONE" : "RECOVERY_FAILED", ok ? "INFO" : "ERROR",
+                        ok ? "재발행 완료 — " + published + "건 (건너뜀 " + skipped + ")"
+                           : "재발행 실패 — 로그: " + logPath, null);
             } catch (Exception e) {
                 update(id, "FAILED", 0, 0);
+                events.record(table.schemaName(), table.tableName(), "RECOVERY_FAILED", "ERROR",
+                        "재발행 프로세스 실패: " + e.getMessage(), null);
             }
         }, "recovery-watch-" + id);
         watcher.setDaemon(true);

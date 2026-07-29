@@ -13,7 +13,7 @@ interface DdlEvent {
   schemaName: string | null
   tableName: string | null
   ddlText: string
-  state: 'SNAPSHOT' | 'DETECTED' | 'APPROVED' | 'REJECTED'
+  state: 'SNAPSHOT' | 'DETECTED' | 'APPROVED' | 'REJECTED' | 'IGNORED'
   note: string | null
   decidedAt: string | null
 }
@@ -23,6 +23,7 @@ const stateColor: Record<DdlEvent['state'], string> = {
   APPROVED: 'text-ok bg-ok/10',
   REJECTED: 'text-crit bg-crit/10',
   SNAPSHOT: 'text-muted-foreground bg-secondary',
+  IGNORED: 'text-muted-foreground bg-secondary',
 }
 
 const dotColor: Record<DdlEvent['state'], string> = {
@@ -30,6 +31,7 @@ const dotColor: Record<DdlEvent['state'], string> = {
   APPROVED: '#56D89C',
   REJECTED: '#F0647A',
   SNAPSHOT: '#8A97B4',
+  IGNORED: '#8A97B4',
 }
 
 const stateLabel: Record<DdlEvent['state'], string> = {
@@ -37,9 +39,10 @@ const stateLabel: Record<DdlEvent['state'], string> = {
   APPROVED: 'approved',
   REJECTED: 'rejected',
   SNAPSHOT: 'snapshot',
+  IGNORED: '무시됨',
 }
 
-const FILTERS = ['all', 'DETECTED', 'APPROVED', 'REJECTED', 'SNAPSHOT'] as const
+const FILTERS = ['all', 'DETECTED', 'APPROVED', 'REJECTED', 'SNAPSHOT', 'IGNORED'] as const
 
 export function DdlPanel() {
   const [events, setEvents] = useState<DdlEvent[] | null>(null)

@@ -36,7 +36,8 @@ import static org.mockito.Mockito.when;
 @MybatisTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ImportAutoConfiguration(SqlInitializationAutoConfiguration.class)
-@Import({RegistrationService.class, DbConnectionService.class})
+@Import({RegistrationService.class, DbConnectionService.class,
+        io.deltazium.backend.events.TableEventService.class})
 @EnableConfigurationProperties(IcebergProperties.class)
 class RegistrationServiceTest {
 

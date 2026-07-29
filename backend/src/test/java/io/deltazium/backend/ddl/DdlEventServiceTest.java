@@ -25,7 +25,8 @@ import static org.mockito.Mockito.verify;
 @MybatisTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ImportAutoConfiguration(SqlInitializationAutoConfiguration.class)
-@Import({DdlEventService.class, DbConnectionService.class})
+@Import({DdlEventService.class, DbConnectionService.class,
+        io.deltazium.backend.events.TableEventService.class})
 class DdlEventServiceTest {
 
     @Autowired
@@ -102,6 +103,35 @@ class DdlEventServiceTest {
         assertThatThrownBy(() -> service.approve(id))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("승인 대기 상태가 아니다");
+    }
+
+    @Test
+    void 타깃_이름이_다르면_DDL을_치환해서_실행한다() {
+        io.deltazium.backend.registration.RegisteredTable mapped =
+                new io.deltazium.backend.registration.RegisteredTable(
+                        9L, "CDC", "AUTO_100", 1, 2, "TGT_OWN", "AUTO_100_COPY");
+        assertThat(DdlEventService.rewriteForTarget(
+                "ALTER TABLE CDC.AUTO_100 ADD (X NUMBER)", mapped))
+                .isEqualTo("ALTER TABLE \"TGT_OWN\".\"AUTO_100_COPY\" ADD (X NUMBER)");
+        assertThat(DdlEventService.rewriteForTarget(
+                "ALTER TABLE \"CDC\".\"AUTO_100\" DROP (Y)", mapped))
+                .isEqualTo("ALTER TABLE \"TGT_OWN\".\"AUTO_100_COPY\" DROP (Y)");
+        // 스키마 없이 실행된 DDL도 치환 (단어 경계 — IDX_AUTO_100 같은 이름은 보존)
+        assertThat(DdlEventService.rewriteForTarget(
+                "ALTER TABLE AUTO_100 ADD (Z NUMBER)", mapped))
+                .isEqualTo("ALTER TABLE \"TGT_OWN\".\"AUTO_100_COPY\" ADD (Z NUMBER)");
+        assertThat(DdlEventService.rewriteForTarget(
+                "CREATE INDEX IDX_AUTO_100X ON CDC.AUTO_100(COL1)", mapped))
+                .isEqualTo("CREATE INDEX IDX_AUTO_100X ON \"TGT_OWN\".\"AUTO_100_COPY\"(COL1)");
+    }
+
+    @Test
+    void 타깃_이름이_같으면_원문_그대로_실행한다() {
+        io.deltazium.backend.registration.RegisteredTable same =
+                new io.deltazium.backend.registration.RegisteredTable(
+                        9L, "CDC", "AUTO_100", 1, 2, null, null);
+        String ddl = "ALTER TABLE CDC.AUTO_100 ADD (X NUMBER)";
+        assertThat(DdlEventService.rewriteForTarget(ddl, same)).isSameAs(ddl);
     }
 
     @Test

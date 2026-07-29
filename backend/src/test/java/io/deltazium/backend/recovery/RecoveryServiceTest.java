@@ -26,7 +26,7 @@ class RecoveryServiceTest {
                 "s3://wh/warehouse", "http://localhost:9010", "ak", "sk", "changelog");
         var changelog = new io.deltazium.backend.iceberg.ChangelogTableService(iceberg);
         RecoveryService service = new RecoveryService(null, null, null, null, null,
-                changelog, iceberg, "localhost:9092", "/opt/recovery-job/bin/recovery-job", "/tmp");
+                changelog, iceberg, null, "localhost:9092", "/opt/recovery-job/bin/recovery-job", "/tmp");
 
         RegisteredTable table = new RegisteredTable(1L, "CDC", "AUTO_100", 1, 2, null, null);
         List<String> cmd = service.buildCommand(table, 31066101955L,

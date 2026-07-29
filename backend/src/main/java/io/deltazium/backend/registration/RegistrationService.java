@@ -12,6 +12,7 @@ import io.deltazium.backend.connect.ConnectorDeployService;
 import io.deltazium.backend.dictionary.OracleDictionaryService;
 import io.deltazium.backend.dictionary.SourceTableInfo;
 import io.deltazium.backend.dictionary.TableColumn;
+import io.deltazium.backend.events.TableEventService;
 import io.deltazium.backend.iceberg.ChangelogTableService;
 import io.deltazium.backend.iceberg.IcebergProperties;
 import io.deltazium.backend.registry.DbConnection;
@@ -43,6 +44,7 @@ public class RegistrationService {
     private final ConnectorDeployService deploy;
     private final ChangelogTableService changelog;
     private final IcebergProperties iceberg;
+    private final TableEventService events;
     private final String kafkaBootstrap;
     private final String topicPrefix;
 
@@ -53,6 +55,7 @@ public class RegistrationService {
                                ConnectorDeployService deploy,
                                ChangelogTableService changelog,
                                IcebergProperties iceberg,
+                               TableEventService events,
                                @Value("${deltazium.kafka.bootstrap}") String kafkaBootstrap,
                                @Value("${deltazium.topic-prefix}") String topicPrefix) {
         this.repository = repository;
@@ -62,6 +65,7 @@ public class RegistrationService {
         this.deploy = deploy;
         this.changelog = changelog;
         this.iceberg = iceberg;
+        this.events = events;
         this.kafkaBootstrap = kafkaBootstrap;
         this.topicPrefix = topicPrefix;
     }
@@ -127,6 +131,13 @@ public class RegistrationService {
         }
 
         deployConnectors(source, target);
+        for (TableSpec spec : specs) {
+            int dot = spec.source().indexOf('.');
+            events.info(spec.source().substring(0, dot).toUpperCase(Locale.ROOT),
+                    spec.source().substring(dot + 1).toUpperCase(Locale.ROOT),
+                    "REGISTERED", "CDC 등록·커넥터 배포 (source: " + source.name()
+                            + " → target: " + target.name() + ")");
+        }
         return repository.findAll();
     }
 
@@ -301,11 +312,14 @@ public class RegistrationService {
     public void pause(long registeredTableId) {
         RegisteredTable t = find(registeredTableId);
         deploy.pauseConnector("dz-jdbc-sink-" + t.suffix());
+        events.info(t.schemaName(), t.tableName(), "PAUSED",
+                "apply 정지 — 캡처·changelog 축적은 계속");
     }
 
     public void resume(long registeredTableId) {
         RegisteredTable t = find(registeredTableId);
         deploy.resumeConnector("dz-jdbc-sink-" + t.suffix());
+        events.info(t.schemaName(), t.tableName(), "RESUMED", "apply 재개 — 밀린 분부터 캐치업");
     }
 
     /**
@@ -325,6 +339,9 @@ public class RegistrationService {
 
         List<RegisteredTable> remaining = repository.findAll();
         if (remaining.isEmpty()) {
+            // 삭제 전에 offset 정리 (offset 삭제는 커넥터가 STOPPED로 존재해야 가능) —
+            // 같은 이름 재등록 시 스냅샷 SKIP 방지 (실측: NH_MIX_TABLE_01 재등록 시 SKIPPED)
+            resetConnectorOffsets("dz-source");
             quietDelete("dz-source");
             quietDelete("dz-iceberg-sink");
         } else {
@@ -337,7 +354,17 @@ public class RegistrationService {
         if (dropChangelog) {
             changelog.dropChangelogTable(table.schemaName(), table.tableName(), true);
         }
+        events.info(table.schemaName(), table.tableName(), "UNREGISTERED",
+                "등록 해제 — changelog " + (dropChangelog ? "삭제됨" : "보존"));
         return remaining;
+    }
+
+    private void resetConnectorOffsets(String connector) {
+        try {
+            deploy.stopAndResetOffsets(connector);
+        } catch (Exception ignored) {
+            // 커넥터 미존재 등 — 재등록 시 스냅샷 SKIP 가능성만 남고 치명적이지 않음
+        }
     }
 
     private void quietDelete(String connector) {

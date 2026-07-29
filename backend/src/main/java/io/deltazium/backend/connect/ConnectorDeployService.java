@@ -66,6 +66,27 @@ public class ConnectorDeployService {
         connect.pause(name);
     }
 
+    /**
+     * stop → offset 삭제 (STOPPED 전이 대기 포함). 삭제 직전의 커넥터에 사용 —
+     * offset이 남으면 같은 이름 재생성 시 스냅샷이 SKIP된다.
+     */
+    public void stopAndResetOffsets(String name) {
+        connect.stop(name);
+        for (int i = 0; i < 15; i++) {
+            try {
+                String state = connect.status(name).path("connector").path("state").asText();
+                if ("STOPPED".equals(state)) {
+                    break;
+                }
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        connect.deleteOffsets(name);
+    }
+
     public void resumeConnector(String name) {
         connect.resume(name);
     }

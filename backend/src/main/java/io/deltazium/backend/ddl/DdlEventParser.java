@@ -20,6 +20,22 @@ final class DdlEventParser {
     private DdlEventParser() {
     }
 
+    /**
+     * 타깃 전파가 무의미한 DDL — 승인 대기 대신 IGNORED로 분류한다.
+     * supplemental logging(캡처 설정), 권한/감사/통계/락 등.
+     */
+    static boolean ignorable(String ddl) {
+        String upper = ddl.strip().toUpperCase();
+        if (upper.contains("SUPPLEMENTAL LOG")) {
+            return true;
+        }
+        String firstWord = upper.split("\\s+", 2)[0];
+        return switch (firstWord) {
+            case "GRANT", "REVOKE", "AUDIT", "NOAUDIT", "ANALYZE", "LOCK", "COMMENT" -> true;
+            default -> false;
+        };
+    }
+
     static Optional<Parsed> parse(String value) {
         try {
             JsonNode root = JSON.readTree(value);

@@ -42,6 +42,16 @@ public class ConnectClient {
         rest.put().uri("/connectors/{name}/pause", name).retrieve().toBodilessEntity();
     }
 
+    /** STOPPED 상태로 전환 (offset 삭제의 전제 조건). */
+    public void stop(String name) {
+        rest.put().uri("/connectors/{name}/stop", name).retrieve().toBodilessEntity();
+    }
+
+    /** 커넥터 offset 삭제 — STOPPED 상태에서만 허용된다. */
+    public void deleteOffsets(String name) {
+        rest.delete().uri("/connectors/{name}/offsets", name).retrieve().toBodilessEntity();
+    }
+
     public void resume(String name) {
         rest.put().uri("/connectors/{name}/resume", name).retrieve().toBodilessEntity();
     }

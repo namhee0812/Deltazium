@@ -41,4 +41,17 @@ class DdlEventParserTest {
     void JSON이_아니면_건너뛴다() {
         assertThat(DdlEventParser.parse("not-json")).isEmpty();
     }
+
+    @Test
+    void supplemental_logging과_비전파성_DDL은_무시_대상() {
+        assertThat(DdlEventParser.ignorable(
+                "ALTER TABLE CDC.T1 ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS")).isTrue();
+        assertThat(DdlEventParser.ignorable("GRANT SELECT ON CDC.T1 TO APP")).isTrue();
+        assertThat(DdlEventParser.ignorable("ANALYZE TABLE CDC.T1 COMPUTE STATISTICS")).isTrue();
+        assertThat(DdlEventParser.ignorable("COMMENT ON TABLE CDC.T1 IS 'x'")).isTrue();
+
+        assertThat(DdlEventParser.ignorable("ALTER TABLE CDC.T1 ADD (X NUMBER)")).isFalse();
+        assertThat(DdlEventParser.ignorable("TRUNCATE TABLE CDC.T1")).isFalse();
+        assertThat(DdlEventParser.ignorable("CREATE TABLE CDC.T2 (ID NUMBER)")).isFalse();
+    }
 }

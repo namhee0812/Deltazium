@@ -75,9 +75,10 @@ public class DdlEventPoller {
                         continue;
                     }
                     var p = parsed.get();
+                    String state = p.snapshot() ? "SNAPSHOT"
+                            : DdlEventParser.ignorable(p.ddl()) ? "IGNORED" : "DETECTED";
                     stored |= repository.insertIfAbsent(rec.offset(), p.tsMs(), p.scn(),
-                            p.schemaName(), p.tableName(), p.ddl(),
-                            p.snapshot() ? "SNAPSHOT" : "DETECTED");
+                            p.schemaName(), p.tableName(), p.ddl(), state);
                 }
                 if (!records.isEmpty()) {
                     consumer.commitSync();
