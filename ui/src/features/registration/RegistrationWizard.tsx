@@ -144,8 +144,8 @@ export function RegistrationWizard({
   const sourceUser = connections.find((c) => c.id === sourceId)?.username ?? '<캡처계정>'
   const grantScript = missingPrivs
     .map((p) =>
-      p.startsWith('EXECUTE ON')
-        ? `GRANT ${p.replace('EXECUTE ON', 'EXECUTE ON SYS.')} TO ${sourceUser};`
+      p.startsWith('EXECUTE ON ')
+        ? `GRANT EXECUTE ON SYS.${p.slice('EXECUTE ON '.length)} TO ${sourceUser};`
         : `GRANT ${p} TO ${sourceUser};`,
     )
     .join('\n')

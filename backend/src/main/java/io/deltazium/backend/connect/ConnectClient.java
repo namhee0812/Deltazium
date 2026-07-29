@@ -28,6 +28,10 @@ public class ConnectClient {
         return rest.get().uri("/connectors/{name}/status", name).retrieve().body(JsonNode.class);
     }
 
+    public JsonNode getConfig(String name) {
+        return rest.get().uri("/connectors/{name}/config", name).retrieve().body(JsonNode.class);
+    }
+
     /** 커넥터 생성 또는 설정 갱신 (PUT /connectors/{name}/config — 멱등). */
     public JsonNode upsert(String name, JsonNode config) {
         return rest.put().uri("/connectors/{name}/config", name)

@@ -9,6 +9,8 @@ dependencies {
     runtimeOnly 'org.postgresql:postgresql'
     // Oracle 연결 테스트용 (Debezium 플러그인과 동일 계열 드라이버)
     implementation 'com.oracle.database.jdbc:ojdbc11:23.26.2.0.0'
+    // 토픽 오프셋·consumer lag 실측 + DDL 이벤트(schema change topic) 소비
+    implementation 'org.apache.kafka:kafka-clients'
     // Iceberg changelog 테이블 사전 생성 (5.1절 개정: backend가 생성, sink는 append만)
     implementation 'org.apache.iceberg:iceberg-core:1.11.0'
     implementation 'org.apache.iceberg:iceberg-aws:1.11.0'

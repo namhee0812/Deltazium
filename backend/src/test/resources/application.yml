@@ -10,6 +10,8 @@ spring:
 
 # 테스트 리소스의 application.yml은 메인 것을 대체하므로 필수 커스텀 키를 함께 정의한다
 deltazium:
+  ddl-poller:
+    enabled: false   # 단위 테스트는 Kafka 없이 돈다
   connect:
     base-url: http://localhost:8083
   connectors:
