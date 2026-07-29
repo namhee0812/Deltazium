@@ -65,14 +65,19 @@ public class KafkaMetricsService {
         if (tables.isEmpty()) {
             return List.of();
         }
-        Map<TopicPartition, OffsetSpec> latest = new HashMap<>();
-        for (RegisteredTable t : tables) {
-            latest.put(new TopicPartition(topic(t), 0), OffsetSpec.latest());
-        }
         try {
             AdminClient client = admin();
+            // 등록 직후엔 Debezium source가 토픽을 만들기 전일 수 있다 —
+            // 존재하는 토픽만 조회하고 나머지는 0건으로 취급 (일시적 레이스를 에러로 띄우지 않음)
+            var existing = client.listTopics().names().get();
+            Map<TopicPartition, OffsetSpec> latest = new HashMap<>();
+            for (RegisteredTable t : tables) {
+                if (existing.contains(topic(t))) {
+                    latest.put(new TopicPartition(topic(t), 0), OffsetSpec.latest());
+                }
+            }
             Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> ends =
-                    client.listOffsets(latest).all().get();
+                    latest.isEmpty() ? Map.of() : client.listOffsets(latest).all().get();
             Map<TopicPartition, OffsetAndMetadata> iceberg =
                     client.listConsumerGroupOffsets(ICEBERG_GROUP).partitionsToOffsetAndMetadata().get();
             Map<String, Map<TopicPartition, OffsetAndMetadata>> jdbcByTable = new HashMap<>();
