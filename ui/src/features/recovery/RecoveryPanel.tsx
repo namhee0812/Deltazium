@@ -39,6 +39,30 @@ interface VerifyResult {
   match: boolean
 }
 
+interface PartitionInfo {
+  day: string
+  records: number
+  files: number
+  bytes: number
+}
+
+interface ChangelogInfo {
+  table: string
+  totalRecords: number
+  totalFiles: number
+  totalBytes: number
+  snapshotCount: number
+  lastCommitAtMs: number | null
+  partitions: PartitionInfo[]
+}
+
+const fmtBytes = (n: number) =>
+  n >= 1 << 30
+    ? `${(n / (1 << 30)).toFixed(1)} GB`
+    : n >= 1 << 20
+      ? `${(n / (1 << 20)).toFixed(1)} MB`
+      : `${(n / 1024).toFixed(1)} KB`
+
 const statusBadge: Record<RecoveryRun['status'], string> = {
   RUNNING: 'text-warn bg-warn/10',
   DONE: 'text-ok bg-ok/10',
@@ -51,8 +75,19 @@ export function RecoveryPanel() {
   const [fromScn, setFromScn] = useState('')
   const [runs, setRuns] = useState<RecoveryRun[]>([])
   const [verify, setVerify] = useState<VerifyResult | null>(null)
+  const [changelog, setChangelog] = useState<ChangelogInfo[] | null>(null)
+  const [changelogError, setChangelogError] = useState<string | null>(null)
+  const [openTable, setOpenTable] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  const loadChangelog = useCallback(() => {
+    setChangelogError(null)
+    // 카탈로그 조회는 수백 ms — 주기 폴링 없이 진입/새로고침 시에만
+    api<ChangelogInfo[]>('/api/changelog')
+      .then(setChangelog)
+      .catch((e: Error) => setChangelogError(e.message))
+  }, [])
 
   const loadRuns = useCallback(() => {
     api<RecoveryRun[]>('/api/recovery').then(setRuns).catch(() => setRuns([]))
@@ -61,9 +96,10 @@ export function RecoveryPanel() {
   useEffect(() => {
     api<RegisteredTable[]>('/api/registrations').then(setTables).catch(() => setTables([]))
     loadRuns()
+    loadChangelog()
     const id = setInterval(loadRuns, 5000)
     return () => clearInterval(id)
-  }, [loadRuns])
+  }, [loadRuns, loadChangelog])
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true)
@@ -156,6 +192,69 @@ export function RecoveryPanel() {
           </div>
         </div>
       )}
+
+      <div className="rounded-[10px] border border-border bg-card p-4">
+        <div className="mb-1 flex items-center justify-between">
+          <div className="text-[13px] font-semibold">changelog(S3) 현황 — 복구 가능 범위</div>
+          <Button variant="outline" size="sm" onClick={loadChangelog}>
+            새로고침
+          </Button>
+        </div>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Iceberg 메타데이터 기준. 파티션(1일)이 남아 있는 구간까지 SCN 재발행 복구가 가능합니다.
+        </p>
+        {changelogError && <p className="text-sm text-destructive">{changelogError}</p>}
+        {changelog !== null && changelog.length === 0 && !changelogError && (
+          <p className="text-sm text-muted-foreground">changelog 테이블이 없습니다.</p>
+        )}
+        <div className="grid gap-1.5">
+          {(changelog ?? []).map((c) => {
+            const isOpen = openTable === c.table
+            const range =
+              c.partitions.length > 0
+                ? `${c.partitions[0].day} ~ ${c.partitions[c.partitions.length - 1].day}`
+                : '—'
+            return (
+              <div key={c.table}>
+                <div
+                  onClick={() => setOpenTable(isOpen ? null : c.table)}
+                  className={`flex cursor-pointer flex-wrap items-center gap-3 rounded-[9px] border px-3 py-2 ${
+                    isOpen ? 'border-primary' : 'border-border'
+                  }`}
+                >
+                  <span className="font-mono text-[12px] font-semibold">{c.table}</span>
+                  <span className="font-mono text-[11px] text-muted-foreground">
+                    {c.totalRecords.toLocaleString()} rec · {c.totalFiles} files ·{' '}
+                    {fmtBytes(c.totalBytes)}
+                  </span>
+                  <span className="font-mono text-[11px] text-muted-foreground">{range}</span>
+                  <span className="ml-auto font-mono text-[10.5px] text-muted-foreground">
+                    {c.lastCommitAtMs
+                      ? `마지막 커밋 ${new Date(c.lastCommitAtMs)
+                          .toLocaleString('sv-SE')
+                          .slice(5, 16)}`
+                      : '커밋 없음'}
+                  </span>
+                </div>
+                {isOpen && c.partitions.length > 0 && (
+                  <table className="ml-3 mt-1 text-[11.5px]">
+                    <tbody>
+                      {c.partitions.map((p) => (
+                        <tr key={p.day} className="font-mono text-muted-foreground">
+                          <td className="pr-4">{p.day}</td>
+                          <td className="pr-4 text-right">{p.records.toLocaleString()} rec</td>
+                          <td className="pr-4 text-right">{p.files} files</td>
+                          <td className="text-right">{fmtBytes(p.bytes)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
 
       <div>
         <div className="mb-2 text-[13px] font-semibold">복구 실행 이력</div>

@@ -87,7 +87,11 @@ public class ChangelogTableService {
                 .build();
     }
 
-    private JdbcCatalog catalog() {
+    String namespace() {
+        return props.namespace();
+    }
+
+    JdbcCatalog catalog() {
         JdbcCatalog c = catalog;
         if (c == null) {
             synchronized (this) {
