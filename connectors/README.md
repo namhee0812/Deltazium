@@ -12,8 +12,12 @@
 
 ## 확정 선택의 근거
 
-- `log.mining.strategy=redo_log_catalog` (기본값 명시): DDL 승인 워크플로(architecture.md 7절)가
-  schema change 이벤트에 의존하므로 DDL 추적이 되는 전략을 쓴다. `online_catalog`는 빠르지만 DDL 추적 불가.
+- `log.mining.strategy=online_catalog` (**2026-07-30 변경**): 원래 redo_log_catalog였으나
+  공유 dev Oracle에서 ORA-1371(complete dictionary not found) 재시도 루프로 스트리밍이
+  멈추는 문제가 재발해 전환. schema change 이벤트(DDL 승인 워크플로 전제)는 **두 전략 모두
+  발행되므로** 7절 워크플로는 유지된다. online_catalog의 제약은 "DDL 직전 redo를 DDL 이후
+  딕셔너리로 해석할 수 있다"는 것 — 실시간 스트리밍에선 그 창이 초 단위라 수용.
+  부수 이점: 마이닝 빠름, 딕셔너리 redo 기록 없음, DBMS_LOGMNR_D 권한 불필요해짐(grant는 유지 무방).
 - `schema.evolution=none` (jdbc-sink): 스키마 변경은 7절 승인 워크플로가 처리한다. sink가 임의로 타깃 DDL을 치면 안 됨.
 - `iceberg.tables.auto-create-enabled=false`: changelog 테이블 스키마는 5절에 고정 —
   테이블은 backend가 명시 스키마로 생성하고 sink는 append만 한다.
