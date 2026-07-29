@@ -24,7 +24,7 @@ interface RecoveryRun {
   id: number
   table: string
   fromScn: number
-  status: 'RUNNING' | 'DONE' | 'FAILED'
+  status: 'RUNNING' | 'DONE' | 'APPLIED' | 'FAILED'
   published: number
   skipped: number
   logPath: string
@@ -66,7 +66,15 @@ const fmtBytes = (n: number) =>
 const statusBadge: Record<RecoveryRun['status'], string> = {
   RUNNING: 'text-warn bg-warn/10',
   DONE: 'text-ok bg-ok/10',
+  APPLIED: 'text-ok bg-ok/10',
   FAILED: 'text-crit bg-crit/10',
+}
+
+const statusLabel: Record<RecoveryRun['status'], string> = {
+  RUNNING: '재발행 중',
+  DONE: 'apply 대기',
+  APPLIED: '적용 완료',
+  FAILED: '실패',
 }
 
 export function RecoveryPanel() {
@@ -272,7 +280,7 @@ export function RecoveryPanel() {
                 from SCN {r.fromScn}
               </span>
               <span className={`rounded px-2 py-0.5 font-mono text-[10.5px] ${statusBadge[r.status]}`}>
-                {r.status}
+                {statusLabel[r.status] ?? r.status}
               </span>
               {r.status !== 'RUNNING' && (
                 <span className="font-mono text-[11px] text-muted-foreground">

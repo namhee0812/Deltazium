@@ -120,6 +120,27 @@ public class KafkaMetricsService {
         return committed == null ? end : Math.max(0, end - committed.offset());
     }
 
+    /** 단일 (consumer group, topic)의 lag — recovery-sink apply 완료 감지용. 토픽 미존재 시 0. */
+    public long groupLag(String group, String topic) {
+        try {
+            AdminClient client = admin();
+            if (!client.listTopics().names().get().contains(topic)) {
+                return 0;
+            }
+            TopicPartition tp = new TopicPartition(topic, 0);
+            long end = client.listOffsets(Map.of(tp, OffsetSpec.latest()))
+                    .all().get().get(tp).offset();
+            OffsetAndMetadata committed = client.listConsumerGroupOffsets(group)
+                    .partitionsToOffsetAndMetadata().get().get(tp);
+            return lag(end, committed);
+        } catch (ExecutionException e) {
+            throw new MetricsException("lag 조회 실패: " + e.getCause().getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new MetricsException("lag 조회 중단", e);
+        }
+    }
+
     private AdminClient admin() {
         AdminClient a = admin;
         if (a == null) {
