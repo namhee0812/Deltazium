@@ -220,6 +220,47 @@ class RegistrationServiceTest {
     }
 
     @Test
+    void 정지는_해당_테이블_jdbc_sink만_pause한다() {
+        mockTable("CDC.T1", true, true);
+        long id = service.register(srcId, tgtId, List.of(spec("CDC.T1"))).get(0).id();
+
+        service.pause(id);
+        verify(deploy).pauseConnector("dz-jdbc-sink-cdc_t1");
+        service.resume(id);
+        verify(deploy).resumeConnector("dz-jdbc-sink-cdc_t1");
+    }
+
+    @Test
+    void 삭제하면_메타데이터와_테이블별_커넥터가_지워지고_남은_목록으로_재배포한다() {
+        mockTable("CDC.T1", true, true);
+        mockTable("CDC.T2", true, true);
+        var all = service.register(srcId, tgtId, List.of(spec("CDC.T1"), spec("CDC.T2")));
+        long t1 = all.stream().filter(t -> t.tableName().equals("T1")).findFirst().orElseThrow().id();
+
+        var remaining = service.unregister(t1, false);
+
+        assertThat(remaining).extracting(RegisteredTable::tableName).containsExactly("T2");
+        assertThat(service.mappings(t1)).isEmpty();
+        verify(deploy).deleteConnector("dz-jdbc-sink-cdc_t1");
+        // 기본은 changelog 보존
+        verify(changelog, org.mockito.Mockito.never())
+                .dropChangelogTable(anyString(), anyString(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void 마지막_테이블_삭제면_전역_커넥터도_지우고_dropChangelog면_S3까지_지운다() {
+        mockTable("CDC.T1", true, true);
+        long id = service.register(srcId, tgtId, List.of(spec("CDC.T1"))).get(0).id();
+
+        var remaining = service.unregister(id, true);
+
+        assertThat(remaining).isEmpty();
+        verify(deploy).deleteConnector("dz-source");
+        verify(deploy).deleteConnector("dz-iceberg-sink");
+        verify(changelog).dropChangelogTable("CDC", "T1", true);
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void 등록하면_changelog_테이블_사전_생성_후_iceberg_sink가_배선된다() {
         mockTable("CDC.T1", true, true);

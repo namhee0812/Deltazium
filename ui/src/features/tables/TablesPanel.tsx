@@ -7,6 +7,15 @@ import {
   useReactTable,
 } from '@tanstack/react-table'
 import { Spark } from '@/components/Spark'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
 
@@ -24,17 +33,30 @@ interface TableMetrics {
   icebergLag: number
 }
 
-const COLOR = { ok: '#56D89C', warn: '#F5B453', crit: '#F0647A', accent: '#53C8E8' }
+interface RegisteredTable {
+  id: number
+  schemaName: string
+  tableName: string
+}
 
-const statusOf = (m: TableMetrics) =>
-  m.jdbcLag > 100 || m.icebergLag > 1000 ? 'warn' : 'ok'
+type ConnectorStates = Record<string, { status?: { connector?: { state?: string } } }>
+
+const COLOR = { ok: '#56D89C', warn: '#F5B453', crit: '#F0647A', accent: '#53C8E8', dim: '#8A97B4' }
 
 const columnHelper = createColumnHelper<TableMetrics>()
 
+const suffix = (m: { schemaName: string; tableName: string }) =>
+  `${m.schemaName}_${m.tableName}`.toLowerCase()
+
 export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   const [rows, setRows] = useState<TableMetrics[] | null>(null)
+  const [registered, setRegistered] = useState<RegisteredTable[]>([])
+  const [connectors, setConnectors] = useState<ConnectorStates>({})
   const [error, setError] = useState<string | null>(null)
   const [globalFilter, setGlobalFilter] = useState('')
+  const [deleting, setDeleting] = useState<TableMetrics | null>(null)
+  const [dropChangelog, setDropChangelog] = useState(false)
+  const [busy, setBusy] = useState(false)
   // 토픽별 이벤트/s 이력 (스파크라인용, 최근 24포인트)
   const history = useRef<Record<string, number[]>>({})
   const [, forceRender] = useState(0)
@@ -50,6 +72,8 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         setError(null)
       })
       .catch((e: Error) => setError(e.message))
+    api<RegisteredTable[]>('/api/registrations').then(setRegistered).catch(() => {})
+    api<ConnectorStates>('/api/connectors').then(setConnectors).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -58,13 +82,60 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     return () => clearInterval(id)
   }, [load, refreshKey])
 
+  const idOf = (m: TableMetrics) =>
+    registered.find((r) => r.schemaName === m.schemaName && r.tableName === m.tableName)?.id
+
+  const sinkState = (m: TableMetrics) =>
+    connectors[`dz-jdbc-sink-${suffix(m)}`]?.status?.connector?.state ?? 'N/A'
+
+  const act = async (fn: () => Promise<unknown>) => {
+    setBusy(true)
+    setError(null)
+    try {
+      await fn()
+      load()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const pauseResume = (m: TableMetrics) => {
+    const id = idOf(m)
+    if (id == null) return
+    const action = sinkState(m) === 'PAUSED' ? 'resume' : 'pause'
+    void act(() => api(`/api/registrations/${id}/${action}`, { method: 'POST' }))
+  }
+
+  const confirmDelete = () => {
+    const id = deleting ? idOf(deleting) : null
+    if (id == null) return
+    void act(async () => {
+      await api(`/api/registrations/${id}?dropChangelog=${dropChangelog}`, { method: 'DELETE' })
+      setDeleting(null)
+      setDropChangelog(false)
+    })
+  }
+
   const columns = [
     columnHelper.display({
       id: 'status',
       header: '',
-      cell: ({ row }) => (
-        <span style={{ color: COLOR[statusOf(row.original)] }}>●</span>
-      ),
+      cell: ({ row }) => {
+        const state = sinkState(row.original)
+        const color =
+          state === 'RUNNING'
+            ? row.original.jdbcLag > 100
+              ? COLOR.warn
+              : COLOR.ok
+            : state === 'PAUSED'
+              ? COLOR.warn
+              : state === 'N/A'
+                ? COLOR.dim
+                : COLOR.crit
+        return <span title={state} style={{ color }}>●</span>
+      },
     }),
     columnHelper.accessor((m) => `${m.schemaName}.${m.tableName}`, {
       id: 'table',
@@ -115,6 +186,33 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         <span className={`font-mono ${getValue() > 1000 ? 'text-warn' : 'text-foreground'}`}>
           {getValue().toLocaleString()}
         </span>
+      ),
+    }),
+    columnHelper.display({
+      id: 'actions',
+      header: '',
+      cell: ({ row }) => (
+        <div className="flex justify-end gap-1">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy || sinkState(row.original) === 'N/A'}
+            onClick={() => pauseResume(row.original)}
+          >
+            {sinkState(row.original) === 'PAUSED' ? '재개' : '정지'}
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={busy}
+            onClick={() => {
+              setDropChangelog(false)
+              setDeleting(row.original)
+            }}
+          >
+            삭제
+          </Button>
+        </div>
       ),
     }),
   ]
@@ -190,6 +288,43 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
           </tbody>
         </table>
       </div>
+
+      <Dialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              CDC 등록 삭제 — {deleting?.schemaName}.{deleting?.tableName}
+            </DialogTitle>
+            <DialogDescription>
+              커넥터에서 제거되고 등록 정보(매핑 포함)가 삭제됩니다. 타깃 테이블의 데이터는
+              건드리지 않습니다.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={dropChangelog}
+              onChange={(e) => setDropChangelog(e.target.checked)}
+            />
+            <span>
+              changelog(S3/Iceberg) 데이터까지 삭제
+              <span className="block text-xs text-crit">
+                복구 원본이 사라집니다 — 이 테이블은 더 이상 SCN 재발행 복구를 할 수 없습니다.
+                해제하면 changelog는 보존됩니다(기본).
+              </span>
+            </span>
+          </label>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDeleting(null)}>
+              취소
+            </Button>
+            <Button variant="destructive" disabled={busy} onClick={confirmDelete}>
+              {dropChangelog ? '삭제 (changelog 포함)' : '삭제 (changelog 보존)'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

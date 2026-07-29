@@ -7,6 +7,7 @@ import io.deltazium.backend.dictionary.OracleDictionaryService;
 import io.deltazium.backend.dictionary.SourceTableInfo;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -74,6 +75,24 @@ public class RegistrationController {
     @PostMapping
     public List<RegisteredTable> register(@RequestBody RegisterRequest req) {
         return service.register(req.sourceConnectionId(), req.targetConnectionId(), req.tables());
+    }
+
+    /** 일시 정지 — apply만 멈춤(캡처·changelog는 계속, 재개 시 캐치업). */
+    @PostMapping("/{id}/pause")
+    public void pause(@PathVariable long id) {
+        service.pause(id);
+    }
+
+    @PostMapping("/{id}/resume")
+    public void resume(@PathVariable long id) {
+        service.resume(id);
+    }
+
+    /** 등록 해제. dropChangelog=true면 changelog(S3) 데이터까지 삭제 — UI에서 명시 확인 필요. */
+    @DeleteMapping("/{id}")
+    public List<RegisteredTable> unregister(@PathVariable long id,
+            @RequestParam(defaultValue = "false") boolean dropChangelog) {
+        return service.unregister(id, dropChangelog);
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

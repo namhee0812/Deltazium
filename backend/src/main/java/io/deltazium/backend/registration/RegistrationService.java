@@ -297,6 +297,63 @@ public class RegistrationService {
         deploy.deleteConnector("dz-jdbc-sink");
     }
 
+    /** 일시 정지 — 해당 테이블 apply만 멈춘다. 캡처·changelog 축적은 계속(재개 시 캐치업). */
+    public void pause(long registeredTableId) {
+        RegisteredTable t = find(registeredTableId);
+        deploy.pauseConnector("dz-jdbc-sink-" + t.suffix());
+    }
+
+    public void resume(long registeredTableId) {
+        RegisteredTable t = find(registeredTableId);
+        deploy.resumeConnector("dz-jdbc-sink-" + t.suffix());
+    }
+
+    /**
+     * 등록 해제 — 커넥터에서 제거 + 메타데이터 삭제.
+     * @param dropChangelog true면 changelog(Iceberg/S3) 데이터까지 삭제 —
+     *                      복구 원본이 사라지므로 UI에서 명시 확인을 받은 값이어야 한다. 기본 보존.
+     */
+    @Transactional
+    public List<RegisteredTable> unregister(long registeredTableId, boolean dropChangelog) {
+        RegisteredTable table = find(registeredTableId);
+        columnRepository.deleteByTable(registeredTableId);
+        repository.delete(registeredTableId);
+
+        // 테이블별 sink 제거 (recovery-sink는 있을 때만)
+        quietDelete("dz-jdbc-sink-" + table.suffix());
+        quietDelete("dz-recovery-sink-" + table.suffix());
+
+        List<RegisteredTable> remaining = repository.findAll();
+        if (remaining.isEmpty()) {
+            quietDelete("dz-source");
+            quietDelete("dz-iceberg-sink");
+        } else {
+            // 남은 테이블 기준으로 source include list·iceberg 라우팅 재배포
+            RegisteredTable any = remaining.get(0);
+            deployConnectors(connections.get(any.sourceConnectionId()),
+                    connections.get(any.targetConnectionId()));
+        }
+
+        if (dropChangelog) {
+            changelog.dropChangelogTable(table.schemaName(), table.tableName(), true);
+        }
+        return remaining;
+    }
+
+    private void quietDelete(String connector) {
+        try {
+            deploy.deleteConnector(connector);
+        } catch (Exception ignored) {
+            // 미배포 커넥터 — 무시
+        }
+    }
+
+    private RegisteredTable find(long registeredTableId) {
+        return repository.findAll().stream()
+                .filter(t -> t.id() == registeredTableId).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("등록 테이블 없음: id=" + registeredTableId));
+    }
+
     private DbConnection requireRole(long connectionId, String role) {
         DbConnection c = connections.get(connectionId);
         if (!role.equals(c.role())) {

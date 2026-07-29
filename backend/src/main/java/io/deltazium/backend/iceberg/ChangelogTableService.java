@@ -55,6 +55,19 @@ public class ChangelogTableService {
         }
     }
 
+    /**
+     * changelog 테이블 삭제. purge=true면 S3 데이터 파일까지 지운다.
+     * 복구 원본을 지우는 작업 — 사용자가 UI에서 명시적으로 확인한 경우에만 호출할 것.
+     */
+    public void dropChangelogTable(String schema, String table, boolean purge) {
+        TableIdentifier id = TableIdentifier.of(
+                props.namespace(), (schema + "_" + table).toLowerCase(Locale.ROOT));
+        JdbcCatalog cat = catalog();
+        if (cat.tableExists(id)) {
+            cat.dropTable(id, purge);
+        }
+    }
+
     /** envelope 골격 — 전부 optional (sink의 evolve union과 충돌하지 않도록). */
     static Schema baseSchema() {
         return new Schema(

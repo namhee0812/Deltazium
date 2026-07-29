@@ -26,6 +26,10 @@ public class RegisteredColumnRepository {
                 MAPPER, registeredTableId);
     }
 
+    public void deleteByTable(long registeredTableId) {
+        jdbc.update("DELETE FROM registered_columns WHERE registered_table_id = ?", registeredTableId);
+    }
+
     public void insertAll(long registeredTableId, List<ColumnMapping> mappings) {
         for (ColumnMapping m : mappings) {
             jdbc.update("""

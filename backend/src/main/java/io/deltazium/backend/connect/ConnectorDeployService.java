@@ -62,6 +62,14 @@ public class ConnectorDeployService {
         connect.delete(name);
     }
 
+    public void pauseConnector(String name) {
+        connect.pause(name);
+    }
+
+    public void resumeConnector(String name) {
+        connect.resume(name);
+    }
+
     private JsonNode parse(String rendered) {
         try {
             return json.readTree(rendered);
