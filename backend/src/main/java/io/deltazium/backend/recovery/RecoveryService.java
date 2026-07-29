@@ -23,6 +23,7 @@ import io.deltazium.backend.dictionary.TableColumn;
 import io.deltazium.backend.events.TableEventService;
 import io.deltazium.backend.iceberg.ChangelogTableService;
 import io.deltazium.backend.iceberg.IcebergProperties;
+import io.deltazium.backend.metrics.KafkaMetricsService;
 import io.deltazium.backend.registration.ColumnMapping;
 import io.deltazium.backend.registration.RegisteredColumnRepository;
 import io.deltazium.backend.registration.RegisteredTable;
@@ -61,6 +62,7 @@ public class RecoveryService {
     private final ChangelogTableService changelog;
     private final IcebergProperties iceberg;
     private final TableEventService events;
+    private final KafkaMetricsService metrics;
     private final String kafkaBootstrap;
     private final String launcher;
     private final String logDir;
@@ -76,6 +78,7 @@ public class RecoveryService {
                            ChangelogTableService changelog,
                            IcebergProperties iceberg,
                            TableEventService events,
+                           KafkaMetricsService metrics,
                            @Value("${deltazium.kafka.bootstrap}") String kafkaBootstrap,
                            @Value("${deltazium.recovery.launcher}") String launcher,
                            @Value("${deltazium.recovery.log-dir}") String logDir) {
@@ -87,6 +90,7 @@ public class RecoveryService {
         this.changelog = changelog;
         this.iceberg = iceberg;
         this.events = events;
+        this.metrics = metrics;
         this.kafkaBootstrap = kafkaBootstrap;
         this.launcher = launcher;
         this.logDir = logDir;
@@ -157,6 +161,8 @@ public class RecoveryService {
         List<ColumnMapping> mappings = columns.findByTable(table.id());
         deploy.deploy("recovery-sink", vars,
                 io.deltazium.backend.registration.RegistrationService.fieldIncludeConfig(mappings));
+        // 이전 복구에서 pause된 상태로 남아 있을 수 있다 — 항상 깨워서 시작
+        deploy.resumeConnector("dz-recovery-sink-" + table.suffix());
     }
 
     private void launchProcess(long id, List<String> command, String logPath, RegisteredTable table) {
@@ -182,6 +188,9 @@ public class RecoveryService {
                         ok ? "RECOVERY_DONE" : "RECOVERY_FAILED", ok ? "INFO" : "ERROR",
                         ok ? "재발행 완료 — " + published + "건 (건너뜀 " + skipped + ")"
                            : "재발행 실패 — 로그: " + logPath, null);
+                if (ok) {
+                    awaitApplyThenPauseSink(id, table, published);
+                }
             } catch (Exception e) {
                 update(id, "FAILED", 0, 0);
                 events.record(table.schemaName(), table.tableName(), "RECOVERY_FAILED", "ERROR",
@@ -190,6 +199,39 @@ public class RecoveryService {
         }, "recovery-watch-" + id);
         watcher.setDaemon(true);
         watcher.start();
+    }
+
+    /**
+     * recovery-sink의 apply 완료(lag 소진)를 기다렸다가 정지 — "평시 정지" 원칙(4절).
+     * 발행 0건이면 바로 정지. 30분 내 소진 안 되면 정지하지 않고 경고만 남긴다.
+     */
+    private void awaitApplyThenPauseSink(long id, RegisteredTable table, long published) {
+        String group = "connect-dz-recovery-sink-" + table.suffix();
+        String topic = "dz-recovery." + table.suffix();
+        String connector = "dz-recovery-sink-" + table.suffix();
+        try {
+            if (published > 0) {
+                long deadline = System.currentTimeMillis() + 30 * 60_000L;
+                while (System.currentTimeMillis() < deadline) {
+                    if (metrics.groupLag(group, topic) == 0) {
+                        break;
+                    }
+                    Thread.sleep(5_000);
+                }
+                if (metrics.groupLag(group, topic) > 0) {
+                    events.record(table.schemaName(), table.tableName(), "RECOVERY_DONE", "WARN",
+                            "apply가 30분 내 완료되지 않아 recovery-sink를 정지하지 않음 — lag 확인 필요", null);
+                    return;
+                }
+            }
+            deploy.pauseConnector(connector);
+            update(id, "APPLIED", published, 0);
+            events.info(table.schemaName(), table.tableName(), "RECOVERY_DONE",
+                    "apply 완료 확인 — " + connector + " 정지 (평시 정지 원칙)");
+        } catch (Exception e) {
+            events.record(table.schemaName(), table.tableName(), "RECOVERY_DONE", "WARN",
+                    "recovery-sink 정지 실패: " + e.getMessage(), null);
+        }
     }
 
     private void update(long id, String status, long published, long skipped) {
