@@ -30,3 +30,7 @@ deltazium:
     s3-access-key: deltazium
     s3-secret-key: deltazium123
     namespace: changelog
+  recovery:
+    # recovery-job 실행 스크립트 (gradle :recovery-job:installDist 산출물)
+    launcher: ../recovery-job/build/install/recovery-job/bin/recovery-job
+    log-dir: ${user.home}/deltazium-runtime/logs

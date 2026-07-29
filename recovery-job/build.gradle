@@ -1,6 +1,45 @@
 // 플레인 Java — Spring 의존 금지 (CLAUDE.md). backend가 프로세스로 기동한다.
+plugins {
+    id 'application'
+}
+
+application {
+    mainClass = 'io.deltazium.recovery.RecoveryJob'
+}
+
 dependencies {
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.4'
+    // Iceberg 읽기 계층 — iceberg-data(Java API) 단일 프로세스 (architecture.md 5.3절, Spark/Trino 금지)
+    implementation 'org.apache.iceberg:iceberg-core:1.11.0'
+    implementation 'org.apache.iceberg:iceberg-data:1.11.0'
+    implementation 'org.apache.iceberg:iceberg-parquet:1.11.0'
+    // iceberg-data가 스캔 빌더에서 ORC 클래스를 참조한다 (우리 파일은 전부 parquet)
+    runtimeOnly 'org.apache.iceberg:iceberg-orc:1.11.0'
+    implementation 'org.apache.iceberg:iceberg-aws:1.11.0'
+    implementation 'org.apache.kafka:kafka-clients:3.9.1'
+    implementation 'org.slf4j:slf4j-simple:2.0.16'
+    runtimeOnly 'org.apache.iceberg:iceberg-aws-bundle:1.11.0'
+    runtimeOnly 'org.postgresql:postgresql:42.7.8'
+    // parquet이 hadoop 설정·입력 포맷 클래스를 요구한다 (스토리지는 S3FileIO — hadoop FS 미사용)
+    implementation('org.apache.hadoop:hadoop-common:3.4.1') {
+        exclude group: 'org.slf4j'
+        exclude group: 'ch.qos.reload4j'
+        exclude group: 'org.apache.zookeeper'
+        exclude group: 'org.apache.curator'
+        exclude group: 'org.apache.kerby'
+        exclude group: 'com.sun.jersey'
+        exclude group: 'org.eclipse.jetty'
+        exclude group: 'io.netty'
+    }
+    runtimeOnly('org.apache.hadoop:hadoop-mapreduce-client-core:3.4.1') {
+        exclude group: 'org.slf4j'
+        exclude group: 'ch.qos.reload4j'
+        exclude group: 'org.apache.hadoop', module: 'hadoop-yarn-client'
+        exclude group: 'org.apache.hadoop', module: 'hadoop-yarn-common'
+        exclude group: 'org.apache.hadoop', module: 'hadoop-hdfs-client'
+        exclude group: 'io.netty'
+        exclude group: 'com.google.inject'
+    }
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

@@ -278,7 +278,7 @@ public class RegistrationService {
      * 리네임(비동일명)은 스톡 sink가 지원하지 않아 저장만 하고 적재에서 제외한다
      * (전 컬럼 동일명·전체 활성이면 필터 불필요 — 키 자체를 생략).
      */
-    static Map<String, String> fieldIncludeConfig(List<ColumnMapping> mappings) {
+    public static Map<String, String> fieldIncludeConfig(List<ColumnMapping> mappings) {
         if (mappings.isEmpty()) {
             return Map.of();
         }
