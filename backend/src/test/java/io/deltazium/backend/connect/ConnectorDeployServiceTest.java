@@ -46,6 +46,7 @@ class ConnectorDeployServiceTest {
         vars.put("topic_prefix", "dz");
         vars.put("table_include_list", "SRC.ORDERS");
         vars.put("kafka_bootstrap", "localhost:9092");
+        vars.put("snapshot_mode", "initial");
         return vars;
     }
 

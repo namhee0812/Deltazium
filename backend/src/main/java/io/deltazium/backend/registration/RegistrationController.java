@@ -25,7 +25,8 @@ public class RegistrationController {
     }
 
     public record RegisterRequest(long sourceConnectionId, long targetConnectionId,
-                                  List<RegistrationService.TableSpec> tables) {
+                                  List<RegistrationService.TableSpec> tables,
+                                  String snapshotMode) {
     }
 
     private final RegistrationService service;
@@ -71,10 +72,11 @@ public class RegistrationController {
         return service.applySupplementalLogging(req.sourceConnectionId(), req.tables());
     }
 
-    /** 등록 확정 + source·jdbc-sink 배포. */
+    /** 등록 확정 + source·jdbc-sink 배포. snapshotMode: INITIAL(기본) | NO_DATA. */
     @PostMapping
     public List<RegisteredTable> register(@RequestBody RegisterRequest req) {
-        return service.register(req.sourceConnectionId(), req.targetConnectionId(), req.tables());
+        return service.register(req.sourceConnectionId(), req.targetConnectionId(),
+                req.tables(), req.snapshotMode() == null ? "INITIAL" : req.snapshotMode());
     }
 
     /** 일시 정지 — apply만 멈춤(캡처·changelog는 계속, 재개 시 캐치업). */

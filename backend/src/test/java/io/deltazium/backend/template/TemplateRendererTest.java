@@ -59,6 +59,7 @@ class TemplateRendererTest {
                 Map.entry("oracle_port", "1521"), Map.entry("oracle_user", "u"),
                 Map.entry("oracle_password", "p"), Map.entry("oracle_dbname", "XE"),
                 Map.entry("topic_prefix", "dz"), Map.entry("table_include_list", "SRC.T1"),
+                Map.entry("snapshot_mode", "initial"),
                 Map.entry("kafka_bootstrap", "localhost:9092"),
                 Map.entry("topics", "t1"), Map.entry("recovery_topics", "r1"),
                 Map.entry("target_jdbc_url", "jdbc:oracle:thin:@h:1521/XE"),

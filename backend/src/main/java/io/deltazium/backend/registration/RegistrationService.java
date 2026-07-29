@@ -1,6 +1,7 @@
 package io.deltazium.backend.registration;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -112,10 +113,25 @@ public class RegistrationService {
     @Transactional
     public List<RegisteredTable> register(long sourceConnectionId, long targetConnectionId,
                                           List<TableSpec> specs) {
+        return register(sourceConnectionId, targetConnectionId, specs, "INITIAL");
+    }
+
+    /**
+     * @param snapshotMode INITIAL(초기적재 포함) | NO_DATA(현재 시점부터 변경만).
+     *                     snapshot.mode는 커넥터 전역이라 실제 적용은 첫 등록(커넥터 생성) 시점 값 —
+     *                     이후 등록의 값은 기록만 된다.
+     */
+    @Transactional
+    public List<RegisteredTable> register(long sourceConnectionId, long targetConnectionId,
+                                          List<TableSpec> specs, String snapshotMode) {
         DbConnection source = requireRole(sourceConnectionId, "SOURCE");
         DbConnection target = requireRole(targetConnectionId, "TARGET");
         if (specs == null || specs.isEmpty()) {
             throw new IllegalArgumentException("등록할 테이블이 없다");
+        }
+        String mode = snapshotMode == null ? "INITIAL" : snapshotMode.toUpperCase(Locale.ROOT);
+        if (!mode.equals("INITIAL") && !mode.equals("NO_DATA")) {
+            throw new IllegalArgumentException("snapshotMode는 INITIAL 또는 NO_DATA여야 한다: " + snapshotMode);
         }
 
         // 검증 후 저장 — 하나라도 실패하면 전체 롤백
@@ -126,7 +142,7 @@ public class RegistrationService {
 
             long tableId = repository.insert(info.schema(), info.table(),
                     sourceConnectionId, targetConnectionId,
-                    upperOrNull(spec.targetSchema()), upperOrNull(spec.targetTable()));
+                    upperOrNull(spec.targetSchema()), upperOrNull(spec.targetTable()), mode);
             columnRepository.insertAll(tableId, mappings);
         }
 
@@ -230,6 +246,12 @@ public class RegistrationService {
             changelog.ensureChangelogTable(t.schemaName(), t.tableName());
         }
 
+        // snapshot.mode는 커넥터 전역 — 첫 등록(가장 오래된 행)의 선택을 따른다
+        String snapshotMode = all.stream()
+                .min(Comparator.comparingLong(RegisteredTable::id))
+                .map(t -> "NO_DATA".equalsIgnoreCase(t.snapshotMode()) ? "no_data" : "initial")
+                .orElse("initial");
+
         Map<String, String> sourceVars = new HashMap<>();
         sourceVars.put("connector_name", "dz-source");
         sourceVars.put("oracle_host", source.host());
@@ -240,6 +262,7 @@ public class RegistrationService {
         sourceVars.put("topic_prefix", topicPrefix);
         sourceVars.put("table_include_list", includeList);
         sourceVars.put("kafka_bootstrap", kafkaBootstrap);
+        sourceVars.put("snapshot_mode", snapshotMode);
         deploy.deploy("source", sourceVars);
 
         // 구버전 단일 jdbc-sink가 남아있으면 제거 (테이블별 커넥터로 전환됨)
