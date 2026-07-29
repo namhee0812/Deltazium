@@ -78,6 +78,9 @@ export function RegistrationWizard({
   const [privChecks, setPrivChecks] = useState<Record<string, boolean> | null>(null)
   const [suppResults, setSuppResults] = useState<Record<string, string> | null>(null)
 
+  const [snapshotMode, setSnapshotMode] = useState<'INITIAL' | 'NO_DATA'>('INITIAL')
+  const [existingCount, setExistingCount] = useState(0)
+
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -93,8 +96,12 @@ export function RegistrationWizard({
     setDbChecks(null)
     setPrivChecks(null)
     setSuppResults(null)
+    setSnapshotMode('INITIAL')
     setError(null)
     api<DbConnection[]>('/api/connections').then(setConnections).catch(() => setConnections([]))
+    api<unknown[]>('/api/registrations')
+      .then((r) => setExistingCount(r.length))
+      .catch(() => setExistingCount(0))
   }, [open])
 
   const run = async (fn: () => Promise<void>) => {
@@ -249,6 +256,7 @@ export function RegistrationWizard({
         body: JSON.stringify({
           sourceConnectionId: sourceId,
           targetConnectionId: targetId,
+          snapshotMode,
           tables: picked.map((q) => {
             const m = mappings[q]
             return {
@@ -634,6 +642,54 @@ export function RegistrationWizard({
 
           {step === 5 && (
             <div className="grid gap-3 text-sm">
+              <div className="rounded-[10px] border border-border p-3.5">
+                <div className="mb-2 text-[13px] font-semibold">시작 방식 (초기 스냅샷)</div>
+                {existingCount > 0 ? (
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    이미 CDC가 기동 중이라 시작 방식을 선택할 수 없습니다 — snapshot.mode는
+                    커넥터 전역 설정이라 첫 등록에서만 적용됩니다. 추가 테이블의 초기적재는
+                    테이블별 스냅샷(incremental snapshot) 기능으로 지원 예정입니다.
+                  </p>
+                ) : (
+                  <div className="grid gap-2">
+                    <label className="flex cursor-pointer items-start gap-2">
+                      <input
+                        type="radio"
+                        className="mt-1"
+                        checked={snapshotMode === 'INITIAL'}
+                        onChange={() => setSnapshotMode('INITIAL')}
+                      />
+                      <span>
+                        <b className="text-[13px]">초기적재 포함 (initial)</b>
+                        <span className="block text-xs text-muted-foreground">
+                          현재 데이터 전체를 스냅샷으로 적재한 뒤 실시간 CDC로 전환합니다.
+                          changelog에 초기 상태(op='r')까지 남아 SCN 0부터 전체 복원이 가능합니다.
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex cursor-pointer items-start gap-2">
+                      <input
+                        type="radio"
+                        className="mt-1"
+                        checked={snapshotMode === 'NO_DATA'}
+                        onChange={() => setSnapshotMode('NO_DATA')}
+                      />
+                      <span>
+                        <b className="text-[13px]">현재 시점부터 변경만 (no_data)</b>
+                        <span className="block text-xs text-muted-foreground">
+                          초기적재 없이 지금부터의 변경만 캡처합니다. 초기 데이터는 별도
+                          일괄적재로 맞추는 경우에 사용하세요.
+                        </span>
+                        <span className="block text-xs text-warn">
+                          ⚠ changelog에 초기 상태가 없으므로 SCN 재발행 복구 범위가 CDC 시작
+                          시점 이후로 제한됩니다.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                )}
+              </div>
+
               <div className="rounded-[10px] border border-border bg-secondary p-3 font-mono text-[12px] leading-relaxed">
                 {picked.map((q) => {
                   const m = mappings[q]

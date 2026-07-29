@@ -12,6 +12,7 @@
             <arg column="target_connection_id" javaType="_long"/>
             <arg column="target_schema_name" javaType="String"/>
             <arg column="target_table_name" javaType="String"/>
+            <arg column="snapshot_mode" javaType="String"/>
         </constructor>
     </resultMap>
 
@@ -32,9 +33,9 @@
     <insert id="insertRow" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
         INSERT INTO registered_tables
           (schema_name, table_name, source_connection_id, target_connection_id,
-           target_schema_name, target_table_name)
+           target_schema_name, target_table_name, snapshot_mode)
         VALUES (#{schemaName}, #{tableName}, #{sourceConnectionId}, #{targetConnectionId},
-                #{targetSchemaName}, #{targetTableName})
+                #{targetSchemaName}, #{targetTableName}, #{snapshotMode})
     </insert>
 
     <delete id="deleteRow">

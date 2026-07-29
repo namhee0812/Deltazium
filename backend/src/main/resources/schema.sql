@@ -12,6 +12,9 @@ CREATE TABLE IF NOT EXISTS registered_tables (
 -- 타깃 스키마·테이블명이 소스와 다를 수 있다 (NULL = 소스와 동일)
 ALTER TABLE registered_tables ADD COLUMN IF NOT EXISTS target_schema_name VARCHAR(128);
 ALTER TABLE registered_tables ADD COLUMN IF NOT EXISTS target_table_name  VARCHAR(128);
+-- 스냅샷 모드: INITIAL(초기적재 포함) | NO_DATA(현재 시점부터 변경만).
+-- snapshot.mode는 커넥터 전역이라 실제 적용은 첫 등록(커넥터 생성) 시점 값이다.
+ALTER TABLE registered_tables ADD COLUMN IF NOT EXISTS snapshot_mode VARCHAR(16) DEFAULT 'INITIAL';
 
 -- 컬럼 매핑: 타깃 컬럼 ← source_expr('${소스컬럼}' 형식, 추후 함수·치환 확장 예정).
 -- enabled=false면 CDC 적재에서 제외. 실반영: 동일명 매핑은 field.include.list, 리네임은 저장만(스톡 sink 한계).

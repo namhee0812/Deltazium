@@ -225,6 +225,39 @@ class RegistrationServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void NO_DATA_모드로_등록하면_source에_no_data가_배포된다() {
+        mockTable("CDC.T1", true, true);
+        service.register(srcId, tgtId, List.of(spec("CDC.T1")), "NO_DATA");
+
+        ArgumentCaptor<Map<String, String>> vars = ArgumentCaptor.forClass(Map.class);
+        verify(deploy).deploy(eq("source"), vars.capture());
+        assertThat(vars.getValue()).containsEntry("snapshot_mode", "no_data");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 추가_등록의_모드는_첫_등록_모드를_바꾸지_못한다() {
+        mockTable("CDC.T1", true, true);
+        service.register(srcId, tgtId, List.of(spec("CDC.T1")), "INITIAL");
+        mockTable("CDC.T2", true, true);
+        service.register(srcId, tgtId, List.of(spec("CDC.T2")), "NO_DATA");
+
+        ArgumentCaptor<Map<String, String>> vars = ArgumentCaptor.forClass(Map.class);
+        verify(deploy, org.mockito.Mockito.times(2)).deploy(eq("source"), vars.capture());
+        // 두 번째 배포도 첫 등록(INITIAL) 기준
+        assertThat(vars.getAllValues().get(1)).containsEntry("snapshot_mode", "initial");
+    }
+
+    @Test
+    void 잘못된_snapshotMode는_거부한다() {
+        mockTable("CDC.T1", true, true);
+        assertThatThrownBy(() -> service.register(srcId, tgtId, List.of(spec("CDC.T1")), "ALWAYS"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("snapshotMode");
+    }
+
+    @Test
     void 정지는_해당_테이블_jdbc_sink만_pause한다() {
         mockTable("CDC.T1", true, true);
         long id = service.register(srcId, tgtId, List.of(spec("CDC.T1"))).get(0).id();

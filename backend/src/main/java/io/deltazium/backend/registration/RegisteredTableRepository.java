@@ -32,12 +32,18 @@ public interface RegisteredTableRepository {
         public long targetConnectionId;
         public String targetSchemaName;
         public String targetTableName;
+        public String snapshotMode;
     }
 
     void insertRow(InsertRow row);
 
     default long insert(String schema, String table, long sourceConnId, long targetConnId,
                         String targetSchema, String targetTable) {
+        return insert(schema, table, sourceConnId, targetConnId, targetSchema, targetTable, "INITIAL");
+    }
+
+    default long insert(String schema, String table, long sourceConnId, long targetConnId,
+                        String targetSchema, String targetTable, String snapshotMode) {
         InsertRow row = new InsertRow();
         row.schemaName = schema;
         row.tableName = table;
@@ -45,6 +51,7 @@ public interface RegisteredTableRepository {
         row.targetConnectionId = targetConnId;
         row.targetSchemaName = targetSchema;
         row.targetTableName = targetTable;
+        row.snapshotMode = snapshotMode;
         insertRow(row);
         return row.id;
     }

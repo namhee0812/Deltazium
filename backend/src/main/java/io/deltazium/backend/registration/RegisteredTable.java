@@ -10,7 +10,15 @@ public record RegisteredTable(
         long sourceConnectionId,
         long targetConnectionId,
         String targetSchemaName,
-        String targetTableName) {
+        String targetTableName,
+        String snapshotMode) {
+
+    public RegisteredTable(Long id, String schemaName, String tableName,
+                           long sourceConnectionId, long targetConnectionId,
+                           String targetSchemaName, String targetTableName) {
+        this(id, schemaName, tableName, sourceConnectionId, targetConnectionId,
+                targetSchemaName, targetTableName, "INITIAL");
+    }
 
     public String qualified() {
         return schemaName + "." + tableName;
