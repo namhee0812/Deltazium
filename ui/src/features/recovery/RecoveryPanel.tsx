@@ -24,7 +24,7 @@ interface RecoveryRun {
   id: number
   table: string
   fromScn: number
-  status: 'RUNNING' | 'DONE' | 'APPLIED' | 'FAILED'
+  status: 'RUNNING' | 'DONE' | 'APPLIED' | 'LIVE' | 'FAILED'
   published: number
   skipped: number
   logPath: string
@@ -67,6 +67,7 @@ const statusBadge: Record<RecoveryRun['status'], string> = {
   RUNNING: 'text-warn bg-warn/10',
   DONE: 'text-ok bg-ok/10',
   APPLIED: 'text-ok bg-ok/10',
+  LIVE: 'text-ok bg-ok/10',
   FAILED: 'text-crit bg-crit/10',
 }
 
@@ -74,6 +75,7 @@ const statusLabel: Record<RecoveryRun['status'], string> = {
   RUNNING: '재발행 중',
   DONE: 'apply 대기',
   APPLIED: '적용 완료',
+  LIVE: 'go-live 완료',
   FAILED: '실패',
 }
 
@@ -82,6 +84,7 @@ export function RecoveryPanel() {
   const [selected, setSelected] = useState<string>('')
   const [fromScn, setFromScn] = useState('')
   const [runs, setRuns] = useState<RecoveryRun[]>([])
+  const [autoResume, setAutoResume] = useState(true)
   const [verify, setVerify] = useState<VerifyResult | null>(null)
   const [changelog, setChangelog] = useState<ChangelogInfo[] | null>(null)
   const [changelogError, setChangelogError] = useState<string | null>(null)
@@ -125,7 +128,11 @@ export function RecoveryPanel() {
     run(async () => {
       await api('/api/recovery', {
         method: 'POST',
-        body: JSON.stringify({ registeredTableId: Number(selected), fromScn: Number(fromScn) }),
+        body: JSON.stringify({
+          registeredTableId: Number(selected),
+          fromScn: Number(fromScn),
+          autoResume,
+        }),
       })
       loadRuns()
     })
@@ -175,6 +182,21 @@ export function RecoveryPanel() {
             정합 검증
           </Button>
         </div>
+        <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={autoResume}
+            onChange={(e) => setAutoResume(e.target.checked)}
+          />
+          <span>
+            <b>복구 완료 후 자동 재개 (go-live)</b>
+            <span className="block text-muted-foreground">
+              apply 완료(lag 0)가 확인되면 이 테이블의 jdbc-sink를 자동으로 재개합니다 —
+              정지 → 복구 → 라이브 복귀가 한 번의 조작으로 끝납니다.
+            </span>
+          </span>
+        </label>
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
           Iceberg changelog에서 SCN ≥ 시작값을 순서 복원해 복구 토픽으로 재발행하고,
           recovery-sink(live와 동일 apply 설정)가 타깃에 적용합니다. 경계 중복은 PK upsert
