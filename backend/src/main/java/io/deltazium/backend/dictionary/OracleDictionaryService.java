@@ -95,6 +95,39 @@ public class OracleDictionaryService {
         }
     }
 
+    /** 컬럼 목록 + PK 여부. 소스(매핑 원본)와 타깃(매핑 대상) 모두 이걸로 조회한다. */
+    public List<TableColumn> listColumns(DbConnection conn, String schema, String table) {
+        String sql = """
+                SELECT c.column_name, c.data_type,
+                       CASE WHEN pk.column_name IS NULL THEN 0 ELSE 1 END AS is_pk
+                  FROM all_tab_columns c
+                  LEFT JOIN (SELECT cc.column_name
+                               FROM all_constraints k
+                               JOIN all_cons_columns cc
+                                 ON cc.owner = k.owner AND cc.constraint_name = k.constraint_name
+                              WHERE k.owner = ? AND k.table_name = ? AND k.constraint_type = 'P') pk
+                    ON pk.column_name = c.column_name
+                 WHERE c.owner = ? AND c.table_name = ?
+                 ORDER BY c.column_id""";
+        List<TableColumn> result = new ArrayList<>();
+        try (Connection db = open(conn);
+             PreparedStatement ps = db.prepareStatement(sql)) {
+            ps.setString(1, schema.toUpperCase(Locale.ROOT));
+            ps.setString(2, table.toUpperCase(Locale.ROOT));
+            ps.setString(3, schema.toUpperCase(Locale.ROOT));
+            ps.setString(4, table.toUpperCase(Locale.ROOT));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    result.add(new TableColumn(
+                            rs.getString(1), rs.getString(2), rs.getInt(3) == 1));
+                }
+            }
+            return result;
+        } catch (SQLException e) {
+            throw new DictionaryException("컬럼 조회 실패: " + e.getMessage(), e);
+        }
+    }
+
     /** 캡처 계정 최소 권한 8개 (architecture.md 8절, 2026-07-28 확정). CREATE SESSION은 접속 성공이 곧 증명. */
     static final List<String> REQUIRED_SYS_PRIVS = List.of(
             "LOGMINING", "SELECT ANY DICTIONARY", "SELECT ANY TABLE",

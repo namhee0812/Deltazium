@@ -23,7 +23,8 @@ public class RegistrationController {
     public record TablesRequest(long sourceConnectionId, List<String> tables) {
     }
 
-    public record RegisterRequest(long sourceConnectionId, long targetConnectionId, List<String> tables) {
+    public record RegisterRequest(long sourceConnectionId, long targetConnectionId,
+                                  List<RegistrationService.TableSpec> tables) {
     }
 
     private final RegistrationService service;
@@ -42,6 +43,13 @@ public class RegistrationController {
     public List<SourceTableInfo> discover(@PathVariable long sourceConnectionId,
                                           @RequestParam String pattern) {
         return service.discover(sourceConnectionId, pattern);
+    }
+
+    /** 컬럼 목록 (소스/타깃 연결 공용) — 매핑 화면용. table=SCHEMA.TABLE */
+    @GetMapping("/columns/{connectionId}")
+    public List<io.deltazium.backend.dictionary.TableColumn> columns(
+            @PathVariable long connectionId, @RequestParam String table) {
+        return service.columns(connectionId, table);
     }
 
     /** DB 레벨 사전 점검 (ARCHIVELOG · DB supplemental logging). */

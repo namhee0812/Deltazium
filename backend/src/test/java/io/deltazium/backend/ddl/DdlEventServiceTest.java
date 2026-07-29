@@ -1,6 +1,5 @@
 package io.deltazium.backend.ddl;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.deltazium.backend.connect.ConnectClient;
 import io.deltazium.backend.registration.RegisteredTableRepository;
 import io.deltazium.backend.registry.DbConnection;
@@ -9,20 +8,17 @@ import io.deltazium.backend.registry.DbConnectionService;
 import io.deltazium.backend.registry.OracleConnectionTester;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.JdbcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
-import com.fasterxml.jackson.databind.JsonNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 @JdbcTest
 @Import({DdlEventRepository.class, DdlEventService.class, RegisteredTableRepository.class,
@@ -58,7 +54,7 @@ class DdlEventServiceTest {
                 "h", 1521, "SRC", "u", "p")).id();
         targetId = connections.create(new DbConnection(null, "t", "ORACLE", "TARGET",
                 "h", 1521, "TGT", "u", "p")).id();
-        registrations.insert("CDC", "AUTO_100", sourceId, targetId);
+        registrations.insert("CDC", "AUTO_100", sourceId, targetId, null, null);
         events.insertIfAbsent(10, 1L, "100", "CDC", "AUTO_100",
                 "ALTER TABLE CDC.AUTO_100 ADD (X NUMBER)", "DETECTED");
     }
@@ -77,17 +73,12 @@ class DdlEventServiceTest {
     }
 
     @Test
-    void 거부하면_jdbc_sink_topics에서_해당_토픽이_빠진다() throws Exception {
-        JsonNode config = new ObjectMapper().readTree(
-                "{\"connector.class\":\"x\",\"topics\":\"dz.CDC.AUTO_100,dz.CDC.OTHER\"}");
-        when(connect.getConfig("dz-jdbc-sink")).thenReturn(config);
-
+    void 거부하면_해당_테이블의_jdbc_sink_커넥터가_pause된다() {
         DdlEvent result = service.reject(eventId());
 
-        ArgumentCaptor<JsonNode> updated = ArgumentCaptor.forClass(JsonNode.class);
-        verify(connect).upsert(eq("dz-jdbc-sink"), updated.capture());
-        assertThat(updated.getValue().get("topics").asText()).isEqualTo("dz.CDC.OTHER");
+        verify(connect).pause("dz-jdbc-sink-cdc_auto_100");
         assertThat(result.state()).isEqualTo("REJECTED");
+        assertThat(result.note()).contains("apply 정지");
     }
 
     @Test

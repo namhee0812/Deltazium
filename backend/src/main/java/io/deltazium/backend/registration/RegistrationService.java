@@ -1,13 +1,17 @@
 package io.deltazium.backend.registration;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import io.deltazium.backend.connect.ConnectorDeployService;
 import io.deltazium.backend.dictionary.OracleDictionaryService;
 import io.deltazium.backend.dictionary.SourceTableInfo;
+import io.deltazium.backend.dictionary.TableColumn;
 import io.deltazium.backend.iceberg.ChangelogTableService;
 import io.deltazium.backend.iceberg.IcebergProperties;
 import io.deltazium.backend.registry.DbConnection;
@@ -18,15 +22,22 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * CDC 테이블 등록 (architecture.md 8절).
- * 흐름: 딕셔너리 조회 → 사전 점검(PK 필수, supp.log ALL) → 메타데이터 저장 →
- * source·jdbc-sink 커넥터 배포(등록 테이블 전체 목록으로 갱신).
+ * 흐름: 딕셔너리 조회 → 사전 점검(PK 필수, supp.log ALL, 권한) → 컬럼 매핑 검증 →
+ * 메타데이터 저장 → 커넥터 배포.
  *
- * iceberg-sink 배선은 changelog 스키마(5.1절) 개정 확정 후 추가한다 — connectors/README.md 미결 1.
+ * 커넥터 구성: source·iceberg-sink는 전역 1개, jdbc-sink는 **테이블별 1개**
+ * (dz-jdbc-sink-<suffix>) — 타깃 테이블명 매핑과 테이블 단위 정지(7절)를 위해.
  */
 @Service
 public class RegistrationService {
 
+    /** 등록 요청의 테이블 한 건. target·columns가 비면 소스와 동일/전 컬럼으로 저장한다. */
+    public record TableSpec(String source, String targetSchema, String targetTable,
+                            List<ColumnMapping> columns) {
+    }
+
     private final RegisteredTableRepository repository;
+    private final RegisteredColumnRepository columnRepository;
     private final DbConnectionService connections;
     private final OracleDictionaryService dictionary;
     private final ConnectorDeployService deploy;
@@ -36,6 +47,7 @@ public class RegistrationService {
     private final String topicPrefix;
 
     public RegistrationService(RegisteredTableRepository repository,
+                               RegisteredColumnRepository columnRepository,
                                DbConnectionService connections,
                                OracleDictionaryService dictionary,
                                ConnectorDeployService deploy,
@@ -44,6 +56,7 @@ public class RegistrationService {
                                @Value("${deltazium.kafka.bootstrap}") String kafkaBootstrap,
                                @Value("${deltazium.topic-prefix}") String topicPrefix) {
         this.repository = repository;
+        this.columnRepository = columnRepository;
         this.connections = connections;
         this.dictionary = dictionary;
         this.deploy = deploy;
@@ -57,10 +70,24 @@ public class RegistrationService {
         return repository.findAll();
     }
 
+    public List<ColumnMapping> mappings(long registeredTableId) {
+        return columnRepository.findByTable(registeredTableId);
+    }
+
     /** 소스 딕셔너리에서 패턴에 걸리는 테이블 + 점검 상태 조회 (등록 후보). */
     public List<SourceTableInfo> discover(long sourceConnectionId, String pattern) {
         DbConnection source = requireRole(sourceConnectionId, "SOURCE");
         return dictionary.listTables(source, pattern);
+    }
+
+    /** 컬럼 목록 (소스/타깃 어느 연결이든) — 매핑 화면용. */
+    public List<TableColumn> columns(long connectionId, String qualifiedTable) {
+        int dot = qualifiedTable.indexOf('.');
+        if (dot <= 0) {
+            throw new IllegalArgumentException("SCHEMA.TABLE 형식이어야 한다: " + qualifiedTable);
+        }
+        return dictionary.listColumns(connections.get(connectionId),
+                qualifiedTable.substring(0, dot), qualifiedTable.substring(dot + 1));
     }
 
     /** DB 레벨 사전 점검 (ARCHIVELOG, DB supplemental logging). */
@@ -78,69 +105,116 @@ public class RegistrationService {
         return dictionary.applySupplementalLogging(requireRole(sourceConnectionId, "SOURCE"), tables);
     }
 
-    /**
-     * 등록 확정 + 커넥터 배포. tables는 "SCHEMA.TABLE" 목록 (와일드카드 불허 —
-     * 전개는 discover 단계에서 끝났어야 한다).
-     */
     @Transactional
     public List<RegisteredTable> register(long sourceConnectionId, long targetConnectionId,
-                                          List<String> tables) {
+                                          List<TableSpec> specs) {
         DbConnection source = requireRole(sourceConnectionId, "SOURCE");
         DbConnection target = requireRole(targetConnectionId, "TARGET");
-        if (tables == null || tables.isEmpty()) {
+        if (specs == null || specs.isEmpty()) {
             throw new IllegalArgumentException("등록할 테이블이 없다");
         }
 
-        // 등록 직전 재검증 — discover 이후 상태가 바뀌었을 수 있다
-        for (String qualified : tables) {
-            if (qualified.contains("*") || qualified.contains("%")) {
-                throw new IllegalArgumentException("와일드카드는 등록 시점에 허용되지 않는다: " + qualified);
-            }
-            List<SourceTableInfo> found = dictionary.listTables(source, qualified);
-            if (found.isEmpty()) {
-                throw new IllegalArgumentException("소스에 존재하지 않는 테이블: " + qualified);
-            }
-            SourceTableInfo info = found.get(0);
-            if (!info.hasPk()) {
-                throw new IllegalArgumentException(
-                        "PK 없는 테이블은 등록 불가 (멱등 upsert 전제): " + qualified);
-            }
-            if (!info.suppLogAll()) {
-                throw new IllegalArgumentException(
-                        "supplemental logging (ALL) COLUMNS 미설정: " + qualified
-                        + " — 사전 점검 단계에서 적용 후 다시 시도");
-            }
-            if (repository.exists(info.schema(), info.table())) {
-                throw new IllegalArgumentException("이미 등록된 테이블: " + qualified);
-            }
-            if (repository.existsTableNameInOtherSchema(info.schema(), info.table())) {
-                throw new IllegalArgumentException(
-                        "다른 스키마에 같은 이름의 테이블이 이미 등록됨: " + info.table()
-                        + " — iceberg 라우팅(route-field=source.table) 충돌로 동시 등록 불가 (5.1절)");
-            }
-        }
+        // 검증 후 저장 — 하나라도 실패하면 전체 롤백
+        for (TableSpec spec : specs) {
+            SourceTableInfo info = validateTable(source, spec.source());
+            List<TableColumn> sourceColumns = dictionary.listColumns(source, info.schema(), info.table());
+            List<ColumnMapping> mappings = normalizeMappings(spec, sourceColumns);
 
-        for (String qualified : tables) {
-            int dot = qualified.indexOf('.');
-            repository.insert(qualified.substring(0, dot).toUpperCase(),
-                    qualified.substring(dot + 1).toUpperCase(),
-                    sourceConnectionId, targetConnectionId);
+            long tableId = repository.insert(info.schema(), info.table(),
+                    sourceConnectionId, targetConnectionId,
+                    upperOrNull(spec.targetSchema()), upperOrNull(spec.targetTable()));
+            columnRepository.insertAll(tableId, mappings);
         }
 
         deployConnectors(source, target);
         return repository.findAll();
     }
 
-    /** 등록 테이블 전체 목록 기준으로 source·jdbc-sink·iceberg-sink 설정을 갱신 배포 (멱등 PUT). */
+    private SourceTableInfo validateTable(DbConnection source, String qualified) {
+        if (qualified == null || qualified.contains("*") || qualified.contains("%")) {
+            throw new IllegalArgumentException("와일드카드는 등록 시점에 허용되지 않는다: " + qualified);
+        }
+        List<SourceTableInfo> found = dictionary.listTables(source, qualified);
+        if (found.isEmpty()) {
+            throw new IllegalArgumentException("소스에 존재하지 않는 테이블: " + qualified);
+        }
+        SourceTableInfo info = found.get(0);
+        if (!info.hasPk()) {
+            throw new IllegalArgumentException("PK 없는 테이블은 등록 불가 (멱등 upsert 전제): " + qualified);
+        }
+        if (!info.suppLogAll()) {
+            throw new IllegalArgumentException("supplemental logging (ALL) COLUMNS 미설정: " + qualified
+                    + " — 사전 점검 단계에서 적용 후 다시 시도");
+        }
+        if (repository.exists(info.schema(), info.table())) {
+            throw new IllegalArgumentException("이미 등록된 테이블: " + qualified);
+        }
+        if (repository.existsTableNameInOtherSchema(info.schema(), info.table())) {
+            throw new IllegalArgumentException(
+                    "다른 스키마에 같은 이름의 테이블이 이미 등록됨: " + info.table()
+                    + " — iceberg 라우팅(route-field=source.table) 충돌로 동시 등록 불가 (5.1절)");
+        }
+        return info;
+    }
+
+    /**
+     * 매핑 검증·기본값 생성.
+     * - 미지정 시: 소스 전 컬럼 동일명 매핑(enabled).
+     * - 구문(`${COL}`)·소스 컬럼 존재·PK 규칙(소스 PK 전부 enabled + 동일명) 검증.
+     */
+    private List<ColumnMapping> normalizeMappings(TableSpec spec, List<TableColumn> sourceColumns) {
+        Set<String> sourceNames = sourceColumns.stream()
+                .map(c -> c.name().toUpperCase(Locale.ROOT)).collect(Collectors.toSet());
+        Set<String> pkNames = sourceColumns.stream().filter(TableColumn::pk)
+                .map(c -> c.name().toUpperCase(Locale.ROOT)).collect(Collectors.toSet());
+
+        List<ColumnMapping> mappings = spec.columns();
+        if (mappings == null || mappings.isEmpty()) {
+            return sourceColumns.stream()
+                    .map(c -> new ColumnMapping(c.name(), "${" + c.name() + "}", true))
+                    .toList();
+        }
+
+        Set<String> enabledIdentityCols = new java.util.HashSet<>();
+        List<ColumnMapping> normalized = new ArrayList<>();
+        for (ColumnMapping m : mappings) {
+            if (m.targetColumn() == null || m.targetColumn().isBlank()) {
+                throw new IllegalArgumentException("타깃 컬럼명이 비어 있다");
+            }
+            if (!m.enabled()) {
+                normalized.add(m);
+                continue;
+            }
+            String srcCol = m.sourceColumn().orElseThrow(() -> new IllegalArgumentException(
+                    "변환식 구문 오류 (허용 형식: ${소스컬럼}): " + m.targetColumn() + " ← " + m.sourceExpr()));
+            if (!sourceNames.contains(srcCol)) {
+                throw new IllegalArgumentException(
+                        "소스에 없는 컬럼을 참조한다: " + m.sourceExpr() + " (" + spec.source() + ")");
+            }
+            if (m.isIdentity()) {
+                enabledIdentityCols.add(srcCol);
+            }
+            normalized.add(m);
+        }
+        if (!enabledIdentityCols.containsAll(pkNames)) {
+            throw new IllegalArgumentException(
+                    "소스 PK 컬럼은 전부 동일명으로 매핑·활성화돼야 한다 (upsert key 전제): PK=" + pkNames);
+        }
+        return normalized;
+    }
+
+    private static String upperOrNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim().toUpperCase(Locale.ROOT);
+    }
+
+    /** 등록 전체 목록 기준으로 source·iceberg-sink(전역)·jdbc-sink(테이블별) 갱신 배포. */
     private void deployConnectors(DbConnection source, DbConnection target) {
         List<RegisteredTable> all = repository.findAll();
         String includeList = all.stream().map(RegisteredTable::qualified)
                 .collect(Collectors.joining(","));
-        String topics = all.stream()
-                .map(t -> topicPrefix + "." + t.qualified())
+        String topics = all.stream().map(t -> topicPrefix + "." + t.qualified())
                 .collect(Collectors.joining(","));
 
-        // changelog 테이블 사전 생성 (5.1절: auto-create 금지, backend가 생성)
         for (RegisteredTable t : all) {
             changelog.ensureChangelogTable(t.schemaName(), t.tableName());
         }
@@ -157,15 +231,26 @@ public class RegistrationService {
         sourceVars.put("kafka_bootstrap", kafkaBootstrap);
         deploy.deploy("source", sourceVars);
 
-        Map<String, String> sinkVars = new HashMap<>();
-        sinkVars.put("connector_name", "dz-jdbc-sink");
-        sinkVars.put("topics", topics);
-        sinkVars.put("target_jdbc_url", target.jdbcUrl());
-        sinkVars.put("target_user", target.username());
-        sinkVars.put("target_password", target.password());
-        deploy.deploy("jdbc-sink", sinkVars);
+        // 구버전 단일 jdbc-sink가 남아있으면 제거 (테이블별 커넥터로 전환됨)
+        try {
+            deployLegacyCleanup();
+        } catch (Exception ignored) {
+            // 없으면 그만 — 배포 흐름을 막지 않는다
+        }
 
-        // iceberg-sink: changelog 병행 적재. 라우팅은 source.table → 테이블별 route-regex
+        // jdbc-sink: 테이블별 커넥터 — 타깃 이름 매핑 + 컬럼 선택(field.include.list) 반영
+        for (RegisteredTable t : all) {
+            List<ColumnMapping> mappings = columnRepository.findByTable(t.id());
+            Map<String, String> vars = new HashMap<>();
+            vars.put("connector_name", "dz-jdbc-sink-" + t.suffix());
+            vars.put("topics", topicPrefix + "." + t.qualified());
+            vars.put("target_jdbc_url", target.jdbcUrl());
+            vars.put("target_user", target.username());
+            vars.put("target_password", target.password());
+            vars.put("collection_name", t.targetQualified());
+            deploy.deploy("jdbc-sink", vars, fieldIncludeConfig(mappings));
+        }
+
         Map<String, String> icebergVars = new HashMap<>();
         icebergVars.put("connector_name", "dz-iceberg-sink");
         icebergVars.put("topics", topics);
@@ -181,12 +266,35 @@ public class RegistrationService {
                 .collect(Collectors.joining(",")));
         Map<String, String> routeRegex = new HashMap<>();
         for (RegisteredTable t : all) {
-            routeRegex.put(
-                    "iceberg.table." + changelog.changelogTableName(t.schemaName(), t.tableName())
-                            + ".route-regex",
+            routeRegex.put("iceberg.table."
+                    + changelog.changelogTableName(t.schemaName(), t.tableName()) + ".route-regex",
                     "^" + t.tableName() + "$");
         }
         deploy.deploy("iceberg-sink", icebergVars, routeRegex);
+    }
+
+    /**
+     * 컬럼 선택 실반영 — enabled + 동일명 매핑만 field.include.list에 넣는다.
+     * 리네임(비동일명)은 스톡 sink가 지원하지 않아 저장만 하고 적재에서 제외한다
+     * (전 컬럼 동일명·전체 활성이면 필터 불필요 — 키 자체를 생략).
+     */
+    static Map<String, String> fieldIncludeConfig(List<ColumnMapping> mappings) {
+        if (mappings.isEmpty()) {
+            return Map.of();
+        }
+        List<String> included = mappings.stream()
+                .filter(m -> m.enabled() && m.isIdentity())
+                .map(m -> m.sourceColumn().orElseThrow())
+                .toList();
+        boolean allIdentityEnabled = included.size() == mappings.size();
+        if (allIdentityEnabled) {
+            return Map.of();
+        }
+        return Map.of("field.include.list", String.join(",", included));
+    }
+
+    private void deployLegacyCleanup() {
+        deploy.deleteConnector("dz-jdbc-sink");
     }
 
     private DbConnection requireRole(long connectionId, String role) {

@@ -63,6 +63,7 @@ class TemplateRendererTest {
                 Map.entry("topics", "t1"), Map.entry("recovery_topics", "r1"),
                 Map.entry("target_jdbc_url", "jdbc:oracle:thin:@h:1521/XE"),
                 Map.entry("target_user", "u"), Map.entry("target_password", "p"),
+                Map.entry("collection_name", "TGT.T1"),
                 Map.entry("collection_name_format", "TGT.${topic}"),
                 Map.entry("catalog_jdbc_url", "jdbc:postgresql://localhost:5433/iceberg_catalog"),
                 Map.entry("catalog_jdbc_user", "u"), Map.entry("catalog_jdbc_password", "p"),

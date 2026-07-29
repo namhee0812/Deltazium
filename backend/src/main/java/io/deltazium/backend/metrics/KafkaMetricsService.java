@@ -39,7 +39,11 @@ public class KafkaMetricsService {
     private record Sample(long endOffset, long atMillis) {
     }
 
-    static final String JDBC_GROUP = "connect-dz-jdbc-sink";
+    /** jdbc-sink는 테이블별 커넥터 — consumer group도 테이블별 (connect-dz-jdbc-sink-<suffix>) */
+    static String jdbcGroup(RegisteredTable t) {
+        return "connect-dz-jdbc-sink-" + t.suffix();
+    }
+
     static final String ICEBERG_GROUP = "connect-dz-iceberg-sink";
 
     private final RegisteredTableRepository registrations;
@@ -69,10 +73,13 @@ public class KafkaMetricsService {
             AdminClient client = admin();
             Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> ends =
                     client.listOffsets(latest).all().get();
-            Map<TopicPartition, OffsetAndMetadata> jdbc =
-                    client.listConsumerGroupOffsets(JDBC_GROUP).partitionsToOffsetAndMetadata().get();
             Map<TopicPartition, OffsetAndMetadata> iceberg =
                     client.listConsumerGroupOffsets(ICEBERG_GROUP).partitionsToOffsetAndMetadata().get();
+            Map<String, Map<TopicPartition, OffsetAndMetadata>> jdbcByTable = new HashMap<>();
+            for (RegisteredTable t : tables) {
+                jdbcByTable.put(t.suffix(), client.listConsumerGroupOffsets(jdbcGroup(t))
+                        .partitionsToOffsetAndMetadata().get());
+            }
 
             long now = System.currentTimeMillis();
             return tables.stream().map(t -> {
@@ -81,7 +88,7 @@ public class KafkaMetricsService {
                 double rate = rate(tp.topic(), end, now);
                 return new TableMetrics(
                         t.schemaName(), t.tableName(), tp.topic(), end, rate,
-                        lag(end, jdbc.get(tp)), lag(end, iceberg.get(tp)));
+                        lag(end, jdbcByTable.get(t.suffix()).get(tp)), lag(end, iceberg.get(tp)));
             }).toList();
         } catch (ExecutionException e) {
             throw new MetricsException("Kafka 지표 조회 실패: " + e.getCause().getMessage(), e);

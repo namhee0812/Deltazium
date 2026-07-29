@@ -1,16 +1,11 @@
 package io.deltazium.backend.ddl;
 
-import java.util.ArrayList;
 import java.util.List;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.deltazium.backend.connect.ConnectClient;
 import io.deltazium.backend.registration.RegisteredTable;
 import io.deltazium.backend.registration.RegisteredTableRepository;
 import io.deltazium.backend.registry.DbConnectionService;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -26,21 +21,17 @@ public class DdlEventService {
     private final DbConnectionService connections;
     private final TargetDdlExecutor executor;
     private final ConnectClient connect;
-    private final String topicPrefix;
-    private final ObjectMapper json = new ObjectMapper();
 
     public DdlEventService(DdlEventRepository repository,
                            RegisteredTableRepository registrations,
                            DbConnectionService connections,
                            TargetDdlExecutor executor,
-                           ConnectClient connect,
-                           @Value("${deltazium.topic-prefix}") String topicPrefix) {
+                           ConnectClient connect) {
         this.repository = repository;
         this.registrations = registrations;
         this.connections = connections;
         this.executor = executor;
         this.connect = connect;
-        this.topicPrefix = topicPrefix;
     }
 
     public List<DdlEvent> list() {
@@ -56,22 +47,14 @@ public class DdlEventService {
         return repository.findById(id).orElseThrow();
     }
 
-    /** 거부 — jdbc-sink topics에서 해당 테이블 토픽 제거 (apply 정지). */
+    /** 거부 — 해당 테이블의 jdbc-sink 커넥터를 pause (apply만 정지, changelog는 계속). */
     public DdlEvent reject(long id) {
         DdlEvent event = pending(id);
         RegisteredTable registered = requireRegistered(event);
-        String topic = topicPrefix + "." + registered.qualified();
-
-        JsonNode config = connect.getConfig("dz-jdbc-sink");
-        List<String> topics = new ArrayList<>(
-                List.of(config.get("topics").asText().split(",")));
-        if (topics.remove(topic)) {
-            ObjectNode updated = (ObjectNode) json.valueToTree(config);
-            updated.put("topics", String.join(",", topics));
-            connect.upsert("dz-jdbc-sink", updated);
-        }
+        String connector = "dz-jdbc-sink-" + registered.suffix();
+        connect.pause(connector);
         repository.decide(id, "REJECTED",
-                "apply 정지 — jdbc-sink에서 " + topic + " 제외. changelog는 계속 축적됨");
+                "apply 정지 — " + connector + " pause. changelog는 계속 축적됨");
         return repository.findById(id).orElseThrow();
     }
 

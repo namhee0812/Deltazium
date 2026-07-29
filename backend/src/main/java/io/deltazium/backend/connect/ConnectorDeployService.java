@@ -57,6 +57,11 @@ public class ConnectorDeployService {
         return connect.upsert(name, config);
     }
 
+    /** 커넥터 삭제 (데이터는 무관 — Connect 설정만). 없으면 예외가 나므로 호출측이 무시 처리. */
+    public void deleteConnector(String name) {
+        connect.delete(name);
+    }
+
     private JsonNode parse(String rendered) {
         try {
             return json.readTree(rendered);

@@ -15,10 +15,6 @@
     "primary.key.mode": "record_key",
     "schema.evolution": "none",
 
-    "transforms": "route",
-    "transforms.route.type": "org.apache.kafka.connect.transforms.RegexRouter",
-    "transforms.route.regex": "[^.]+\\.[^.]+\\.(.*)",
-    "transforms.route.replacement": "$1",
-    "collection.name.format": "${topic}"
+    "collection.name.format": "{{collection_name}}"
   }
 }

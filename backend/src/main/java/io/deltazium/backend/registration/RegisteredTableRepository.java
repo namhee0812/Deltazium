@@ -1,9 +1,13 @@
 package io.deltazium.backend.registration;
 
+import java.sql.PreparedStatement;
 import java.util.List;
+import java.util.Objects;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -14,7 +18,9 @@ public class RegisteredTableRepository {
             rs.getString("schema_name"),
             rs.getString("table_name"),
             rs.getLong("source_connection_id"),
-            rs.getLong("target_connection_id"));
+            rs.getLong("target_connection_id"),
+            rs.getString("target_schema_name"),
+            rs.getString("target_table_name"));
 
     private final JdbcTemplate jdbc;
 
@@ -41,10 +47,24 @@ public class RegisteredTableRepository {
         return cnt != null && cnt > 0;
     }
 
-    public void insert(String schema, String table, long sourceConnId, long targetConnId) {
-        jdbc.update("""
-                INSERT INTO registered_tables (schema_name, table_name, source_connection_id, target_connection_id)
-                VALUES (?, ?, ?, ?)""", schema, table, sourceConnId, targetConnId);
+    public long insert(String schema, String table, long sourceConnId, long targetConnId,
+                       String targetSchema, String targetTable) {
+        KeyHolder keys = new GeneratedKeyHolder();
+        jdbc.update(con -> {
+            PreparedStatement ps = con.prepareStatement("""
+                    INSERT INTO registered_tables
+                      (schema_name, table_name, source_connection_id, target_connection_id,
+                       target_schema_name, target_table_name)
+                    VALUES (?, ?, ?, ?, ?, ?)""", new String[] {"id"});
+            ps.setString(1, schema);
+            ps.setString(2, table);
+            ps.setLong(3, sourceConnId);
+            ps.setLong(4, targetConnId);
+            ps.setString(5, targetSchema);
+            ps.setString(6, targetTable);
+            return ps;
+        }, keys);
+        return Objects.requireNonNull(keys.getKeyAs(Number.class), "generated key").longValue();
     }
 
     public boolean delete(long id) {
