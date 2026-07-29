@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.deltazium.backend.registration.RegisteredColumnRepository">
+
+    <resultMap id="columnMapping" type="io.deltazium.backend.registration.ColumnMapping">
+        <constructor>
+            <arg column="target_column" javaType="String"/>
+            <arg column="source_expr" javaType="String"/>
+            <arg column="enabled" javaType="_boolean"/>
+        </constructor>
+    </resultMap>
+
+    <select id="findByTable" resultMap="columnMapping">
+        SELECT * FROM registered_columns
+         WHERE registered_table_id = #{registeredTableId}
+         ORDER BY id
+    </select>
+
+    <delete id="deleteByTable">
+        DELETE FROM registered_columns WHERE registered_table_id = #{registeredTableId}
+    </delete>
+
+    <insert id="insertOne">
+        INSERT INTO registered_columns (registered_table_id, target_column, source_expr, enabled)
+        VALUES (#{tableId}, #{m.targetColumn}, #{m.sourceExpr}, #{m.enabled})
+    </insert>
+
+</mapper>

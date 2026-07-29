@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.deltazium.backend.ddl.DdlEventRepository">
+
+    <resultMap id="ddlEvent" type="io.deltazium.backend.ddl.DdlEvent">
+        <constructor>
+            <idArg column="id" javaType="long"/>
+            <arg column="kafka_offset" javaType="_long"/>
+            <arg column="event_ts_ms" javaType="_long"/>
+            <arg column="scn" javaType="String"/>
+            <arg column="schema_name" javaType="String"/>
+            <arg column="table_name" javaType="String"/>
+            <arg column="ddl_text" javaType="String"/>
+            <arg column="state" javaType="String"/>
+            <arg column="note" javaType="String"/>
+            <arg column="decided_at" javaType="java.time.LocalDateTime"/>
+        </constructor>
+    </resultMap>
+
+    <select id="findAll" resultMap="ddlEvent">
+        SELECT * FROM ddl_events ORDER BY kafka_offset DESC
+    </select>
+
+    <select id="findById" resultMap="ddlEvent">
+        SELECT * FROM ddl_events WHERE id = #{id}
+    </select>
+
+    <select id="countByOffset" resultType="_int">
+        SELECT COUNT(*) FROM ddl_events WHERE kafka_offset = #{kafkaOffset}
+    </select>
+
+    <insert id="insertEvent">
+        INSERT INTO ddl_events (kafka_offset, event_ts_ms, scn, schema_name, table_name, ddl_text, state)
+        VALUES (#{kafkaOffset}, #{tsMs}, #{scn}, #{schema}, #{table}, #{ddl}, #{state})
+    </insert>
+
+    <update id="decide">
+        UPDATE ddl_events
+           SET state = #{state}, note = #{note}, decided_at = CURRENT_TIMESTAMP
+         WHERE id = #{id}
+    </update>
+
+</mapper>

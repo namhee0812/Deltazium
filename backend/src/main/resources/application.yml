@@ -10,6 +10,9 @@ spring:
     init:
       mode: always   # schema.sql은 IF NOT EXISTS라 재기동 안전
 
+mybatis:
+  mapper-locations: classpath:mappers/*.xml
+
 deltazium:
   connect:
     base-url: http://localhost:8083

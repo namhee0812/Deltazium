@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.deltazium.backend.registry.DbConnectionRepository">
+
+    <resultMap id="dbConnection" type="io.deltazium.backend.registry.DbConnection">
+        <constructor>
+            <idArg column="id" javaType="long"/>
+            <arg column="name" javaType="String"/>
+            <arg column="db_type" javaType="String"/>
+            <arg column="role" javaType="String"/>
+            <arg column="host" javaType="String"/>
+            <arg column="port" javaType="_int"/>
+            <arg column="database_name" javaType="String"/>
+            <arg column="username" javaType="String"/>
+            <arg column="password" javaType="String"/>
+        </constructor>
+    </resultMap>
+
+    <select id="findAll" resultMap="dbConnection">
+        SELECT * FROM db_connections ORDER BY id
+    </select>
+
+    <select id="findById" resultMap="dbConnection">
+        SELECT * FROM db_connections WHERE id = #{id}
+    </select>
+
+    <select id="findByName" resultMap="dbConnection">
+        SELECT * FROM db_connections WHERE name = #{name}
+    </select>
+
+    <insert id="insertRow" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO db_connections
+          (name, db_type, role, host, port, database_name, username, password)
+        VALUES (#{name}, #{dbType}, #{role}, #{host}, #{port}, #{databaseName}, #{username}, #{password})
+    </insert>
+
+    <update id="updateRow">
+        UPDATE db_connections
+           SET name = #{name}, role = #{role}, host = #{host}, port = #{port},
+               database_name = #{databaseName}, username = #{username}, password = #{password}
+         WHERE id = #{id}
+    </update>
+
+    <delete id="deleteRow">
+        DELETE FROM db_connections WHERE id = #{id}
+    </delete>
+
+</mapper>

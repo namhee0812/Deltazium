@@ -6,6 +6,8 @@ plugins {
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    // 메타데이터(PG) 쿼리는 MyBatis 매퍼 XML로 관리 (2026-07-29 결정)
+    implementation 'org.mybatis.spring.boot:mybatis-spring-boot-starter:3.0.5'
     runtimeOnly 'org.postgresql:postgresql'
     // Oracle 연결 테스트용 (Debezium 플러그인과 동일 계열 드라이버)
     implementation 'com.oracle.database.jdbc:ojdbc11:23.26.2.0.0'
@@ -17,5 +19,6 @@ dependencies {
     runtimeOnly 'org.apache.iceberg:iceberg-aws-bundle:1.11.0'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.mybatis.spring.boot:mybatis-spring-boot-starter-test:3.0.5'
     testRuntimeOnly 'com.h2database:h2:2.4.240'
 }
