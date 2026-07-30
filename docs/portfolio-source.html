@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4;
+    margin: 18mm 16mm;
+    @bottom-right { content: counter(page) " / " counter(pages); font-size: 8pt; color: #999; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Droid Sans", "Droid Sans Fallback", sans-serif;
+    font-size: 9.5pt; line-height: 1.62; color: #1a2233; margin: 0;
+  }
+  h1 { font-size: 20pt; margin: 0 0 2mm; letter-spacing: -0.5px; }
+  h1 .accent { color: #0e7490; }
+  h2 {
+    font-size: 12.5pt; margin: 8mm 0 3mm; padding-bottom: 1.2mm;
+    border-bottom: 2px solid #0e7490; color: #0f172a;
+  }
+  h3 { font-size: 10.5pt; margin: 4mm 0 1.5mm; color: #0e7490; }
+  p { margin: 1.2mm 0; }
+  .subtitle { font-size: 11pt; color: #475569; margin-bottom: 1mm; }
+  .meta { font-size: 8.5pt; color: #64748b; }
+  .meta b { color: #334155; }
+  table { border-collapse: collapse; width: 100%; margin: 2mm 0; font-size: 8.8pt; }
+  th { background: #f1f5f9; text-align: left; padding: 1.4mm 2.2mm; border: 0.5pt solid #cbd5e1; font-size: 8.3pt; }
+  td { padding: 1.4mm 2.2mm; border: 0.5pt solid #cbd5e1; vertical-align: top; }
+  pre.diagram {
+    background: #0f172a; color: #cde3f5; border-radius: 2mm; padding: 3.5mm 4mm;
+    font-family: "DejaVu Sans Mono", monospace; font-size: 7.6pt; line-height: 1.5;
+    overflow: hidden; white-space: pre;
+  }
+  ul { margin: 1.5mm 0 1.5mm 5mm; padding: 0; }
+  li { margin: 1mm 0; }
+  .cols { display: flex; gap: 5mm; }
+  .cols > div { flex: 1; }
+  .card {
+    border: 0.5pt solid #cbd5e1; border-left: 3pt solid #0e7490;
+    border-radius: 1.5mm; padding: 2.5mm 3.5mm; margin: 2mm 0;
+    page-break-inside: avoid;
+  }
+  .card h3 { margin-top: 0; }
+  .badge {
+    display: inline-block; background: #ecfeff; color: #0e7490; border: 0.5pt solid #a5d8e2;
+    border-radius: 1mm; padding: 0 1.8mm; font-size: 8pt; margin-right: 1.2mm;
+  }
+  .ok { color: #047857; font-weight: bold; }
+  .num { font-size: 16pt; font-weight: bold; color: #0e7490; }
+  .stat { text-align: center; border: 0.5pt solid #cbd5e1; border-radius: 1.5mm; padding: 2.5mm 1mm; }
+  .stat .lbl { font-size: 7.8pt; color: #64748b; }
+  .small { font-size: 8.3pt; color: #475569; }
+  .keep { page-break-inside: avoid; }
+  code { font-family: "DejaVu Sans Mono", monospace; font-size: 8.3pt; background: #f1f5f9; padding: 0 1mm; border-radius: 0.8mm; }
+</style>
+</head>
+<body>
+
+<h1>Delta<span class="accent">zium</span></h1>
+<p class="subtitle">Debezium + Kafka 기반 Oracle CDC 파이프라인 · 복구(replay) 아키텍처 · 웹 제어 콘솔</p>
+<p class="meta"><b>최남희</b> · 단독 설계·개발 · 2026.07 · <b>github.com/namhee0812/Deltazium</b> · 상용 CDC 솔루션(DeltaStream) 개발 경험 기반의 검증 프로젝트</p>
+
+<h2>1. 프로젝트 개요</h2>
+<p>
+Oracle의 변경(CDC)을 LogMiner로 캡처해 <b>같은 스트림을 두 갈래로 병행 적재</b>한다 —
+타깃 Oracle에는 현재 상태를(실적재), Iceberg/S3에는 모든 변경 이력을(append-only changelog).
+changelog는 미러링이 아니라 <b>특정 SCN 시점부터의 복구(replay)를 위한 원본</b>이며,
+이 복구 아키텍처의 성립을 실제 배선으로 증명하는 것이 프로젝트의 목적이다.
+그 위에 테이블 등록·사전 점검·DDL 승인·복구 트리거를 담당하는 제어면(Spring Boot + React)을 얹었다.
+</p>
+
+<div class="cols">
+  <div class="stat"><div class="num">72</div><div class="lbl">자동화 테스트</div></div>
+  <div class="stat"><div class="num">8.4k</div><div class="lbl">코드 라인 (Java 4.8k · TS 3.7k)</div></div>
+  <div class="stat"><div class="num">34k+</div><div class="lbl">실트래픽 E2E 검증 (행)</div></div>
+  <div class="stat"><div class="num">0</div><div class="lbl">캡처 장애 시 유실 (건)</div></div>
+</div>
+
+<h2>2. 아키텍처</h2>
+<pre class="diagram">Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─▶ Debezium JDBC sink ──▶ Oracle(TGT)  · 실적재(현재 상태)
+                                                          └─▶ Iceberg sink (append) ─▶ Iceberg / MinIO(S3)  · changelog(이력)
+
+복구:  recovery-job ──(Iceberg scan · SCN 순서 복원 · envelope 재조립)──▶ 복구 토픽 ──▶ recovery-sink(동일 apply 설정) ──▶ Oracle(TGT)
+
+[Web UI(React)] ⇄ [backend(Spring Boot): 등록·사전 점검 · DDL 승인 · 복구 트리거 · 이벤트 이력 · 실측 메트릭]</pre>
+
+<table>
+  <tr><th style="width:22%">컴포넌트</th><th>역할</th><th style="width:30%">보존/특성</th></tr>
+  <tr><td>Kafka (KRaft)</td><td>짧은 버퍼 · fan-out (두 sink가 독립 consumer group — lag 격리)</td><td>retention 24h — 이력 보관 책임 없음</td></tr>
+  <tr><td>Iceberg / MinIO</td><td>장기 이력 · 복구 원본 (envelope-as-is, append-only)</td><td>1일 파티션 drop = 보존 정책</td></tr>
+  <tr><td>Oracle 타깃</td><td>현재 상태 (PK upsert 멱등 apply)</td><td>—</td></tr>
+</table>
+
+<h2>3. 핵심 설계 판단</h2>
+
+<div class="card keep">
+<h3>멱등 apply를 전제로 한 복구 단순화</h3>
+<p>전달 보장은 at-least-once로 두고, apply를 PK 기반 upsert(MERGE)로 통일해 <b>몇 번을 재적용해도 결과가 같게</b> 만들었다.
+복구 재생의 경계 중복을 정밀 절단 없이 흡수하는 근거이며, PK 없는 테이블은 등록 단계에서 거부한다.
+복구는 재발행 단일 경로 — recovery-job은 Iceberg를 읽어 복구 토픽에 재발행까지만 하고,
+apply는 라이브와 동일한 JDBC sink 설정이 담당해 <b>복구 결과와 라이브 적재가 달라질 수 없는 구조</b>다.</p>
+</div>
+
+<div class="card keep">
+<h3>changelog 스키마를 실측 실험으로 확정</h3>
+<p>원안(평탄화 스키마)이 기성 커넥터·SMT 조합으로 구현 불가함을 실험으로 증명하고
+(스톡 SMT는 중첩 필드 승격 불가, 기존 변환 SMT는 before 이미지 소실 — 무손실 재조립 불변식 위반),
+<b>envelope 구조 그대로 저장 + backend가 테이블 사전 생성 + 1일 파티션</b>으로 설계를 개정했다.
+envelope 왕복 테스트(원본 → Iceberg 행 → 재조립 동등성)가 이 불변식의 회귀 방어선이다.</p>
+</div>
+
+<div class="card keep">
+<h3>캡처 장애의 재현·진단·전환 — 유실 0</h3>
+<p>공유 dev Oracle에서 LogMiner <code>redo_log_catalog</code> 전략이 ORA-1371(complete dictionary
+not found) 재시도 루프에 빠져 <b>커넥터는 RUNNING인데 캡처가 멈추는</b> 장애를 재현했다.
+딕셔너리 아카이브 존재를 소스 딕셔너리 조회로 확인해 전략 자체의 취약점으로 진단,
+<code>online_catalog</code>로 전환(DDL 이벤트는 양 전략 모두 발행됨을 확인해 승인 워크플로 유지)했고,
+소스 redo 재마이닝으로 밀린 9,673건을 전량 회수했다.
+커넥터 삭제 후 재등록 시 잔존 offset으로 스냅샷이 건너뛰어지는 함정도 실측으로 발견해 등록 해제 시 offset 정리를 자동화했다.</p>
+</div>
+
+<div class="card keep">
+<h3>캡처 계정 최소 권한 8개 도출</h3>
+<p>Debezium 문서의 보수적 권한 목록(20여 개)을 실 배선의 권한 실패를 재현하며 8개로 압축.
+<code>SELECT ANY DICTIONARY</code>가 V$ 뷰 개별 grant를 대체함을 확인하고, <code>DBMS_LOGMNR_D</code>(딕셔너리 전략 전용)·
+<code>FLASHBACK ANY TABLE</code>(초기 스냅샷 전용 — flashback query 일관성)의 용도를 구분해 문서화했다.
+사전 점검이 권한 누락 시 DBA용 GRANT 스크립트를 생성해 안내하고 배포를 차단한다.</p>
+</div>
+
+<div class="card keep">
+<h3>운영 동작의 원칙화</h3>
+<p>jdbc-sink를 테이블별 커넥터로 분리해 타깃 이름 매핑과 테이블 단위 정지(DDL 거부 격리)를 가능하게 했고,
+recovery-sink는 apply 완료(consumer lag 소진)를 감지해 자동 정지한다("평시 정지" 원칙).
+복구 트리거의 자동 재개 옵션으로 <b>"정지 → S3 복구 → 라이브 복귀(go-live)"가 한 번의 조작으로 완결</b>된다 —
+경계 중복은 전부 멱등이 흡수하므로 절단 시점 계산이 필요 없다.</p>
+</div>
+
+<h2>4. 웹 콘솔 주요 기능</h2>
+<table>
+  <tr><th style="width:24%">화면</th><th>기능</th></tr>
+  <tr><td>토폴로지</td><td>파이프라인 캔버스(React Flow) — 커넥터 상태 실시간, RUNNING 구간 흐름 애니메이션</td></tr>
+  <tr><td>CDC 등록 위저드</td><td>6단계: 소스 선택 → 딕셔너리 조회(와일드카드 전개, PK 없는 테이블 선택 차단) → 타깃 → 컬럼 매핑(체크박스 제외·<code>${소스컬럼}</code> 변환식·구문 검증) → 사전 점검(supp.log 승인 후 적용 · 권한 GRANT 안내) → 스냅샷 모드 선택(초기적재/현재부터) · 배포</td></tr>
+  <tr><td>테이블 모니터링</td><td>실측 지표 — 총 이벤트(offset)·이벤트/s·sink별 lag(AdminClient), 정지/재개/삭제(changelog 보존·삭제 선택), 상태 배지</td></tr>
+  <tr><td>DDL 이력</td><td>schema change topic 상시 수집(retention 만료 대비 DB 적재), 승인(타깃 이름 치환 실행)/거부(테이블 단위 apply 정지), 비전파성 DDL 자동 무시</td></tr>
+  <tr><td>이벤트</td><td>테이블별 운영 이력 — 등록·정지·DDL·복구·커넥터 장애 전이(원인 trace 포함) 타임라인</td></tr>
+  <tr><td>복구</td><td>changelog(S3) 현황(용량·보존 구간·파티션별) · SCN 지정 재발행 · go-live 자동 재개 · SRC/TGT 정합 검증(행수+체크섬)</td></tr>
+</table>
+
+<h2>5. 검증 결과</h2>
+<ul>
+  <li><span class="ok">✔</span> 실 Oracle end-to-end: 초기 스냅샷(30,088행) → LogMiner 실시간 스트리밍 → 타깃 apply(lag 0) + changelog 커밋까지 실트래픽 확인</li>
+  <li><span class="ok">✔</span> 캡처 장애(ORA-1371) 재현 → 전략 전환 → 밀린 9,673건 유실 0 회수</li>
+  <li><span class="ok">✔</span> envelope 왕복 동등성·changelog 사전 생성(실 카탈로그)·복구 재발행 스모크(73건) 등 자동화 테스트 72건</li>
+  <li><span class="ok">✔</span> 사전 점검 게이트 실동작: LogMiner 권한 누락 감지 → GRANT 안내 → 부여 후 통과</li>
+</ul>
+
+<h2>6. 기술 스택</h2>
+<p class="small">
+<span class="badge">Java 21</span><span class="badge">Spring Boot 3.5</span><span class="badge">MyBatis</span><span class="badge">Debezium 3.6 (Oracle LogMiner · JDBC sink)</span><span class="badge">Kafka 4.3 KRaft</span><span class="badge">Apache Iceberg 1.11</span><span class="badge">MinIO(S3)</span><span class="badge">PostgreSQL 15</span><span class="badge">React 19</span><span class="badge">TypeScript</span><span class="badge">Vite</span><span class="badge">Tailwind 4 · shadcn/ui</span><span class="badge">React Flow · TanStack Table</span>
+</p>
+<p class="small">데이터 경로는 기성 커넥터만 사용(자체 코드는 제어면·복구·UI에 한정 — apply 시맨틱 단일 경로 유지가 설계 원칙).
+인프라는 베어메탈 스크립트로 멱등 구축(Iceberg Kafka Connect sink는 공식 프리빌드가 없어 소스 빌드).
+Iceberg 읽기는 Spark/Trino 없이 iceberg-data 라이브러리 단일 프로세스.</p>
+
+<h2>7. 남은 과제</h2>
+<p class="small">
+복구 리허설 풀 사이클(타깃 훼손 → SCN 재발행 → 정합 검증 일치) 실행 검증 ·
+기동 중 테이블 추가 시 초기적재(incremental snapshot + Kafka signal) ·
+컬럼 리네임의 적재 반영(스톡 sink 한계 — 저장·검증까지 구현, 데이터 경로 정책 결정 대기) ·
+소스 대비 캡처 지연(초 단위) 지표
+</p>
+
+
+<h2 style="page-break-before: always;">8. 콘솔 화면</h2>
+<div class="keep"><img src="/home/nhchoi/deltazium/docs/images/topology.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm;">
+<p class="small" style="text-align:center; margin-top:1mm;">토폴로지 — 커넥터 상태 실시간 (실적재·changelog 병행 경로, recovery 점선)</p></div>
+<div class="keep"><img src="/home/nhchoi/deltazium/docs/images/wizard.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm; margin-top:3mm;">
+<p class="small" style="text-align:center; margin-top:1mm;">등록 위저드 — 소스 딕셔너리 조회: PK 없는 테이블 선택 차단·supplemental logging 경고·행수</p></div>
+<div class="keep"><img src="/home/nhchoi/deltazium/docs/images/tables.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm; margin-top:3mm;">
+<p class="small" style="text-align:center; margin-top:1mm;">테이블 모니터링 — 실측 이벤트 수·이벤트/s·sink별 lag, 정지/재개/삭제</p></div>
+<div class="keep"><img src="/home/nhchoi/deltazium/docs/images/recovery.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm; margin-top:3mm;">
+<p class="small" style="text-align:center; margin-top:1mm;">복구 — changelog(S3) 현황(보존 구간·파티션)·SCN 지정 재발행·go-live 자동 재개·정합 검증</p></div>
+<div class="keep"><img src="/home/nhchoi/deltazium/docs/images/events.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm; margin-top:3mm;">
+<p class="small" style="text-align:center; margin-top:1mm;">운영 이벤트 타임라인 — 등록·정지·DDL·복구·커넥터 장애 전이(원인 trace 펼침)</p></div>
+
+</body>
+</html>
