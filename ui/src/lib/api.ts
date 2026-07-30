@@ -14,6 +14,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new Error(message)
   }
-  if (res.status === 204) return undefined as T
-  return (await res.json()) as T
+  // void 엔드포인트(정지/재개 등)는 200 + 빈 본문 — JSON 파싱 시도하면 안 됨
+  const text = await res.text()
+  if (!text) return undefined as T
+  return JSON.parse(text) as T
 }

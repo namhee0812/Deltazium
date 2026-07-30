@@ -71,7 +71,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         setRows(data)
         setError(null)
       })
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => setError('지표 조회 실패: ' + e.message))
     api<RegisteredTable[]>('/api/registrations').then(setRegistered).catch(() => {})
     api<ConnectorStates>('/api/connectors').then(setConnectors).catch(() => {})
   }, [])
@@ -266,9 +266,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         </span>
       </div>
 
-      {error && (
-        <p className="px-4 pb-2 text-sm text-destructive">지표 조회 실패: {error}</p>
-      )}
+      {error && <p className="px-4 pb-2 text-sm text-destructive">{error}</p>}
       {rows !== null && rows.length === 0 && !error && (
         <p className="px-4 pb-2 text-sm text-muted-foreground">
           등록된 테이블이 없습니다 — 상단 [＋ CDC 등록]으로 시작하세요.
