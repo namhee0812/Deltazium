@@ -74,8 +74,8 @@ function App() {
             <span className="text-crit">● backend 연결 안 됨</span>
           ) : (
             <>
-              <span>
-                <span className="text-ok">●</span> {summary.running} running
+              <span title="Kafka Connect 커넥터 수 (테이블 수 아님)">
+                <span className="text-ok">●</span> 커넥터 {summary.running} running
               </span>
               {summary.failed > 0 && (
                 <span>
