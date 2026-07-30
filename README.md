@@ -33,11 +33,11 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 
 | 모듈 | 내용 |
 |---|---|
-| `backend/` | Spring Boot 3 제어면 — DB 연결 저장소(Oracle 연결 테스트 포함), 소스 딕셔너리 조회(와일드카드 패턴 전개), 사전 점검(PK·supplemental logging·LogMiner 권한 8종), supplemental logging 승인 후 적용, 커넥터 템플릿 렌더링·배포(Connect REST), Iceberg changelog 테이블 사전 생성(JdbcCatalog) |
-| `ui/` | React 19 + TypeScript 콘솔 — 토폴로지 캔버스(React Flow, 커넥터 상태 실시간), 5단계 CDC 등록 위저드, 테이블 모니터링 그리드(TanStack Table), DDL 타임라인 |
-| `recovery-job/` | 플레인 Java — Debezium envelope ↔ changelog 변환·재조립, 왕복 동등성 테스트 |
+| `backend/` | Spring Boot 3 제어면 — DB 연결 저장소(Oracle 연결 테스트), 소스 딕셔너리 조회(와일드카드 전개), 사전 점검(PK·supplemental logging·LogMiner 권한 8종 — 누락 시 DBA GRANT 안내·배포 차단), 컬럼 매핑 검증, 커넥터 템플릿 렌더링·배포(Connect REST), changelog 테이블 사전 생성(JdbcCatalog), 스냅샷 모드 선택, CDC 정지/재개/삭제(offset 정리 포함), DDL 승인 워크플로(schema change topic 상시 소비·비전파성 DDL 자동 무시·타깃 이름 치환), 복구 트리거·정합 검증·go-live 자동 재개, 테이블별 운영 이벤트 이력(커넥터 장애 전이 trace 적재), Kafka 실측 메트릭(offset·lag). 메타데이터 쿼리는 MyBatis 매퍼 XML |
+| `ui/` | React 19 + TypeScript 콘솔 — 토폴로지 캔버스(React Flow, 커넥터 상태 실시간), 6단계 등록 위저드(딕셔너리 조회→컬럼 매핑→사전 점검→배포), 테이블 모니터링 그리드(실측 lag·정지/재개/삭제), DDL 타임라인(승인/거부), 운영 이벤트 타임라인, 복구 화면(changelog 현황 브라우저 포함) |
+| `recovery-job/` | 플레인 Java — Iceberg scan(SCN 필터·순서 복원) → envelope 재조립 → 복구 토픽 발행. 왕복 동등성 테스트 |
 | `connectors/` | 커넥터 설정 템플릿 4종 (설정 키 전수 공식 문서 검증) |
-| `deploy/` | 베어메탈 설치·기동·smoke test 스크립트 (멱등) |
+| `deploy/` | 베어메탈 설치·기동·smoke test 스크립트 (멱등), 로그 위치 표준화 |
 | `docs/` | 설계 기준 문서, 실측 실험 기록 |
 
 **가져다 쓴 것 (리포 밖에 바이너리로 설치):** Kafka 4.3.1(KRaft), Debezium Oracle/JDBC
@@ -64,6 +64,14 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 - **사전 점검이 배포를 게이트** — ARCHIVELOG·supplemental logging·권한을 등록 위저드에서
   검사. 자가 적용 가능한 것(테이블 supp.log)은 DDL을 보여주고 사용자 승인 후에만 실행,
   불가능한 것(권한)은 DBA용 GRANT 스크립트를 생성해 안내하고 통과 전 배포를 차단.
+- **LogMiner 전략을 장애 실측으로 전환** — redo_log_catalog가 공유 dev Oracle에서
+  ORA-1371 재시도 루프로 캡처를 멈추는 것을 재현·진단하고 online_catalog로 전환
+  (schema change 이벤트는 양 전략 모두 발행되므로 DDL 워크플로 유지). 커넥터 삭제 후
+  재등록 시 잔존 offset으로 스냅샷이 SKIP되는 함정도 실측으로 잡아 등록 해제 시 offset
+  정리를 자동화. → [connectors/README.md](connectors/README.md)
+- **운영 동작의 원칙화** — jdbc-sink는 테이블별 커넥터(타깃 이름 매핑·테이블 단위
+  정지·DDL 거부 격리), recovery-sink는 apply 완료(lag 소진) 감지 후 자동 정지("평시 정지"
+  원칙), 복구 완료 시 자동 재개(go-live)로 "정지 → S3 복구 → 라이브 복귀"가 한 조작으로 완결.
 
 ## 화면
 
@@ -91,12 +99,16 @@ Oracle은 별도 준비 필요 — ARCHIVELOG 모드, 캡처 계정 권한은 �
 
 ## 검증된 것 / 진행 중인 것
 
-- ✅ 초기 스냅샷 → Kafka → 타깃 Oracle apply(lag 0) + Iceberg changelog 커밋(evolve-schema로
-  before/after 자동 생성)까지 실 Oracle 대상 end-to-end 확인
-- ✅ envelope 왕복(재조립 동등성) 테스트, changelog 사전 생성 통합 테스트
-- 🔧 LogMiner 실시간 스트리밍 검증 (캡처 계정 권한 부여 후)
-- ⏳ 복구 리허설(SCN 지정 재발행 → 정합 검증), DDL 승인 워크플로 backend, 실 메트릭 수집
-  (테이블 그리드의 lag·DML 지표는 현재 mock)
+- ✅ 실 Oracle 대상 end-to-end: 초기 스냅샷(3만+ 행) → LogMiner 실시간 스트리밍 →
+  타깃 Oracle apply(lag 0) + Iceberg changelog 커밋(evolve-schema로 before/after 자동
+  생성)까지 실트래픽으로 확인. 캡처 장애(ORA-1371) 재현 → 전환 → 밀린 구간 유실 0 회수 포함
+- ✅ envelope 왕복(재조립 동등성) 테스트, changelog 사전 생성 통합 테스트,
+  changelog 73건 재발행 스모크(복구 경로)
+- ✅ 모니터링 실측화: 토픽 offset·sink별 consumer lag(AdminClient), DDL 이벤트 수집,
+  커넥터 장애 전이 이벤트(trace 포함)
+- ⏳ 복구 리허설 풀 사이클(타깃 훼손 → SCN 재발행 → 정합 검증 일치) — 기능은 갖춰짐, 실행 검증 대기
+- ⏳ 테이블별 incremental snapshot(기동 중 테이블 추가 시 초기적재 — Kafka signal),
+  컬럼 리네임의 적재 반영(스톡 sink 한계로 저장만 — 방침 결정 대기)
 
 ## 스택
 
