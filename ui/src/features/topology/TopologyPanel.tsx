@@ -52,6 +52,20 @@ function connectorStatus(states: ConnectorStates | null, name: string): NodeStat
   return s === 'RUNNING' ? 'ok' : s === 'PAUSED' ? 'warn' : 'crit'
 }
 
+/** jdbc-sink는 테이블별 커넥터(dz-jdbc-sink-*) — 최악 상태로 집계 */
+function jdbcSinkAggregate(states: ConnectorStates | null): { status: NodeStatus; count: number } {
+  if (!states) return { status: 'none', count: 0 }
+  const sinks = Object.entries(states).filter(([n]) => n.startsWith('dz-jdbc-sink-'))
+  if (sinks.length === 0) return { status: 'none', count: 0 }
+  const st = sinks.map(([, i]) => i.status?.connector?.state)
+  const status: NodeStatus = st.some((s) => s !== 'RUNNING' && s !== 'PAUSED')
+    ? 'crit'
+    : st.some((s) => s === 'PAUSED')
+      ? 'warn'
+      : 'ok'
+  return { status, count: sinks.length }
+}
+
 export function TopologyPanel() {
   const [connectors, setConnectors] = useState<ConnectorStates | null>(null)
   const [connections, setConnections] = useState<DbConnection[]>([])
@@ -100,8 +114,10 @@ export function TopologyPanel() {
         id: 'jdbc-sink', type: 'dz', position: { x: 690, y: 60 },
         data: {
           label: 'dz-jdbc-sink',
-          sub: 'PK upsert · 실 적재',
-          status: connectorStatus(connectors, 'dz-jdbc-sink'),
+          sub: jdbcSinkAggregate(connectors).count > 0
+            ? `PK upsert · 테이블별 ${jdbcSinkAggregate(connectors).count}개`
+            : 'PK upsert · 실 적재',
+          status: jdbcSinkAggregate(connectors).status,
         } satisfies DzNodeData,
       },
       {
@@ -148,12 +164,13 @@ export function TopologyPanel() {
     })
 
     const running = (name: string) => connectorStatus(connectors, name) === 'ok'
+    const jdbcRunning = jdbcSinkAggregate(connectors).status === 'ok'
     const edges: Edge[] = [
       edge('e1', 'oracle-src', 'dz-source', running('dz-source')),
       edge('e2', 'dz-source', 'kafka', running('dz-source')),
-      edge('e3', 'kafka', 'jdbc-sink', running('dz-jdbc-sink')),
+      edge('e3', 'kafka', 'jdbc-sink', jdbcRunning),
       edge('e4', 'kafka', 'iceberg-sink', running('dz-iceberg-sink')),
-      edge('e5', 'jdbc-sink', 'oracle-tgt', running('dz-jdbc-sink')),
+      edge('e5', 'jdbc-sink', 'oracle-tgt', jdbcRunning),
       edge('e6', 'iceberg-sink', 'iceberg', running('dz-iceberg-sink')),
       edge('e7', 'iceberg', 'recovery', false, true),
       edge('e8', 'recovery', 'kafka', false, true),
