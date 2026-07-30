@@ -124,16 +124,15 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       header: '',
       cell: ({ row }) => {
         const state = sinkState(row.original)
+        // 노랑은 "봐야 할 신호(lag 경고)" 전용 — 의도된 정지는 회색으로 구분
         const color =
           state === 'RUNNING'
             ? row.original.jdbcLag > 100
               ? COLOR.warn
               : COLOR.ok
-            : state === 'PAUSED'
-              ? COLOR.warn
-              : state === 'N/A'
-                ? COLOR.dim
-                : COLOR.crit
+            : state === 'PAUSED' || state === 'N/A'
+              ? COLOR.dim
+              : COLOR.crit
         return <span title={state} style={{ color }}>●</span>
       },
     }),
@@ -146,7 +145,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
           <span className="font-mono">
             {row.original.schemaName}.<b className="text-foreground">{row.original.tableName}</b>
             {state === 'PAUSED' && (
-              <span className="ml-2 rounded bg-warn/15 px-1.5 py-0.5 font-mono text-[10px] text-warn">
+              <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
                 정지됨
               </span>
             )}
@@ -187,11 +186,23 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     }),
     columnHelper.accessor('jdbcLag', {
       header: 'JDBC LAG',
-      cell: ({ getValue }) => (
-        <span className={`font-mono ${getValue() > 100 ? 'text-warn' : 'text-foreground'}`}>
-          {getValue().toLocaleString()}
-        </span>
-      ),
+      cell: ({ row, getValue }) => {
+        // 정지 중 lag 증가는 당연한 결과 — 경고색 대신 회색 유지
+        const paused = sinkState(row.original) === 'PAUSED'
+        return (
+          <span
+            className={`font-mono ${
+              paused
+                ? 'text-muted-foreground'
+                : getValue() > 100
+                  ? 'text-warn'
+                  : 'text-foreground'
+            }`}
+          >
+            {getValue().toLocaleString()}
+          </span>
+        )
+      },
     }),
     columnHelper.accessor('icebergLag', {
       header: 'ICEBERG LAG',
