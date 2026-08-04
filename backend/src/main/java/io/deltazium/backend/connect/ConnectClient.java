@@ -19,6 +19,8 @@ import org.springframework.web.client.RestClient;
  * --------------------------------------------------
  * 26. 07. 24.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 04.       | 최남희  | restartFailed 추가 — FAILED task 재시작 (KIP-745)
+ * --------------------------------------------------
  */
 @Component
 public class ConnectClient {
@@ -65,6 +67,12 @@ public class ConnectClient {
 
     public void resume(String name) {
         rest.put().uri("/connectors/{name}/resume", name).retrieve().toBodilessEntity();
+    }
+
+    /** 커넥터 + FAILED task 재시작 (KIP-745). 원인 해결 후 재시도 경로. */
+    public void restartFailed(String name) {
+        rest.post().uri("/connectors/{name}/restart?includeTasks=true&onlyFailed=true", name)
+                .retrieve().toBodilessEntity();
     }
 
     public void delete(String name) {

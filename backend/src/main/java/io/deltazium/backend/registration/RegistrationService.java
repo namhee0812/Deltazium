@@ -39,6 +39,9 @@ import org.springframework.transaction.annotation.Transactional;
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 04.       | 최남희  | resnapshot 추가 — 캡처 재스냅샷(offset 리셋 + snapshot.mode
+ * |                          | 오버라이드 재배포 + 재개), deployConnectors 오버라이드 오버로드
+ * --------------------------------------------------
  */
 @Service
 public class RegistrationService {
@@ -244,8 +247,37 @@ public class RegistrationService {
         return s == null || s.isBlank() ? null : s.trim().toUpperCase(Locale.ROOT);
     }
 
+    /**
+     * 캡처 재스냅샷 (운영 액션) — stop → offset 삭제 → snapshot.mode 오버라이드 재배포 → 재개.
+     * INITIAL: 전 테이블 재적재 후 스트리밍(무유실 재구축). NO_DATA: 현재 SCN부터 스트리밍만(갭 유실 수용).
+     * 멱등 upsert 전제라 재적재가 타깃 데이터를 훼손하지 않는다.
+     */
+    public void resnapshot(String mode) {
+        List<RegisteredTable> all = repository.findAll();
+        if (all.isEmpty()) {
+            throw new IllegalStateException("등록된 테이블이 없다 — 재스냅샷 대상 없음");
+        }
+        String m = mode == null ? "INITIAL" : mode.toUpperCase(Locale.ROOT);
+        if (!m.equals("INITIAL") && !m.equals("NO_DATA")) {
+            throw new IllegalArgumentException("mode는 INITIAL 또는 NO_DATA여야 한다: " + mode);
+        }
+        DbConnection source = connections.get(all.get(0).sourceConnectionId());
+        DbConnection target = connections.get(all.get(0).targetConnectionId());
+        events.record("-", "dz-source", "RESNAPSHOT_REQUESTED", "INFO",
+                ("INITIAL".equals(m) ? "초기 스냅샷부터 재기동" : "현재 시점(no_data)부터 재기동")
+                        + " — offset 리셋", null);
+        deploy.stopAndResetOffsets("dz-source");
+        deployConnectors(source, target, m.equals("NO_DATA") ? "no_data" : "initial");
+        deploy.resumeConnector("dz-source");
+    }
+
     /** 등록 전체 목록 기준으로 source·iceberg-sink(전역)·jdbc-sink(테이블별) 갱신 배포. */
     private void deployConnectors(DbConnection source, DbConnection target) {
+        deployConnectors(source, target, null);
+    }
+
+    /** @param snapshotModeOverride null이면 첫 등록의 선택을 따르고, 지정 시 그 모드로 배포(재스냅샷). */
+    private void deployConnectors(DbConnection source, DbConnection target, String snapshotModeOverride) {
         List<RegisteredTable> all = repository.findAll();
         String includeList = all.stream().map(RegisteredTable::qualified)
                 .collect(Collectors.joining(","));
@@ -256,8 +288,9 @@ public class RegistrationService {
             changelog.ensureChangelogTable(t.schemaName(), t.tableName());
         }
 
-        // snapshot.mode는 커넥터 전역 — 첫 등록(가장 오래된 행)의 선택을 따른다
-        String snapshotMode = all.stream()
+        // snapshot.mode는 커넥터 전역 — 첫 등록(가장 오래된 행)의 선택을 따른다 (재스냅샷 시 오버라이드)
+        String snapshotMode = snapshotModeOverride != null ? snapshotModeOverride
+                : all.stream()
                 .min(Comparator.comparingLong(RegisteredTable::id))
                 .map(t -> "NO_DATA".equalsIgnoreCase(t.snapshotMode()) ? "no_data" : "initial")
                 .orElse("initial");
