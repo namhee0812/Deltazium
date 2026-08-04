@@ -1,0 +1,42 @@
+# Kafka Connect 로그 설정 — Deltazium 버전
+# 기본값은 시간별 로테이션이라 하루 24파일씩 쌓인다. 여기서는:
+# 일 단위 롤오버 + 지난 날짜는 logs/yyyy-MM-dd/ 디렉터리로 이동 + 100MB 상한 + 14일 보존.
+# STDOUT appender는 제거 — nohup 리다이렉트 파일(connect-console.log)과의 이중 기록 방지.
+# start-infra.sh가 $DZ_RT/conf/로 렌더링해 KAFKA_LOG4J_OPTS로 지정한다.
+
+Configuration:
+  Properties:
+    Property:
+      - name: "kafka.logs.dir"
+        value: "."
+      - name: "logPattern"
+        value: "[%d] %p %X{connector.context}%m (%c:%L)%n"
+
+  Appenders:
+    RollingFile:
+      - name: ConnectAppender
+        fileName: "${sys:kafka.logs.dir}/connect.log"
+        filePattern: "${sys:kafka.logs.dir}/%d{yyyy-MM-dd}/connect-%i.log"
+        PatternLayout:
+          pattern: "${logPattern}"
+        Policies:
+          TimeBasedTriggeringPolicy:
+            modulate: true
+            interval: 1
+          SizeBasedTriggeringPolicy:
+            size: "100MB"
+        DefaultRolloverStrategy:
+          max: 10
+          Delete:
+            basePath: "${sys:kafka.logs.dir}"
+            maxDepth: 2
+            IfFileName:
+              glob: "*/connect-*.log"
+            IfLastModified:
+              age: "14d"
+
+  Loggers:
+    Root:
+      level: INFO
+      AppenderRef:
+        - ref: ConnectAppender

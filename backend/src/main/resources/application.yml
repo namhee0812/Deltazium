@@ -37,3 +37,13 @@ deltazium:
     # recovery-job 실행 스크립트 (gradle :recovery-job:installDist 산출물)
     launcher: ../recovery-job/build/install/recovery-job/bin/recovery-job
     log-dir: ${user.home}/deltazium-runtime/logs
+
+# 로그: 일 단위 롤오버 — 지난 날짜는 logs/yyyy-MM-dd/ 디렉터리로 이동 (인프라 로그 정책과 동일)
+logging:
+  file:
+    name: ${DZ_LOG_DIR:${user.home}/deltazium-runtime/logs}/backend.log
+  logback:
+    rollingpolicy:
+      file-name-pattern: ${DZ_LOG_DIR:${user.home}/deltazium-runtime/logs}/%d{yyyy-MM-dd}/backend-%i.log
+      max-file-size: 100MB
+      max-history: 14
