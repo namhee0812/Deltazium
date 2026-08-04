@@ -5,6 +5,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -22,6 +23,8 @@ import org.springframework.web.bind.annotation.RestController;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 07. 24.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ * 26. 08. 04.       | 최남희  | POST /{name}/restart 추가 — FAILED task 재시도
  * --------------------------------------------------
  */
 @RestController
@@ -58,6 +61,13 @@ public class ConnectProxyController {
     @PutMapping("/{name}/resume")
     public ResponseEntity<Void> resume(@PathVariable String name) {
         connect.resume(name);
+        return ResponseEntity.accepted().build();
+    }
+
+    /** 원인 해결 후 재시도 — FAILED된 커넥터·task만 재시작. */
+    @PostMapping("/{name}/restart")
+    public ResponseEntity<Void> restart(@PathVariable String name) {
+        connect.restartFailed(name);
         return ResponseEntity.accepted().build();
     }
 

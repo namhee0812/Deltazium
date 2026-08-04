@@ -84,7 +84,7 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 | ![운영 이벤트](docs/images/events.png) | ![복구](docs/images/recovery.png) |
 | 운영 이벤트 타임라인 — 장애 전이 trace 포함 | 복구 — changelog(S3) 현황·SCN 재발행·go-live·정합 검증 |
 | ![캡처 장애 배너](docs/images/capture-banner.png) | |
-| 캡처 장애 경고 배너 — task FAILED 실측 화면. 감지 시각·근본 원인(Caused by)·전체 trace 펼침. connector RUNNING/task FAILED 불일치로 나흘간 숨어 있던 실제 장애를 계기로 추가 | |
+| 캡처 장애 경고 배너 — task FAILED 실측 화면. 감지 시각·근본 원인(Caused by)·전체 trace 펼침 + [복구 시작](초기 스냅샷/현재 시점 선택 재기동, 진행률은 Debezium notification 실측). connector RUNNING/task FAILED 불일치로 나흘간 숨어 있던 실제 장애를 계기로 추가 | |
 
 ## 실행
 
