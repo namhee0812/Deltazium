@@ -46,12 +46,12 @@ Oracle ──Debezium source(LogMiner)──▶ Kafka ──┬─▶ Debezium J
 ## 빌드·테스트
 
 ```
-./deploy/start-infra.sh                             # 인프라 기동 (pg→minio→kafka→connect)
-./deploy/smoke-test.sh                              # 전 컴포넌트 헬스체크
-./deploy/stop-infra.sh                              # 정지 (데이터 보존)
+./deploy/dzadmin all start                          # 전체 기동: infra(pg→minio→kafka→connect)→backend→web
+./deploy/dzadmin status                             # 전체 상태 (컴포넌트: infra/backend[engine]/web[ui])
+./deploy/dzadmin backend restart                    # 코드 반영 재기동. web은 vite dev(--host 고정)
+./deploy/smoke-test.sh                              # 심층 헬스체크 (Connect 플러그인 포함)
 ./gradlew build                                     # backend + recovery-job
 ./gradlew :backend:test
-cd ui && npm run dev                                # UI 개발 서버
 ```
 
 - **커밋·push는 Claude가 수행한다** (이 리포 한정 — 사용자 레벨 규칙보다 우선. 2026-07-24 사용자 지시).

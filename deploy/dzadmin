@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# dzadmin — Deltazium 통합 운영 CLI
+# 사용법: dzadmin <컴포넌트> <동작>   /   dzadmin all <동작>   /   dzadmin status
+#   컴포넌트: infra    Kafka(KRaft)·Kafka Connect·MinIO·PostgreSQL
+#             backend  Spring Boot 제어면 (8090)          [별칭: engine]
+#             web      React 콘솔 vite dev 서버 (5173)    [별칭: ui]
+#             all      전부 (start: infra→backend→web, stop: 역순)
+#   동작:     start | stop | restart | status
+set -uo pipefail
+cd "$(dirname "$0")/.."
+source deploy/env.sh
+
+WEB_PORT=5173
+BACKEND_PORT=8090
+
+usage() {
+  cat <<'EOF'
+dzadmin — Deltazium 통합 운영 CLI
+
+사용법:
+  dzadmin <컴포넌트> <동작>
+  dzadmin status              # 전체 상태 요약
+  dzadmin --help
+
+컴포넌트:
+  infra     Kafka(KRaft) · Kafka Connect · MinIO · PostgreSQL
+  backend   Spring Boot 제어면 (8090)          [별칭: engine]
+  web       React 콘솔 vite dev 서버 (5173)    [별칭: ui]
+  all       전부 (start: infra→backend→web, stop: 역순)
+
+동작:
+  start     기동 (멱등 — 이미 떠 있으면 건너뜀. backend/web은 재기동)
+  stop      정지 (데이터 보존)
+  restart   stop 후 start
+  status    상태 표시
+
+예:
+  dzadmin all start           # 재부팅 후 전체 복구
+  dzadmin infra status
+  dzadmin backend restart     # 코드 반영 재기동
+  dzadmin web start
+
+로그: ~/deltazium-runtime/logs/  (일 단위 롤오버, 지난 날짜는 yyyy-MM-dd/ 디렉터리)
+EOF
+}
+
+port_status() { # label port
+  if curl -sf -o /dev/null --max-time 2 "http://localhost:$2" 2>/dev/null \
+     || (exec 3<>"/dev/tcp/127.0.0.1/$2") 2>/dev/null; then
+    printf "  %-9s UP    (port %s)\n" "$1" "$2"
+  else
+    printf "  %-9s DOWN  (port %s)\n" "$1" "$2"
+  fi
+}
+
+infra_status() {
+  echo "[infra]"
+  port_status pg "$DZ_PG_PORT"
+  port_status minio "$DZ_MINIO_PORT"
+  port_status kafka "$DZ_KAFKA_PORT"
+  port_status connect "$DZ_CONNECT_PORT"
+}
+
+backend_status() {
+  echo "[backend]"
+  if curl -sf -o /dev/null --max-time 3 "http://localhost:$BACKEND_PORT/api/connections/db-types" 2>/dev/null; then
+    printf "  %-9s UP    (port %s)\n" api "$BACKEND_PORT"
+  else
+    printf "  %-9s DOWN  (port %s)\n" api "$BACKEND_PORT"
+  fi
+}
+
+web_status() {
+  echo "[web]"
+  port_status vite "$WEB_PORT"
+}
+
+web_start() {
+  if (exec 3<>"/dev/tcp/127.0.0.1/$WEB_PORT") 2>/dev/null; then
+    web_stop
+  fi
+  cd ui
+  # npm 래퍼 없이 vite 직접 실행 — pid 하나로 정지 가능. --host: PC 브라우저 접속 허용
+  nohup node_modules/.bin/vite --host >"$DZ_LOG_DIR/ui-console.log" 2>&1 &
+  echo $! > "$DZ_PID_DIR/ui.pid"
+  cd ..
+  for i in $(seq 1 20); do
+    (exec 3<>"/dev/tcp/127.0.0.1/$WEB_PORT") 2>/dev/null && break
+    sleep 1
+  done
+  if (exec 3<>"/dev/tcp/127.0.0.1/$WEB_PORT") 2>/dev/null; then
+    echo "[web] 기동 완료 (port $WEB_PORT, 로그: $DZ_LOG_DIR/ui-console.log)"
+  else
+    echo "[web] 기동 실패 — 로그 확인: $DZ_LOG_DIR/ui-console.log" >&2
+    return 1
+  fi
+}
+
+web_stop() {
+  local f="$DZ_PID_DIR/ui.pid"
+  if [ -f "$f" ] && kill -0 "$(cat "$f")" 2>/dev/null; then
+    kill "$(cat "$f")" && echo "[web] 정지"
+    rm -f "$f"
+  else
+    # pid 파일 없이 떠 있는 구 인스턴스 정리 (이 프로젝트의 vite만)
+    pkill -f "deltazium/ui/node_modules/.bin/vite" 2>/dev/null && echo "[web] 정지 (pid 파일 없음)" \
+      || echo "[web] 실행 중 아님"
+    rm -f "$f"
+  fi
+}
+
+run() { # component action
+  case "$1:$2" in
+    infra:start)     ./deploy/start-infra.sh ;;
+    infra:stop)      ./deploy/stop-infra.sh ;;
+    infra:restart)   ./deploy/stop-infra.sh; ./deploy/start-infra.sh ;;
+    infra:status)    infra_status ;;
+    backend:start)   ./deploy/start-backend.sh ;;
+    backend:stop)    ./deploy/stop-backend.sh ;;
+    backend:restart) ./deploy/stop-backend.sh; ./deploy/start-backend.sh ;;
+    backend:status)  backend_status ;;
+    web:start)       web_start ;;
+    web:stop)        web_stop ;;
+    web:restart)     web_stop; web_start ;;
+    web:status)      web_status ;;
+    *) echo "지원하지 않는 조합: $1 $2" >&2; usage; exit 1 ;;
+  esac
+}
+
+COMP="${1:-}"
+ACTION="${2:-}"
+
+case "$COMP" in
+  -h|--help|help|"") usage; [ -n "$COMP" ]; exit $? ;;
+  status) infra_status; backend_status; web_status; exit 0 ;;
+  engine) COMP=backend ;;
+  ui)     COMP=web ;;
+esac
+
+case "$COMP" in
+  infra|backend|web) ;;
+  all) ;;
+  *) echo "알 수 없는 컴포넌트: $COMP" >&2; usage; exit 1 ;;
+esac
+
+case "$ACTION" in
+  start|stop|restart|status) ;;
+  *) echo "알 수 없는 동작: ${ACTION:-<없음>}" >&2; usage; exit 1 ;;
+esac
+
+if [ "$COMP" = all ]; then
+  case "$ACTION" in
+    start)   run infra start; run backend start; run web start ;;
+    stop)    run web stop; run backend stop; run infra stop ;;
+    restart) run web stop; run backend stop; run infra stop
+             run infra start; run backend start; run web start ;;
+    status)  infra_status; backend_status; web_status ;;
+  esac
+else
+  run "$COMP" "$ACTION"
+fi
