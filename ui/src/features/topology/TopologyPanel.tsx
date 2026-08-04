@@ -1,3 +1,16 @@
+/**
+ * 파일명 : TopologyPanel.tsx
+ * 작성일자 : 26. 07. 25.
+ * 작성자 : 최남희
+ * 설명 : 파이프라인 토폴로지 캔버스(React Flow) — 커넥터·DB 연결 상태 실시간 반영.
+ *
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 25.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 import { useEffect, useMemo, useState } from 'react'
 import { Background, Handle, Position, ReactFlow } from '@xyflow/react'
 import type { Edge, Node, NodeProps } from '@xyflow/react'

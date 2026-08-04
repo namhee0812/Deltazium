@@ -1,4 +1,16 @@
-/** backend REST 호출 헬퍼 — 실패 시 서버 error 메시지를 Error로 던진다. */
+/**
+ * 파일명 : api.ts
+ * 작성일자 : 26. 07. 25.
+ * 작성자 : 최남희
+ * 설명 : backend REST 호출 헬퍼 — 실패 시 서버 error 메시지를 Error로 던진다.
+ *
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 25.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
