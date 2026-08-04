@@ -10,6 +10,8 @@
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 04.       | 최남희  | sink 상태 판정을 effectiveState(connector+task)로 교체
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -31,6 +33,8 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
+import { effectiveState } from '@/lib/connect'
+import type { ConnectorStates } from '@/lib/connect'
 
 /* 테이블 모니터링 (ui-reference v2·v3) — 전부 실측:
    행 = 등록 테이블, 총 이벤트 = 토픽 end offset, 이벤트/s = offset 증가율,
@@ -51,8 +55,6 @@ interface RegisteredTable {
   schemaName: string
   tableName: string
 }
-
-type ConnectorStates = Record<string, { status?: { connector?: { state?: string } } }>
 
 const COLOR = { ok: '#56D89C', warn: '#F5B453', crit: '#F0647A', accent: '#53C8E8', dim: '#8A97B4' }
 
@@ -98,8 +100,10 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   const idOf = (m: TableMetrics) =>
     registered.find((r) => r.schemaName === m.schemaName && r.tableName === m.tableName)?.id
 
-  const sinkState = (m: TableMetrics) =>
-    connectors[`dz-jdbc-sink-${suffix(m)}`]?.status?.connector?.state ?? 'N/A'
+  const sinkState = (m: TableMetrics) => {
+    const info = connectors[`dz-jdbc-sink-${suffix(m)}`]
+    return info ? effectiveState(info) : 'N/A'
+  }
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true)

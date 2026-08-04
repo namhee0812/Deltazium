@@ -10,9 +10,13 @@
  * --------------------------------------------------
  * 26. 07. 24.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 04.       | 최남희  | 상단 요약 running 집계를 effectiveState(connector+task) 기준으로 교체
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
+import { effectiveState } from '@/lib/connect'
+import type { ConnectorStates } from '@/lib/connect'
 import { ConnectionsPanel } from '@/features/connections/ConnectionsPanel'
 import { DdlPanel } from '@/features/ddl/DdlPanel'
 import { EventsPanel } from '@/features/events/EventsPanel'
@@ -33,8 +37,6 @@ const VIEWS: [View, string][] = [
   ['connections', 'DB 연결'],
 ]
 
-type ConnectorStates = Record<string, { status?: { connector?: { state?: string } } }>
-
 function App() {
   const [view, setView] = useState<View>('topology')
   const [summary, setSummary] = useState<{ running: number; failed: number } | null>(null)
@@ -45,7 +47,7 @@ function App() {
     const load = () =>
       api<ConnectorStates>('/api/connectors')
         .then((cs) => {
-          const states = Object.values(cs).map((c) => c.status?.connector?.state)
+          const states = Object.values(cs).map((c) => effectiveState(c))
           setSummary({
             running: states.filter((s) => s === 'RUNNING').length,
             failed: states.filter((s) => s !== 'RUNNING').length,
