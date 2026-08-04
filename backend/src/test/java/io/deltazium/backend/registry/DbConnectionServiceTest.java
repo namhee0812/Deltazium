@@ -12,6 +12,20 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+/**
+ * 파일명 : DbConnectionServiceTest.java
+ * 작성일자 : 26. 07. 25.
+ * 작성자 : 최남희
+ * 설명 : DB 연결 저장소 서비스 단위 테스트.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 25.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 @MybatisTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ImportAutoConfiguration(SqlInitializationAutoConfiguration.class)

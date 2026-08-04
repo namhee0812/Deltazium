@@ -15,6 +15,20 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 import org.springframework.http.MediaType;
 
+/**
+ * 파일명 : ConnectClientTest.java
+ * 작성일자 : 26. 07. 24.
+ * 작성자 : 최남희
+ * 설명 : Kafka Connect REST 클라이언트 단위 테스트.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 24.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 class ConnectClientTest {
 
     private MockRestServiceServer server;

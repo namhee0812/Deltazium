@@ -6,7 +6,20 @@ import java.util.Optional;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
-/** SQL은 resources/mappers/ddl-event.xml */
+/**
+ * 파일명 : DdlEventRepository.java
+ * 작성일자 : 26. 07. 29.
+ * 작성자 : 최남희
+ * 설명 : SQL은 resources/mappers/ddl-event.xml
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 @Mapper
 public interface DdlEventRepository {
 

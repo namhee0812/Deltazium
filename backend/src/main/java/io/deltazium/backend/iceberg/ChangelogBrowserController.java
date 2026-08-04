@@ -10,6 +10,20 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 파일명 : ChangelogBrowserController.java
+ * 작성일자 : 26. 07. 29.
+ * 작성자 : 최남희
+ * 설명 : Iceberg changelog(S3) 현황 조회 REST API.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 @RestController
 @RequestMapping("/api/changelog")
 public class ChangelogBrowserController {

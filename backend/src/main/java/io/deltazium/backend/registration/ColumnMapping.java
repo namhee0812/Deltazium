@@ -5,8 +5,19 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 타깃 컬럼 하나의 매핑. sourceExpr는 현재 '${소스컬럼}' 형식만 지원한다
+ * 파일명 : ColumnMapping.java
+ * 작성일자 : 26. 07. 29.
+ * 작성자 : 최남희
+ * 설명 : 타깃 컬럼 하나의 매핑. sourceExpr는 현재 '${소스컬럼}' 형식만 지원한다
  * (함수·치환식은 추후 확장 — 구문 검증이 이 확장 지점을 지킨다).
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 public record ColumnMapping(String targetColumn, String sourceExpr, boolean enabled) {
 

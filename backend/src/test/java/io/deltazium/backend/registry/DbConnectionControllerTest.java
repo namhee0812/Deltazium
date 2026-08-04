@@ -17,6 +17,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import org.springframework.http.MediaType;
 
+/**
+ * 파일명 : DbConnectionControllerTest.java
+ * 작성일자 : 26. 07. 25.
+ * 작성자 : 최남희
+ * 설명 : DB 연결 REST API 테스트.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 25.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 @WebMvcTest(DbConnectionController.class)
 class DbConnectionControllerTest {
 

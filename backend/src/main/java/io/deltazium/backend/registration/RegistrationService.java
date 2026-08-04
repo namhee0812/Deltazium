@@ -23,12 +23,22 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * CDC 테이블 등록 (architecture.md 8절).
+ * 파일명 : RegistrationService.java
+ * 작성일자 : 26. 07. 25.
+ * 작성자 : 최남희
+ * 설명 : CDC 테이블 등록 (architecture.md 8절).
  * 흐름: 딕셔너리 조회 → 사전 점검(PK 필수, supp.log ALL, 권한) → 컬럼 매핑 검증 →
  * 메타데이터 저장 → 커넥터 배포.
- *
  * 커넥터 구성: source·iceberg-sink는 전역 1개, jdbc-sink는 **테이블별 1개**
  * (dz-jdbc-sink-<suffix>) — 타깃 테이블명 매핑과 테이블 단위 정지(7절)를 위해.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 25.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @Service
 public class RegistrationService {

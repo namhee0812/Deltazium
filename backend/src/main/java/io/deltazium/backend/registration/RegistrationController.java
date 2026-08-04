@@ -17,6 +17,20 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 파일명 : RegistrationController.java
+ * 작성일자 : 26. 07. 25.
+ * 작성자 : 최남희
+ * 설명 : CDC 테이블 등록·정지/재개/해제 REST API.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 25.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 @RestController
 @RequestMapping("/api/registrations")
 public class RegistrationController {

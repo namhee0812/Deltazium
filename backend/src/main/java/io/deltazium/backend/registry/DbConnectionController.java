@@ -16,6 +16,20 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 파일명 : DbConnectionController.java
+ * 작성일자 : 26. 07. 25.
+ * 작성자 : 최남희
+ * 설명 : DB 연결 저장소 REST API — 등록·연결 테스트·지원 DB 목록.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 25.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 @RestController
 @RequestMapping("/api/connections")
 public class DbConnectionController {

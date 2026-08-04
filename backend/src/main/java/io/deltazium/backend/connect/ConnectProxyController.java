@@ -11,7 +11,18 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * UI ⇄ Connect REST 프록시. UI는 Connect에 직접 붙지 않는다 (제어면 단일 경로).
+ * 파일명 : ConnectProxyController.java
+ * 작성일자 : 26. 07. 24.
+ * 작성자 : 최남희
+ * 설명 : UI ⇄ Connect REST 프록시. UI는 Connect에 직접 붙지 않는다 (제어면 단일 경로).
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 24.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @RestController
 @RequestMapping("/api/connectors")

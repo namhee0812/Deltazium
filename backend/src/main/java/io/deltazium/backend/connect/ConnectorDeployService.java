@@ -11,8 +11,19 @@ import io.deltazium.backend.template.TemplateRenderer;
 import org.springframework.stereotype.Service;
 
 /**
- * 커넥터 템플릿 렌더링 → Connect 배포. connectors/*.json.tmpl만 배포 가능 —
+ * 파일명 : ConnectorDeployService.java
+ * 작성일자 : 26. 07. 24.
+ * 작성자 : 최남희
+ * 설명 : 커넥터 템플릿 렌더링 → Connect 배포. connectors/*.json.tmpl만 배포 가능 —
  * 임의 설정 JSON을 받는 경로를 두지 않아 커넥터 구성이 항상 템플릿을 거치게 강제한다.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 24.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @Service
 public class ConnectorDeployService {

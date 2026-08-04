@@ -34,10 +34,21 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * 복구 트리거 (architecture.md 6절):
+ * 파일명 : RecoveryService.java
+ * 작성일자 : 26. 07. 29.
+ * 작성자 : 최남희
+ * 설명 : 복구 트리거 (architecture.md 6절):
  * ① recovery-sink 배포(대상 테이블용, live jdbc-sink와 동일 apply 설정)
  * ② recovery-job 프로세스 기동(Iceberg scan → 재발행) — apply는 하지 않는 잡
  * ③ 상태 추적 + SRC/TGT 정합 검증(행수·체크섬, 6.4절 ⑤)
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @Service
 public class RecoveryService {

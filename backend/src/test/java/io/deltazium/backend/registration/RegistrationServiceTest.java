@@ -38,6 +38,20 @@ import static org.mockito.Mockito.when;
 @ImportAutoConfiguration(SqlInitializationAutoConfiguration.class)
 @Import({RegistrationService.class, DbConnectionService.class,
         io.deltazium.backend.events.TableEventService.class})
+/**
+ * 파일명 : RegistrationServiceTest.java
+ * 작성일자 : 26. 07. 25.
+ * 작성자 : 최남희
+ * 설명 : 테이블 등록 서비스(매핑 정규화·커넥터 설정) 단위 테스트.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 25.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 @EnableConfigurationProperties(IcebergProperties.class)
 class RegistrationServiceTest {
 

@@ -23,15 +23,25 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * 복구 재발행 (architecture.md 6절): Iceberg changelog scan(SCN 범위) →
+ * 파일명 : RecoveryJob.java
+ * 작성일자 : 26. 07. 29.
+ * 작성자 : 최남희
+ * 설명 : 복구 재발행 (architecture.md 6절): Iceberg changelog scan(SCN 범위) →
  * envelope 재조립 → 복구 토픽 발행. **타깃 apply는 하지 않는다** — recovery-sink
  * (live와 동일한 JDBC sink 설정)가 담당한다. 여기가 이 잡의 경계다.
- *
  * 인자(키=값):
- *   catalog-uri, catalog-user, catalog-password, warehouse,
- *   s3-endpoint, s3-access-key, s3-secret-key,
- *   table=changelog.cdc_auto_100, from-scn=31066101955,
- *   key-columns=ID[,COL2], bootstrap=localhost:9092, topic=dz-recovery.cdc_auto_100
+ * catalog-uri, catalog-user, catalog-password, warehouse,
+ * s3-endpoint, s3-access-key, s3-secret-key,
+ * table=changelog.cdc_auto_100, from-scn=31066101955,
+ * key-columns=ID[,COL2], bootstrap=localhost:9092, topic=dz-recovery.cdc_auto_100
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 public final class RecoveryJob {
 

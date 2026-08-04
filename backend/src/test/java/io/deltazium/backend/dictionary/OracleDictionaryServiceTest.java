@@ -6,6 +6,20 @@ import static io.deltazium.backend.dictionary.OracleDictionaryService.parsePatte
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+/**
+ * 파일명 : OracleDictionaryServiceTest.java
+ * 작성일자 : 26. 07. 25.
+ * 작성자 : 최남희
+ * 설명 : 소스 딕셔너리 조회(패턴 전개·사전 점검) 단위 테스트.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 25.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 class OracleDictionaryServiceTest {
 
     @Test

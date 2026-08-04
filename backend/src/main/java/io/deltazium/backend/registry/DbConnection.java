@@ -3,8 +3,19 @@ package io.deltazium.backend.registry;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
- * DB 연결 등록 정보. 현재 Oracle만 지원 (dbType 고정 검증은 서비스에서).
+ * 파일명 : DbConnection.java
+ * 작성일자 : 26. 07. 25.
+ * 작성자 : 최남희
+ * 설명 : DB 연결 등록 정보. 현재 Oracle만 지원 (dbType 고정 검증은 서비스에서).
  * password는 응답 직렬화에서 제외 (WRITE_ONLY).
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 25.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 public record DbConnection(
         Long id,

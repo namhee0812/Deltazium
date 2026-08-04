@@ -12,9 +12,20 @@ import org.apache.iceberg.types.Types;
 import org.springframework.stereotype.Service;
 
 /**
- * changelog 테이블 사전 생성 (architecture.md 5.1절 개정판).
+ * 파일명 : ChangelogTableService.java
+ * 작성일자 : 26. 07. 26.
+ * 작성자 : 최남희
+ * 설명 : changelog 테이블 사전 생성 (architecture.md 5.1절 개정판).
  * 기본 골격(op/ts_ms/source 핵심 필드)만 만들고 before/after 등 나머지는
  * iceberg-sink의 evolve-schema가 첫 레코드에서 채운다.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 26.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @Service
 public class ChangelogTableService {
