@@ -40,6 +40,10 @@ import org.springframework.stereotype.Component;
  * --------------------------------------------------
  * 26. 08. 04.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 04.       | 최남희  | {schema,payload} 봉투 언랩 (워커 JSON converter가
+ * |                          | schemas.enabled=true — 최상위에서 찾다 전부 무시하던 버그),
+ * |                          | auto.offset.reset earliest (첫 스냅샷 STARTED 유실 방지)
+ * --------------------------------------------------
  */
 @Component
 @ConditionalOnProperty(name = "deltazium.notification-poller.enabled",
@@ -89,7 +93,9 @@ public class SnapshotNotificationPoller {
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "deltazium-backend-notifications");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+        // earliest: 토픽이 구독 후에 생성되는 첫 스냅샷에서 STARTED를 놓치지 않기 위함
+        // (커밋 이후로는 커밋 offset이 우선이라 재처리 없음)
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
         consumer = new KafkaConsumer<>(props);
         running.set(true);
@@ -129,6 +135,10 @@ public class SnapshotNotificationPoller {
         } catch (Exception e) {
             log.debug("notification 파싱 불가 — 건너뜀: {}", json);
             return;
+        }
+        // 워커가 JSON converter(schemas.enabled=true)라 {schema, payload} 봉투에 싸여 온다
+        if (n.has("payload") && n.get("payload").isObject()) {
+            n = n.get("payload");
         }
         String aggregate = n.path("aggregate_type").asText("");
         if (!"Initial Snapshot".equalsIgnoreCase(aggregate)) {

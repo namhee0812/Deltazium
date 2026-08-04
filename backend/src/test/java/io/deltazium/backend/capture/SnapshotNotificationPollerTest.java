@@ -87,4 +87,14 @@ class SnapshotNotificationPollerTest {
         poller.handle("not-json");
         assertThat(poller.status().phase()).isEqualTo("NONE");
     }
+
+    @Test
+    void schemas_enabled_봉투에_싸인_notification도_payload를_언랩해_처리한다() {
+        // 실측: 워커 JSON converter(schemas.enabled=true)가 씌우는 {schema, payload} 형식
+        poller.handle("""
+                {"schema":{"type":"struct","name":"io.debezium.connector.common.Notification"},
+                 "payload":{"id":"f921","type":"STARTED","aggregate_type":"Initial Snapshot",
+                 "additional_data":{"connector_name":"dz"},"timestamp":1785828000000}}""");
+        assertThat(poller.status().phase()).isEqualTo("IN_PROGRESS");
+    }
 }
