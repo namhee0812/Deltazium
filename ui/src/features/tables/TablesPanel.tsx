@@ -12,6 +12,9 @@
  * --------------------------------------------------
  * 26. 08. 04.       | 최남희  | sink 상태 판정을 effectiveState(connector+task)로 교체
  * --------------------------------------------------
+ * 26. 08. 04.       | 최남희  | 캡처(dz-source) 장애·일시정지 경고 배너 추가
+ * |                          | - 감지 시각(이벤트)·원인 한 줄(Caused by)·전체 trace 펼침
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -33,7 +36,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
-import { effectiveState } from '@/lib/connect'
+import { causeLine, effectiveState, traceOf } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
 
 /* 테이블 모니터링 (ui-reference v2·v3) — 전부 실측:
@@ -99,6 +102,28 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
 
   const idOf = (m: TableMetrics) =>
     registered.find((r) => r.schemaName === m.schemaName && r.tableName === m.tableName)?.id
+
+  // 캡처(dz-source) 전역 상태 — 행별 배지는 각 테이블의 jdbc-sink만 보므로,
+  // 캡처가 죽으면 여기 배너로 알린다 (sink 초록 + lag 0 = 정상처럼 보이는 착시 방지)
+  const sourceInfo = connectors['dz-source']
+  const sourceState = sourceInfo ? effectiveState(sourceInfo) : null
+  const sourceBroken = sourceState === 'FAILED'
+  const [detectedAt, setDetectedAt] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!sourceBroken) {
+      setDetectedAt(null)
+      return
+    }
+    interface Ev { occurredAt: string; eventType: string; message: string }
+    api<Ev[]>('/api/events?limit=100')
+      .then((evs) => {
+        const hit = evs.find(
+          (e) => e.eventType === 'CONNECTOR_FAILED' && e.message.includes('dz-source'))
+        setDetectedAt(hit ? hit.occurredAt.replace('T', ' ').slice(0, 16) : null)
+      })
+      .catch(() => setDetectedAt(null))
+  }, [sourceBroken])
 
   const sinkState = (m: TableMetrics) => {
     const info = connectors[`dz-jdbc-sink-${suffix(m)}`]
@@ -273,6 +298,40 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {sourceBroken && (
+        <div className="border-b border-crit/40 bg-crit/10 px-4 py-2.5 text-[13px]">
+          <div className="flex items-start gap-2">
+            <span className="mt-0.5 text-crit">⛔</span>
+            <div className="min-w-0 flex-1">
+              <span className="font-semibold text-crit">
+                캡처 정지 — 전 테이블 신규 변경 수집 중단
+              </span>
+              <span className="text-muted-foreground">
+                {' '}(타깃 apply·changelog에도 새 이벤트가 흐르지 않습니다)
+              </span>
+              <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                {detectedAt && <>감지: {detectedAt} · </>}
+                원인: {causeLine(sourceInfo) ?? 'trace 없음 — 이벤트 탭 참조'}
+              </div>
+              {traceOf(sourceInfo) && (
+                <details className="mt-1">
+                  <summary className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground">
+                    상세 보기 (전체 trace)
+                  </summary>
+                  <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface2 p-2 text-[10px] leading-snug">
+                    {traceOf(sourceInfo)}
+                  </pre>
+                </details>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {sourceState === 'PAUSED' && (
+        <div className="border-b border-border bg-surface2 px-4 py-2 text-[13px] text-muted-foreground">
+          ⏸ 캡처 일시정지 — 전 테이블 신규 변경 수집이 멈춰 있습니다 (재개 전까지 redo 보존 기간에 유의)
+        </div>
+      )}
       <div className="flex items-center gap-3 px-4 py-3">
         <Input
           value={globalFilter}
