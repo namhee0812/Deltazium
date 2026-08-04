@@ -25,13 +25,20 @@ Connect 플러그인 (`~/deltazium-runtime/connect-plugins/`):
 ## 사용법
 
 ```bash
-./deploy/install-runtime.sh  # 최초 1회: 바이너리 다운로드 + 플러그인 설치 (멱등)
-./deploy/start-infra.sh      # 멱등 — 떠 있는 컴포넌트는 건너뜀
-./deploy/smoke-test.sh       # 전 컴포넌트 + Connect 플러그인 3종 확인
-./deploy/start-backend.sh    # 제어면 기동 (bootJar 빌드 포함, 재실행 = 재기동)
-./deploy/stop-backend.sh
-./deploy/stop-infra.sh       # 정지 (데이터 보존)
+./deploy/install-runtime.sh          # 최초 1회: 바이너리 다운로드 + 플러그인 설치 (멱등)
+
+./deploy/dzadmin all start           # 전체 기동: infra(pg→minio→kafka→connect) → backend → web
+./deploy/dzadmin status              # 전체 상태 요약
+./deploy/dzadmin all stop            # 전체 정지 (역순, 데이터 보존)
+./deploy/dzadmin --help
+
+./deploy/dzadmin backend restart     # 코드 반영 재기동 (별칭: engine)
+./deploy/dzadmin web restart         # vite dev 서버 (--host 고정, 별칭: ui)
+./deploy/smoke-test.sh               # 심층 헬스체크 (Connect 플러그인 3종 포함)
 ```
+
+`dzadmin`은 기존 start/stop 스크립트의 통합 진입점이다 — 개별 스크립트도 그대로 쓸 수 있다.
+`~/deltazium-runtime/bin/dzadmin` 심링크가 있어 PATH에 잡히면 어디서든 `dzadmin`으로 호출 가능.
 
 로그 위치 (문제 추적 순서: UI 이벤트 탭 → 커넥터 status trace → 아래 파일):
 

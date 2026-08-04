@@ -90,12 +90,11 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 
 ```bash
 ./deploy/install-runtime.sh   # 최초 1회: Kafka·MinIO·플러그인 설치 (Iceberg sink는 소스 빌드)
-./deploy/start-infra.sh       # PostgreSQL → MinIO → Kafka → Connect 기동 (멱등)
-./deploy/smoke-test.sh        # 전 컴포넌트 + 플러그인 3종 헬스체크
-
 ./gradlew build               # backend + recovery-job (테스트 포함)
-./gradlew :backend:bootRun    # 제어면 API (8090)
-cd ui && npm install && npm run dev   # 콘솔 (5173, /api → 8090 프록시)
+cd ui && npm install && cd ..
+
+./deploy/dzadmin all start    # 인프라(pg→minio→kafka→connect) → backend(8090) → web(5173)
+./deploy/dzadmin status       # 전체 상태 요약 — 컴포넌트별 start/stop/restart는 --help 참조
 ```
 
 Oracle은 별도 준비 필요 — ARCHIVELOG 모드, 캡처 계정 권한은 위저드 사전 점검이 안내한다.
