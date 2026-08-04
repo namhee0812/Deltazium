@@ -358,17 +358,20 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     <div className="flex h-full min-h-0 flex-col">
       {snapshotActive && (
         <div className="border-b border-[#53C8E8]/40 bg-[#53C8E8]/10 px-4 py-2.5 text-[13px]">
-          <span className="font-semibold text-[#53C8E8]">⟳ 초기 스냅샷 진행 중</span>
+          <span className="font-semibold text-[#53C8E8]">
+            {snapshot!.phase === 'REQUESTED' ? '⟳ 재스냅샷 요청됨' : '⟳ 초기 스냅샷 진행 중'}
+          </span>
           <span className="ml-2 font-mono text-[12px] text-muted-foreground">
-            {snapshot!.phase === 'REQUESTED' && '커넥터 재기동 대기…'}
+            {snapshot!.phase === 'REQUESTED' &&
+              '커넥터 재기동 중 — 스냅샷 시작(STARTED) 알림 대기. 수 분째 그대로면 이벤트 탭·backend 로그 확인'}
             {snapshot!.phase === 'IN_PROGRESS' && (
               <>
                 {Object.keys(snapshot!.tables).length}개 테이블 완료
                 {' '}(총 {Object.values(snapshot!.tables).reduce((a, b) => a + b, 0).toLocaleString()}행)
                 {snapshot!.currentTable && <> · 진행 중: {snapshot!.currentTable}</>}
+                {' '}— 완료 시 자동으로 스트리밍(go-live) 전환
               </>
             )}
-            {' '}— 완료 시 자동으로 스트리밍(go-live) 전환
           </span>
         </div>
       )}
