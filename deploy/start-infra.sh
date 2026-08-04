@@ -64,8 +64,13 @@ else
     "$DZ_KAFKA_HOME/bin/kafka-storage.sh" format -t "$CID" -c "$DZ_RT/conf/server.properties" \
       >"$DZ_LOG_DIR/kafka-format.log" 2>&1
   fi
-  LOG_DIR="$DZ_LOG_DIR" nohup "$DZ_KAFKA_HOME/bin/kafka-server-start.sh" \
-    "$DZ_RT/conf/server.properties" >"$DZ_LOG_DIR/kafka.log" 2>&1 &
+  render deploy/kafka/log4j2.yaml "$DZ_RT/conf/kafka-log4j2.yaml"
+  # 기본 log4j2는 시간별 로테이션 — 일 단위(날짜 디렉터리) 우리 설정으로 교체.
+  # 본 로그는 log4j2가 server.log 등에 쓰고, 콘솔 리다이렉트는 기동 초기 오류 캡처용.
+  LOG_DIR="$DZ_LOG_DIR" \
+  KAFKA_LOG4J_OPTS="-Dlog4j2.configurationFile=$DZ_RT/conf/kafka-log4j2.yaml" \
+  nohup "$DZ_KAFKA_HOME/bin/kafka-server-start.sh" \
+    "$DZ_RT/conf/server.properties" >"$DZ_LOG_DIR/kafka-console.log" 2>&1 &
   echo $! > "$DZ_PID_DIR/kafka.pid"
   wait_port "$DZ_KAFKA_PORT" Kafka 60
 fi
@@ -75,8 +80,13 @@ if is_up "$DZ_CONNECT_PORT"; then
   echo "[connect] 이미 기동됨 (port $DZ_CONNECT_PORT)"
 else
   render deploy/connect/connect-distributed.properties "$DZ_RT/conf/connect-distributed.properties"
-  LOG_DIR="$DZ_LOG_DIR" nohup "$DZ_KAFKA_HOME/bin/connect-distributed.sh" \
-    "$DZ_RT/conf/connect-distributed.properties" >"$DZ_LOG_DIR/connect.log" 2>&1 &
+  render deploy/connect/connect-log4j2.yaml "$DZ_RT/conf/connect-log4j2.yaml"
+  # 기본 log4j2는 시간별 로테이션 — 일 단위(날짜 디렉터리) 우리 설정으로 교체.
+  # connect.log는 log4j2 전용으로 두고, 콘솔 리다이렉트는 별도 파일(이중 기록 방지).
+  LOG_DIR="$DZ_LOG_DIR" \
+  KAFKA_LOG4J_OPTS="-Dlog4j2.configurationFile=$DZ_RT/conf/connect-log4j2.yaml" \
+  nohup "$DZ_KAFKA_HOME/bin/connect-distributed.sh" \
+    "$DZ_RT/conf/connect-distributed.properties" >"$DZ_LOG_DIR/connect-console.log" 2>&1 &
   echo $! > "$DZ_PID_DIR/connect.pid"
   wait_port "$DZ_CONNECT_PORT" "Kafka Connect" 90
 fi

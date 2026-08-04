@@ -1,0 +1,152 @@
+# Kafka broker 로그 설정 — Deltazium 버전
+# 기본값(config/log4j2.yaml)은 시간별 로테이션이라 하루 24파일씩 쌓인다.
+# 여기서는: 일 단위 롤오버 + 지난 날짜는 logs/yyyy-MM-dd/ 디렉터리로 이동 + 100MB 상한 + 14일 보존.
+# STDOUT appender는 제거 — nohup 리다이렉트 파일(kafka-console.log)과의 이중 기록 방지.
+# start-infra.sh가 $DZ_RT/conf/로 렌더링해 KAFKA_LOG4J_OPTS로 지정한다.
+
+Configuration:
+  Properties:
+    Property:
+      - name: "kafka.logs.dir"
+        value: "."
+      - name: "logPattern"
+        value: "[%d] %p %m (%c)%n"
+
+  Appenders:
+    RollingFile:
+      - name: KafkaAppender
+        fileName: "${sys:kafka.logs.dir}/server.log"
+        filePattern: "${sys:kafka.logs.dir}/%d{yyyy-MM-dd}/server-%i.log"
+        PatternLayout:
+          pattern: "${logPattern}"
+        Policies:
+          TimeBasedTriggeringPolicy:
+            modulate: true
+            interval: 1
+          SizeBasedTriggeringPolicy:
+            size: "100MB"
+        DefaultRolloverStrategy:
+          max: 10
+          Delete:
+            basePath: "${sys:kafka.logs.dir}"
+            maxDepth: 2
+            IfFileName:
+              glob: "*/server-*.log"
+            IfLastModified:
+              age: "14d"
+      - name: StateChangeAppender
+        fileName: "${sys:kafka.logs.dir}/state-change.log"
+        filePattern: "${sys:kafka.logs.dir}/%d{yyyy-MM-dd}/state-change-%i.log"
+        PatternLayout:
+          pattern: "${logPattern}"
+        Policies:
+          TimeBasedTriggeringPolicy:
+            modulate: true
+            interval: 1
+          SizeBasedTriggeringPolicy:
+            size: "100MB"
+        DefaultRolloverStrategy:
+          max: 10
+      - name: RequestAppender
+        fileName: "${sys:kafka.logs.dir}/kafka-request.log"
+        filePattern: "${sys:kafka.logs.dir}/%d{yyyy-MM-dd}/kafka-request-%i.log"
+        PatternLayout:
+          pattern: "${logPattern}"
+        Policies:
+          TimeBasedTriggeringPolicy:
+            modulate: true
+            interval: 1
+          SizeBasedTriggeringPolicy:
+            size: "100MB"
+        DefaultRolloverStrategy:
+          max: 10
+      - name: CleanerAppender
+        fileName: "${sys:kafka.logs.dir}/log-cleaner.log"
+        filePattern: "${sys:kafka.logs.dir}/%d{yyyy-MM-dd}/log-cleaner-%i.log"
+        PatternLayout:
+          pattern: "${logPattern}"
+        Policies:
+          TimeBasedTriggeringPolicy:
+            modulate: true
+            interval: 1
+          SizeBasedTriggeringPolicy:
+            size: "100MB"
+        DefaultRolloverStrategy:
+          max: 10
+      - name: ControllerAppender
+        fileName: "${sys:kafka.logs.dir}/controller.log"
+        filePattern: "${sys:kafka.logs.dir}/%d{yyyy-MM-dd}/controller-%i.log"
+        PatternLayout:
+          pattern: "${logPattern}"
+        Policies:
+          TimeBasedTriggeringPolicy:
+            modulate: true
+            interval: 1
+          SizeBasedTriggeringPolicy:
+            size: "100MB"
+        DefaultRolloverStrategy:
+          max: 10
+      - name: AuthorizerAppender
+        fileName: "${sys:kafka.logs.dir}/kafka-authorizer.log"
+        filePattern: "${sys:kafka.logs.dir}/%d{yyyy-MM-dd}/kafka-authorizer-%i.log"
+        PatternLayout:
+          pattern: "${logPattern}"
+        Policies:
+          TimeBasedTriggeringPolicy:
+            modulate: true
+            interval: 1
+          SizeBasedTriggeringPolicy:
+            size: "100MB"
+        DefaultRolloverStrategy:
+          max: 10
+
+  Loggers:
+    Root:
+      level: INFO
+      AppenderRef:
+        - ref: KafkaAppender
+    Logger:
+      - name: kafka
+        level: INFO
+      - name: org.apache.kafka
+        level: INFO
+      - name: kafka.request.logger
+        level: WARN
+        additivity: false
+        AppenderRef:
+          ref: RequestAppender
+      - name: kafka.network.RequestChannel$
+        level: WARN
+        additivity: false
+        AppenderRef:
+          ref: RequestAppender
+      - name: org.apache.kafka.controller
+        level: INFO
+        additivity: false
+        AppenderRef:
+          ref: ControllerAppender
+      - name: org.apache.kafka.storage.internals.log.LogCleaner
+        level: INFO
+        additivity: false
+        AppenderRef:
+          ref: CleanerAppender
+      - name: org.apache.kafka.storage.internals.log.LogCleaner$CleanerThread
+        level: INFO
+        additivity: false
+        AppenderRef:
+          ref: CleanerAppender
+      - name: org.apache.kafka.storage.internals.log.Cleaner
+        level: INFO
+        additivity: false
+        AppenderRef:
+          ref: CleanerAppender
+      - name: state.change.logger
+        level: INFO
+        additivity: false
+        AppenderRef:
+          ref: StateChangeAppender
+      - name: kafka.authorizer.logger
+        level: INFO
+        additivity: false
+        AppenderRef:
+          ref: AuthorizerAppender

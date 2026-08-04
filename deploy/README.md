@@ -38,9 +38,15 @@ Connect 플러그인 (`~/deltazium-runtime/connect-plugins/`):
 | 로그 | 파일 |
 |---|---|
 | backend (등록·DDL·복구 API) | `~/deltazium-runtime/logs/backend.log` |
-| Kafka Connect (커넥터 상세) | `~/deltazium-runtime/logs/connect-YYYY-MM-DD-HH.log` |
-| Kafka 브로커 | `~/deltazium-runtime/logs/kafka.log` |
+| Kafka Connect (커넥터 상세 — Debezium·Iceberg sink 포함) | `~/deltazium-runtime/logs/connect.log` |
+| Kafka 브로커 | `~/deltazium-runtime/logs/server.log` (controller.log 등 동일 정책) |
 | 복구 실행별 | `~/deltazium-runtime/logs/recovery-<테이블>-<id>.log` |
+
+로테이션 정책: 오늘 로그는 위 파일에 쓰고, **일 단위 롤오버 시 `logs/yyyy-MM-dd/` 날짜
+디렉터리로 이동**한다 (예: `logs/2026-08-03/connect-1.log`). 파일당 100MB 상한, 14일 보존.
+`*-console.log`는 log4j/logback 초기화 전 기동 오류 캡처용 (기동마다 초기화, 평시 비어 있음).
+설정 원본: `deploy/kafka/log4j2.yaml`, `deploy/connect/connect-log4j2.yaml`,
+backend는 `application.yml`의 `logging` 절.
 
 주의사항 (실험으로 확인, docs/experiments/2026-07-24-iceberg-sink-schema.md):
 - Iceberg 배포판에 JDBC 드라이버 미포함 → install-runtime.sh가 plugin lib에 PG 드라이버 추가
