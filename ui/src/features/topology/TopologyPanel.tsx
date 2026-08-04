@@ -10,12 +10,17 @@
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 04.       | 최남희  | 상태 판정을 effectiveState(connector+task 최악값)로 교체
+ * |                          | - task만 FAILED인 장애가 초록으로 보이던 문제 수정
+ * --------------------------------------------------
  */
 import { useEffect, useMemo, useState } from 'react'
 import { Background, Handle, Position, ReactFlow } from '@xyflow/react'
 import type { Edge, Node, NodeProps } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { api } from '@/lib/api'
+import { effectiveState } from '@/lib/connect'
+import type { ConnectorStates } from '@/lib/connect'
 import type { DbConnection } from '@/features/connections/types'
 
 /* Deltazium 파이프라인 토폴로지 (architecture.md 2절) — 커넥터·DB 연결은 실데이터 */
@@ -57,11 +62,10 @@ function DzNode({ data, selected }: NodeProps) {
 
 const nodeTypes = { dz: DzNode }
 
-type ConnectorStates = Record<string, { status?: { connector?: { state?: string } } }>
-
+/** connector+task 합산 상태(effectiveState) 기준 — task만 FAILED인 경우도 빨간불 */
 function connectorStatus(states: ConnectorStates | null, name: string): NodeStatus {
   if (!states || !(name in states)) return 'none'
-  const s = states[name].status?.connector?.state
+  const s = effectiveState(states[name])
   return s === 'RUNNING' ? 'ok' : s === 'PAUSED' ? 'warn' : 'crit'
 }
 
@@ -70,7 +74,7 @@ function jdbcSinkAggregate(states: ConnectorStates | null): { status: NodeStatus
   if (!states) return { status: 'none', count: 0 }
   const sinks = Object.entries(states).filter(([n]) => n.startsWith('dz-jdbc-sink-'))
   if (sinks.length === 0) return { status: 'none', count: 0 }
-  const st = sinks.map(([, i]) => i.status?.connector?.state)
+  const st = sinks.map(([, i]) => effectiveState(i))
   const status: NodeStatus = st.some((s) => s !== 'RUNNING' && s !== 'PAUSED')
     ? 'crit'
     : st.some((s) => s === 'PAUSED')

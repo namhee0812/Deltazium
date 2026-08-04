@@ -28,6 +28,9 @@ import org.springframework.stereotype.Component;
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 04.       | 최남희  | 관측 시작 시점에 이미 FAILED인 커넥터도 이벤트 기록
+ * |                          | - 전이만 기록하던 방식은 backend 기동 전 장애를 놓침
+ * --------------------------------------------------
  */
 @Component
 @ConditionalOnProperty(name = "deltazium.health-watcher.enabled", havingValue = "true", matchIfMissing = true)
@@ -64,7 +67,19 @@ public class ConnectorHealthWatcher {
             JsonNode status = all.get(name).path("status");
             String state = effectiveState(status);
             String prev = lastStates.put(name, state);
-            if (prev == null || prev.equals(state)) {
+            if (prev == null) {
+                // 관측 시작(backend 기동) 시점에 이미 죽어 있던 커넥터도 이벤트로 남긴다 —
+                // 전이만 기록하면 backend보다 먼저 발생한 장애가 영영 안 보인다.
+                if (isBroken(state)) {
+                    RegisteredTable t0 = tableOf(name);
+                    events.record(t0 != null ? t0.schemaName() : "-",
+                            t0 != null ? t0.tableName() : name,
+                            "CONNECTOR_FAILED", "ERROR",
+                            name + " 관측 시작 시점에 이미 " + state, trace(status));
+                }
+                continue;
+            }
+            if (prev.equals(state)) {
                 continue;
             }
             RegisteredTable table = tableOf(name);
