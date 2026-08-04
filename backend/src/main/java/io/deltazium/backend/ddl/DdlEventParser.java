@@ -6,8 +6,19 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * Debezium schema change 이벤트(JSON converter, schemas.enabled) 파싱.
+ * 파일명 : DdlEventParser.java
+ * 작성일자 : 26. 07. 29.
+ * 작성자 : 최남희
+ * 설명 : Debezium schema change 이벤트(JSON converter, schemas.enabled) 파싱.
  * 구조: {schema, payload:{source:{snapshot,scn,...}, ts_ms, databaseName, ddl, tableChanges:[{type,id}]}}
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 final class DdlEventParser {
 

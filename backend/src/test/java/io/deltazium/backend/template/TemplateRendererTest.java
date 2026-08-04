@@ -14,6 +14,20 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+/**
+ * 파일명 : TemplateRendererTest.java
+ * 작성일자 : 26. 07. 24.
+ * 작성자 : 최남희
+ * 설명 : 커넥터 템플릿 렌더러 단위 테스트.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 24.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 class TemplateRendererTest {
 
     @TempDir

@@ -11,9 +11,20 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 실 인프라(PG 카탈로그 + MinIO) 대상 통합 테스트 — 기본 비활성.
+ * 파일명 : ChangelogTableServiceIT.java
+ * 작성일자 : 26. 07. 26.
+ * 작성자 : 최남희
+ * 설명 : 실 인프라(PG 카탈로그 + MinIO) 대상 통합 테스트 — 기본 비활성.
  * 실행: ./gradlew :backend:test --tests '*ChangelogTableServiceIT' -Dintegration=true
  * (deploy/start-infra.sh로 인프라가 떠 있어야 한다)
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 26.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @EnabledIfSystemProperty(named = "integration", matches = "true")
 class ChangelogTableServiceIT {

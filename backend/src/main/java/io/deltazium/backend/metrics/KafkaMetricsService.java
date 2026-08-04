@@ -20,8 +20,19 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * 테이블별 실측 지표 — 토픽 end offset(총 이벤트), offset 증가율(이벤트/s),
+ * 파일명 : KafkaMetricsService.java
+ * 작성일자 : 26. 07. 29.
+ * 작성자 : 최남희
+ * 설명 : 테이블별 실측 지표 — 토픽 end offset(총 이벤트), offset 증가율(이벤트/s),
  * sink별 consumer lag. Kafka AdminClient만 사용 (JMX 불필요).
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @Service
 public class KafkaMetricsService {

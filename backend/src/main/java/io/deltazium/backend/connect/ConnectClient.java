@@ -6,8 +6,19 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 /**
- * Kafka Connect REST API 클라이언트 (제어면의 유일한 커넥터 조작 경로).
+ * 파일명 : ConnectClient.java
+ * 작성일자 : 26. 07. 24.
+ * 작성자 : 최남희
+ * 설명 : Kafka Connect REST API 클라이언트 (제어면의 유일한 커넥터 조작 경로).
  * https://kafka.apache.org/documentation/#connect_rest
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 24.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @Component
 public class ConnectClient {

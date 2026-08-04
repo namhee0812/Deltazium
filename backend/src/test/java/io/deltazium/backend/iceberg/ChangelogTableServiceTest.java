@@ -6,6 +6,20 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/**
+ * 파일명 : ChangelogTableServiceTest.java
+ * 작성일자 : 26. 07. 26.
+ * 작성자 : 최남희
+ * 설명 : changelog 테이블 사전 생성 로직 단위 테스트.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 26.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 class ChangelogTableServiceTest {
 
     private final IcebergProperties props = new IcebergProperties(

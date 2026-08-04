@@ -12,9 +12,20 @@ import io.deltazium.backend.registry.DbConnectionService;
 import org.springframework.stereotype.Service;
 
 /**
- * DDL 승인 워크플로 (architecture.md 7절).
+ * 파일명 : DdlEventService.java
+ * 작성일자 : 26. 07. 29.
+ * 작성자 : 최남희
+ * 설명 : DDL 승인 워크플로 (architecture.md 7절).
  * 승인: 타깃에 DDL 적용 → 해당 테이블 CDC 계속.
  * 거부: jdbc-sink 구독에서 해당 테이블 토픽 제외 → apply만 정지 (changelog는 계속 축적).
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @Service
 public class DdlEventService {

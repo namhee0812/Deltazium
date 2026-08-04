@@ -10,8 +10,19 @@ import io.deltazium.backend.registry.DbConnection;
 import org.springframework.stereotype.Component;
 
 /**
- * 승인된 DDL을 타깃 Oracle에 실행 (7절 2단계).
+ * 파일명 : TargetDdlExecutor.java
+ * 작성일자 : 26. 07. 29.
+ * 작성자 : 최남희
+ * 설명 : 승인된 DDL을 타깃 Oracle에 실행 (7절 2단계).
  * 사용자가 UI에서 [승인]을 눌렀을 때만 호출된다 — 다른 경로에서 부르지 말 것.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @Component
 public class TargetDdlExecutor {

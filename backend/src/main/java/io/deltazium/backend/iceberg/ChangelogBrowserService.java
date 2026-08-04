@@ -19,8 +19,19 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * changelog(Iceberg/S3) 현황 조회 — S3 오브젝트를 직접 훑지 않고 Iceberg 메타데이터만 읽는다.
+ * 파일명 : ChangelogBrowserService.java
+ * 작성일자 : 26. 07. 29.
+ * 작성자 : 최남희
+ * 설명 : changelog(Iceberg/S3) 현황 조회 — S3 오브젝트를 직접 훑지 않고 Iceberg 메타데이터만 읽는다.
  * 카탈로그 호출이 수백 ms 걸릴 수 있어 주기 폴링 금지, 탭 진입/수동 새로고침 시에만 호출할 것.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @Service
 public class ChangelogBrowserService {

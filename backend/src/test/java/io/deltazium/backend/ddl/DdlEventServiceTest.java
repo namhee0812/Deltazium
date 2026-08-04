@@ -27,6 +27,20 @@ import static org.mockito.Mockito.verify;
 @ImportAutoConfiguration(SqlInitializationAutoConfiguration.class)
 @Import({DdlEventService.class, DbConnectionService.class,
         io.deltazium.backend.events.TableEventService.class})
+/**
+ * 파일명 : DdlEventServiceTest.java
+ * 작성일자 : 26. 07. 29.
+ * 작성자 : 최남희
+ * 설명 : DDL 승인 워크플로(타깃 이름 치환 포함) 단위 테스트.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 class DdlEventServiceTest {
 
     @Autowired

@@ -15,8 +15,19 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 커넥터 상태 전이 감시 — RUNNING→비정상 전이를 테이블 이벤트로 적재 (trace 포함).
+ * 파일명 : ConnectorHealthWatcher.java
+ * 작성일자 : 26. 07. 29.
+ * 작성자 : 최남희
+ * 설명 : 커넥터 상태 전이 감시 — RUNNING→비정상 전이를 테이블 이벤트로 적재 (trace 포함).
  * "언제부터 왜 죽었나"를 UI 타임라인에 남기는 것이 목적.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @Component
 @ConditionalOnProperty(name = "deltazium.health-watcher.enabled", havingValue = "true", matchIfMissing = true)

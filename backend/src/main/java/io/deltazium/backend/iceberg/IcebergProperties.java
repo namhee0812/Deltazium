@@ -3,8 +3,19 @@ package io.deltazium.backend.iceberg;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * changelog 저장소(Iceberg/MinIO) 설정 — Deltazium 자체 인프라라서 사용자 등록 대상이 아니다.
+ * 파일명 : IcebergProperties.java
+ * 작성일자 : 26. 07. 26.
+ * 작성자 : 최남희
+ * 설명 : changelog 저장소(Iceberg/MinIO) 설정 — Deltazium 자체 인프라라서 사용자 등록 대상이 아니다.
  * DB 연결 저장소의 TARGET(실적재 Oracle)과 구분할 것.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 26.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @ConfigurationProperties(prefix = "deltazium.iceberg")
 public record IcebergProperties(

@@ -5,7 +5,20 @@ import java.util.Optional;
 
 import org.apache.ibatis.annotations.Mapper;
 
-/** SQL은 resources/mappers/db-connection.xml */
+/**
+ * 파일명 : DbConnectionRepository.java
+ * 작성일자 : 26. 07. 25.
+ * 작성자 : 최남희
+ * 설명 : SQL은 resources/mappers/db-connection.xml
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 25.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 @Mapper
 public interface DbConnectionRepository {
 

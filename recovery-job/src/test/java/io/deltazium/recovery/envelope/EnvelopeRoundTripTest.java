@@ -15,12 +15,22 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * envelope 왕복 테스트 (CLAUDE.md 필수):
+ * 파일명 : EnvelopeRoundTripTest.java
+ * 작성일자 : 26. 07. 24.
+ * 작성자 : 최남희
+ * 설명 : envelope 왕복 테스트 (CLAUDE.md 필수):
  * 원본 envelope payload → Iceberg changelog 행(envelope-as-is, 5.1절 개정판) →
  * 재조립 envelope payload 동등성. 5.1절 무손실 불변식의 회귀 방어선.
- *
  * recovery-sink(JDBC sink)가 live와 동일하게 apply할 수 있는 형태
  * (schemas.enabled JSON + PK key)가 재조립의 목표다.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 24.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 class EnvelopeRoundTripTest {
 

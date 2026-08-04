@@ -17,9 +17,20 @@ import io.deltazium.backend.registry.DbConnection;
 import org.springframework.stereotype.Service;
 
 /**
- * 소스 Oracle 딕셔너리 조회·사전 점검·supplemental logging 적용.
+ * 파일명 : OracleDictionaryService.java
+ * 작성일자 : 26. 07. 25.
+ * 작성자 : 최남희
+ * 설명 : 소스 Oracle 딕셔너리 조회·사전 점검·supplemental logging 적용.
  * DDL 적용은 사용자가 UI에서 명시적으로 승인("적용하겠습니까?" YES)했을 때만 호출된다 —
  * 이 서비스가 임의로 호출되는 경로를 만들지 말 것.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 25.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @Service
 public class OracleDictionaryService {

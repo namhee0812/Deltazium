@@ -19,8 +19,19 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * schema change topic(topic.prefix) 상시 소비 → ddl_events 적재.
+ * 파일명 : DdlEventPoller.java
+ * 작성일자 : 26. 07. 29.
+ * 작성자 : 최남희
+ * 설명 : schema change topic(topic.prefix) 상시 소비 → ddl_events 적재.
  * 토픽 retention(24h)이 지나면 이벤트가 사라지므로 DB 적재가 원본 보존 수단이다 (실측 확인).
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @Component
 @ConditionalOnProperty(name = "deltazium.ddl-poller.enabled", havingValue = "true", matchIfMissing = true)

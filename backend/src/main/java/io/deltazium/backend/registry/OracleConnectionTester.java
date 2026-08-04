@@ -7,7 +7,20 @@ import java.util.Properties;
 
 import org.springframework.stereotype.Component;
 
-/** Oracle 연결 확인. 성공 시 DB 버전 문자열, 실패 시 SQLException 메시지를 돌려준다. */
+/**
+ * 파일명 : OracleConnectionTester.java
+ * 작성일자 : 26. 07. 25.
+ * 작성자 : 최남희
+ * 설명 : Oracle 연결 확인. 성공 시 DB 버전 문자열, 실패 시 SQLException 메시지를 돌려준다.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 25.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ */
 @Component
 public class OracleConnectionTester {
 

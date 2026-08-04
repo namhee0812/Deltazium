@@ -18,13 +18,23 @@ import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 
 /**
- * Iceberg changelog 한 행(envelope-as-is, 5.1절) → Kafka Connect JSON
+ * 파일명 : ConnectJsonAssembler.java
+ * 작성일자 : 26. 07. 29.
+ * 작성자 : 최남희
+ * 설명 : Iceberg changelog 한 행(envelope-as-is, 5.1절) → Kafka Connect JSON
  * (schemas.enabled=true 형식: {"schema":..., "payload":...}) 재조립.
- *
  * recovery-sink(JDBC sink)가 live와 동일하게 소비할 수 있어야 하므로 value 스키마를
  * Iceberg 테이블 스키마에서 유도한다. 타입 대응은 JDBC sink apply에 필요한 수준으로:
  * long→int64, decimal→Connect Decimal(logical), timestamp→Connect Timestamp(epoch ms).
  * 원본 Debezium 논리 타입명(io.debezium.time.*)까지는 복원하지 않는다 — apply 동등성이 기준.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 public final class ConnectJsonAssembler {
 

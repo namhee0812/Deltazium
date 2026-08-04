@@ -12,8 +12,19 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * connectors/*.json.tmpl의 {{var}} 자리를 채워 배포용 커넥터 설정을 만든다.
+ * 파일명 : TemplateRenderer.java
+ * 작성일자 : 26. 07. 24.
+ * 작성자 : 최남희
+ * 설명 : connectors/*.json.tmpl의 {{var}} 자리를 채워 배포용 커넥터 설정을 만든다.
  * 미해결 placeholder가 남으면 실패 — 잘못된 설정이 Connect까지 가는 것을 막는다.
+ *
+ * <p>
+ * 수정 내역
+ * --------------------------------------------------
+ * 수정일자      | 수정자   | 수정내역
+ * --------------------------------------------------
+ * 26. 07. 24.       | 최남희  | 최초 생성
+ * --------------------------------------------------
  */
 @Component
 public class TemplateRenderer {
