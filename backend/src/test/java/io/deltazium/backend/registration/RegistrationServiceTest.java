@@ -51,6 +51,9 @@ import static org.mockito.Mockito.when;
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 04.       | 최남희  | resnapshot 의존성(TargetDdlExecutor·KafkaMetricsService) 목 추가,
+ * |                          | truncate 재구축 순서 검증 테스트
+ * --------------------------------------------------
  */
 @EnableConfigurationProperties(IcebergProperties.class)
 class RegistrationServiceTest {
@@ -72,6 +75,12 @@ class RegistrationServiceTest {
 
     @MockitoBean
     OracleConnectionTester tester;
+
+    @MockitoBean
+    io.deltazium.backend.ddl.TargetDdlExecutor ddlExecutor;
+
+    @MockitoBean
+    io.deltazium.backend.metrics.KafkaMetricsService metrics;
 
     long srcId;
     long tgtId;
@@ -325,5 +334,31 @@ class RegistrationServiceTest {
         assertThat(vars.getValue()).containsEntry("iceberg_tables", "changelog.cdc_t1");
         assertThat(extra.getValue())
                 .containsEntry("iceberg.table.changelog.cdc_t1.route-regex", "^T1$");
+    }
+
+    @Test
+    void truncate_재구축은_정지_소진_TRUNCATE_offset리셋_순서를_지킨다() {
+        mockTable("CDC.T1", true, true);
+        service.register(srcId, tgtId, List.of(spec("CDC.T1")));
+        when(metrics.groupLag(anyString(), anyString())).thenReturn(0L);
+
+        service.resnapshot("INITIAL", true);
+
+        var order = org.mockito.Mockito.inOrder(deploy, ddlExecutor);
+        order.verify(deploy).stopAndAwait("dz-source");           // ① 유입 차단
+        order.verify(ddlExecutor).execute(any(),                  // ③ 잔량 소진(②) 후 truncate
+                eq("TRUNCATE TABLE CDC.T1"));
+        order.verify(deploy).deleteOffsets("dz-source");          // ④ offset 리셋
+        order.verify(deploy).resumeConnector("dz-source");        //    스냅샷 시작
+    }
+
+    @Test
+    void truncate_재구축은_NO_DATA와_조합을_거부한다() {
+        mockTable("CDC.T1", true, true);
+        service.register(srcId, tgtId, List.of(spec("CDC.T1")));
+
+        assertThatThrownBy(() -> service.resnapshot("NO_DATA", true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("INITIAL");
     }
 }

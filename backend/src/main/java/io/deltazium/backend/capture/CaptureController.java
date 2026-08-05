@@ -22,12 +22,15 @@ import org.springframework.web.bind.annotation.RestController;
  * --------------------------------------------------
  * 26. 08. 04.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 04.       | 최남희  | truncateTarget 옵션 — 타깃 비우고 완전 재구축
+ * --------------------------------------------------
  */
 @RestController
 @RequestMapping("/api/capture")
 public class CaptureController {
 
-    public record ResnapshotRequest(String mode) { // INITIAL | NO_DATA
+    /** mode: INITIAL | NO_DATA. truncateTarget: 타깃 비우고 완전 재구축 (INITIAL 전용). */
+    public record ResnapshotRequest(String mode, Boolean truncateTarget) {
     }
 
     private final RegistrationService registrations;
@@ -43,7 +46,7 @@ public class CaptureController {
     @PostMapping("/resnapshot")
     public ResponseEntity<Void> resnapshot(@RequestBody ResnapshotRequest req) {
         notifications.markRequested();
-        registrations.resnapshot(req.mode());
+        registrations.resnapshot(req.mode(), Boolean.TRUE.equals(req.truncateTarget()));
         return ResponseEntity.accepted().build();
     }
 
