@@ -13,6 +13,9 @@
  * --------------------------------------------------
  * 26. 08. 05.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 05.       | 최남희  | 종료된 run 결과 화면이 닫은 뒤에도 재등장하던 버그 —
+ * |                          | 닫으면 dismissed 처리해 다음 열기는 설정 화면부터
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -87,6 +90,8 @@ export function ResnapshotDialog({
   const [truncate, setTruncate] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 종료(완료/취소/실패)된 run을 "확인하고 닫은" 경우 — 다시 열면 설정 화면부터
+  const [dismissedRun, setDismissedRun] = useState<number | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -117,13 +122,22 @@ export function ResnapshotDialog({
       truncateTarget: mode === 'INITIAL' && truncate,
     })
 
-  const showRun = RUN_ACTIVE(run) || run?.phase === 'DONE' || run?.phase === 'FAILED' || run?.phase === 'CANCELLED'
-  // 종료된 run이라도 방금(2분 내) 것만 보여주고, 오래된 건 설정 화면으로
+  // 종료된 run은 방금(2분 내) 것이면서 아직 닫아본 적 없을 때만 결과 화면으로
   const finishedRecently = run?.finishedAtMs != null && Date.now() - run.finishedAtMs < 120_000
-  const view = RUN_ACTIVE(run) || (showRun && finishedRecently) ? 'run' : 'config'
+  const view =
+    RUN_ACTIVE(run) || (run !== null && finishedRecently && run.startedAtMs !== dismissedRun)
+      ? 'run'
+      : 'config'
+
+  const handleClose = () => {
+    if (run !== null && !RUN_ACTIVE(run)) {
+      setDismissedRun(run.startedAtMs) // 결과 확인 완료 — 다음 열기는 설정 화면
+    }
+    onClose()
+  }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
       <DialogContent className="sm:max-w-xl">
         {view === 'config' ? (
           <>
@@ -174,7 +188,7 @@ export function ResnapshotDialog({
             )}
             {error && <p className="text-sm text-destructive">{error}</p>}
             <DialogFooter>
-              <Button variant="ghost" onClick={onClose}>취소</Button>
+              <Button variant="ghost" onClick={handleClose}>취소</Button>
               <Button variant={truncate ? 'destructive' : 'default'} disabled={busy} onClick={start}>
                 {mode === 'NO_DATA' ? '현재 시점부터 재개'
                   : truncate ? '타깃 비우고 초기 스냅샷 시작' : '초기 스냅샷 시작'}
@@ -182,7 +196,7 @@ export function ResnapshotDialog({
             </DialogFooter>
           </>
         ) : (
-          <RunView run={run!} busy={busy} error={error} call={call} onClose={onClose} />
+          <RunView run={run!} busy={busy} error={error} call={call} onClose={handleClose} />
         )}
       </DialogContent>
     </Dialog>
