@@ -10,12 +10,14 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import io.deltazium.backend.connect.ConnectorDeployService;
+import io.deltazium.backend.ddl.TargetDdlExecutor;
 import io.deltazium.backend.dictionary.OracleDictionaryService;
 import io.deltazium.backend.dictionary.SourceTableInfo;
 import io.deltazium.backend.dictionary.TableColumn;
 import io.deltazium.backend.events.TableEventService;
 import io.deltazium.backend.iceberg.ChangelogTableService;
 import io.deltazium.backend.iceberg.IcebergProperties;
+import io.deltazium.backend.metrics.KafkaMetricsService;
 import io.deltazium.backend.registry.DbConnection;
 import io.deltazium.backend.registry.DbConnectionService;
 import org.springframework.beans.factory.annotation.Value;
@@ -59,6 +61,8 @@ public class RegistrationService {
     private final ChangelogTableService changelog;
     private final IcebergProperties iceberg;
     private final TableEventService events;
+    private final TargetDdlExecutor ddlExecutor;
+    private final KafkaMetricsService metrics;
     private final String kafkaBootstrap;
     private final String topicPrefix;
 
@@ -70,6 +74,8 @@ public class RegistrationService {
                                ChangelogTableService changelog,
                                IcebergProperties iceberg,
                                TableEventService events,
+                               TargetDdlExecutor ddlExecutor,
+                               KafkaMetricsService metrics,
                                @Value("${deltazium.kafka.bootstrap}") String kafkaBootstrap,
                                @Value("${deltazium.topic-prefix}") String topicPrefix) {
         this.repository = repository;
@@ -80,6 +86,8 @@ public class RegistrationService {
         this.changelog = changelog;
         this.iceberg = iceberg;
         this.events = events;
+        this.ddlExecutor = ddlExecutor;
+        this.metrics = metrics;
         this.kafkaBootstrap = kafkaBootstrap;
         this.topicPrefix = topicPrefix;
     }
@@ -248,11 +256,13 @@ public class RegistrationService {
     }
 
     /**
-     * 캡처 재스냅샷 (운영 액션) — stop → offset 삭제 → snapshot.mode 오버라이드 재배포 → 재개.
+     * 캡처 재스냅샷 (운영 액션) — stop → [truncate 재구축: sink lag 소진 → 타깃 TRUNCATE] →
+     * offset 삭제 → snapshot.mode 오버라이드 재배포 → 재개.
      * INITIAL: 전 테이블 재적재 후 스트리밍(무유실 재구축). NO_DATA: 현재 SCN부터 스트리밍만(갭 유실 수용).
-     * 멱등 upsert 전제라 재적재가 타깃 데이터를 훼손하지 않는다.
+     * truncateTarget: 타깃을 비우고 재적재 — 소스에서 삭제된 행(고아)까지 정리되는 유일한 방법.
+     * 순서가 핵심: 유입 차단(stop) 후 잔량 소진을 기다려야 truncate 뒤에 옛 이벤트가 도착하지 않는다.
      */
-    public void resnapshot(String mode) {
+    public void resnapshot(String mode, boolean truncateTarget) {
         List<RegisteredTable> all = repository.findAll();
         if (all.isEmpty()) {
             throw new IllegalStateException("등록된 테이블이 없다 — 재스냅샷 대상 없음");
@@ -261,14 +271,67 @@ public class RegistrationService {
         if (!m.equals("INITIAL") && !m.equals("NO_DATA")) {
             throw new IllegalArgumentException("mode는 INITIAL 또는 NO_DATA여야 한다: " + mode);
         }
+        if (truncateTarget && m.equals("NO_DATA")) {
+            throw new IllegalArgumentException("truncate 재구축은 INITIAL에서만 의미가 있다 — "
+                    + "no_data로 비우면 과거 데이터가 영영 없다");
+        }
         DbConnection source = connections.get(all.get(0).sourceConnectionId());
         DbConnection target = connections.get(all.get(0).targetConnectionId());
         events.record("-", "dz-source", "RESNAPSHOT_REQUESTED", "INFO",
                 ("INITIAL".equals(m) ? "초기 스냅샷부터 재기동" : "현재 시점(no_data)부터 재기동")
-                        + " — offset 리셋", null);
-        deploy.stopAndResetOffsets("dz-source");
+                        + (truncateTarget ? " + 타깃 truncate 재구축" : "") + " — offset 리셋", null);
+
+        // ① 유입 차단 (offset은 아직 보존 — lag 소진 실패 시 resume으로 원복 가능)
+        deploy.stopAndAwait("dz-source");
+
+        if (truncateTarget) {
+            try {
+                // ② 정지된 sink는 깨워서 파이프 잔량 소진 (truncate 후 옛 이벤트 도착 방지)
+                for (RegisteredTable t : all) {
+                    deploy.resumeConnector("dz-jdbc-sink-" + t.suffix());
+                }
+                awaitSinkDrain(all);
+                // ③ 타깃 비우기 — 이후 스냅샷이 SCN 일관 상태로 다시 채운다
+                for (RegisteredTable t : all) {
+                    ddlExecutor.execute(target, "TRUNCATE TABLE " + t.targetQualified());
+                    events.record(t.schemaName(), t.tableName(), "TARGET_TRUNCATED", "WARN",
+                            t.targetQualified() + " TRUNCATE (재구축 준비)", null);
+                }
+            } catch (Exception e) {
+                deploy.resumeConnector("dz-source"); // 원복 — offset 안 건드렸으니 이어서 스트리밍
+                throw new IllegalStateException("truncate 재구축 중단(원복됨): " + e.getMessage(), e);
+            }
+        }
+
+        // ④ offset 리셋 → 재배포 → 재개 (스냅샷 시작)
+        deploy.deleteOffsets("dz-source");
         deployConnectors(source, target, m.equals("NO_DATA") ? "no_data" : "initial");
         deploy.resumeConnector("dz-source");
+    }
+
+    /** jdbc-sink 잔량(lag) 소진 대기 — source 정지 상태이므로 잔량은 유한하다. */
+    private void awaitSinkDrain(List<RegisteredTable> all) {
+        long deadline = System.currentTimeMillis() + 180_000;
+        while (true) {
+            long remaining = 0;
+            for (RegisteredTable t : all) {
+                remaining += Math.max(0, metrics.groupLag(
+                        "connect-dz-jdbc-sink-" + t.suffix(), topicPrefix + "." + t.qualified()));
+            }
+            if (remaining == 0) {
+                return;
+            }
+            if (System.currentTimeMillis() > deadline) {
+                throw new IllegalStateException("sink lag 소진 대기 시간 초과 (잔량 " + remaining
+                        + "건) — sink 상태를 확인하라");
+            }
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("대기 중 인터럽트");
+            }
+        }
     }
 
     /** 등록 전체 목록 기준으로 source·iceberg-sink(전역)·jdbc-sink(테이블별) 갱신 배포. */

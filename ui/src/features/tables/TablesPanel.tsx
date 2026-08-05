@@ -19,6 +19,9 @@
  * |                          | 재스냅샷 워크플로 — 상시 액션(INITIAL) + 배너 [복구 시작]
  * |                          | (INITIAL/NO_DATA), notification 기반 진행 배너·go-live 표시
  * --------------------------------------------------
+ * 26. 08. 04.       | 최남희  | 재스냅샷에 "타깃 비우고 재적재(완전 재구축)" 체크박스 —
+ * |                          | 갭 DELETE 고아 행까지 정리 (기본 해제, INITIAL 전용)
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -146,6 +149,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   // 'routine'(평시 — INITIAL만) | 'recover'(장애 배너 — NO_DATA 옵션 포함)
   const [resnapDialog, setResnapDialog] = useState<'routine' | 'recover' | null>(null)
   const [resnapMode, setResnapMode] = useState<'INITIAL' | 'NO_DATA'>('INITIAL')
+  const [truncateTarget, setTruncateTarget] = useState(false)
 
   useEffect(() => {
     const poll = () =>
@@ -163,10 +167,15 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
 
   const triggerResnapshot = () => {
     const mode = resnapDialog === 'recover' ? resnapMode : 'INITIAL'
+    const truncate = mode === 'INITIAL' && truncateTarget
     setResnapDialog(null)
     setResnapMode('INITIAL')
+    setTruncateTarget(false)
     void act(() =>
-      api('/api/capture/resnapshot', { method: 'POST', body: JSON.stringify({ mode }) }))
+      api('/api/capture/resnapshot', {
+        method: 'POST',
+        body: JSON.stringify({ mode, truncateTarget: truncate }),
+      }))
   }
 
   const act = async (fn: () => Promise<unknown>) => {
@@ -578,14 +587,38 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
               소스 기준으로 복구할 때 사용하세요.
             </p>
           )}
+          {(resnapDialog === 'routine' || resnapMode === 'INITIAL') && (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={truncateTarget}
+                onChange={(e) => setTruncateTarget(e.target.checked)}
+              />
+              <span>
+                타깃을 비우고 재적재 (완전 재구축)
+                <span className="block text-xs text-crit">
+                  타깃 테이블을 TRUNCATE한 뒤 채웁니다 — 소스에서 삭제된 행(고아)까지
+                  정리되는 유일한 방법. 단, 스냅샷 완료까지 타깃 조회가 비어 보입니다.
+                  순서는 자동 제어됩니다 (유입 차단 → sink 잔량 소진 → TRUNCATE → 스냅샷).
+                </span>
+              </span>
+            </label>
+          )}
           <DialogFooter>
             <Button variant="ghost" onClick={() => setResnapDialog(null)}>
               취소
             </Button>
-            <Button disabled={busy} onClick={triggerResnapshot}>
+            <Button
+              variant={truncateTarget && resnapMode === 'INITIAL' ? 'destructive' : 'default'}
+              disabled={busy}
+              onClick={triggerResnapshot}
+            >
               {resnapDialog === 'recover' && resnapMode === 'NO_DATA'
                 ? '현재 시점부터 재개'
-                : '초기 스냅샷 시작'}
+                : truncateTarget
+                  ? '타깃 비우고 초기 스냅샷 시작'
+                  : '초기 스냅샷 시작'}
             </Button>
           </DialogFooter>
         </DialogContent>

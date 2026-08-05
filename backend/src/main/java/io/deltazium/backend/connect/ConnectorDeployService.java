@@ -24,6 +24,9 @@ import org.springframework.stereotype.Service;
  * --------------------------------------------------
  * 26. 07. 24.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 04.       | 최남희  | stopAndAwait·deleteOffsets 분리 — truncate 재구축이
+ * |                          | 정지와 offset 삭제 사이에 lag 소진·truncate를 끼울 수 있게
+ * --------------------------------------------------
  */
 @Service
 public class ConnectorDeployService {
@@ -82,6 +85,12 @@ public class ConnectorDeployService {
      * offset이 남으면 같은 이름 재생성 시 스냅샷이 SKIP된다.
      */
     public void stopAndResetOffsets(String name) {
+        stopAndAwait(name);
+        connect.deleteOffsets(name);
+    }
+
+    /** stop 후 STOPPED 전이 대기 — offset은 건드리지 않는다 (실패 시 resume으로 원복 가능). */
+    public void stopAndAwait(String name) {
         connect.stop(name);
         for (int i = 0; i < 15; i++) {
             try {
@@ -95,6 +104,9 @@ public class ConnectorDeployService {
                 return;
             }
         }
+    }
+
+    public void deleteOffsets(String name) {
         connect.deleteOffsets(name);
     }
 
