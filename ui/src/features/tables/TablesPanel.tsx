@@ -159,8 +159,12 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   }, [])
 
   const snapshotActive = RUN_ACTIVE(run)
+  const [goLiveDismissed, setGoLiveDismissed] = useState<number | null>(null)
   const goLiveJustNow =
-    run?.phase === 'DONE' && run.finishedAtMs !== null && Date.now() - run.finishedAtMs < 120_000
+    run?.phase === 'DONE' &&
+    run.finishedAtMs !== null &&
+    Date.now() - run.finishedAtMs < 120_000 &&
+    run.startedAtMs !== goLiveDismissed
 
   const RUN_PHASE_LABEL: Record<string, string> = {
     STOPPING_SOURCE: '① 유입 차단',
@@ -375,13 +379,22 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         </button>
       )}
       {goLiveJustNow && !snapshotActive && (
-        <div className="border-b border-ok/40 bg-ok/10 px-4 py-2 text-[13px] text-ok">
-          ✓ go-live — 초기 스냅샷 완료, 스트리밍 재개됨
-          <span className="ml-2 font-mono text-[11px] text-muted-foreground">
-            {Object.entries(run!.snapshot?.tables ?? {})
-              .map(([t, r]) => `${t.split('.').slice(-1)[0]} ${r.toLocaleString()}행`)
-              .join(' · ')}
+        <div className="flex items-center border-b border-ok/40 bg-ok/10 px-4 py-2 text-[13px] text-ok">
+          <span>
+            ✓ go-live — 초기 스냅샷 완료, 스트리밍 재개됨
+            <span className="ml-2 font-mono text-[11px] text-muted-foreground">
+              {Object.entries(run!.snapshot?.tables ?? {})
+                .map(([t, r]) => `${t.split('.').slice(-1)[0]} ${r.toLocaleString()}행`)
+                .join(' · ')}
+            </span>
           </span>
+          <button
+            className="ml-auto px-1 text-muted-foreground hover:text-foreground"
+            title="배너 닫기"
+            onClick={() => setGoLiveDismissed(run!.startedAtMs)}
+          >
+            ✕
+          </button>
         </div>
       )}
       {sourceBroken && !snapshotActive && (

@@ -83,8 +83,8 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 | 테이블 모니터링 — 실측 이벤트·lag, 정지/재개/삭제 | DDL 이력 — 수집·승인/거부·자동 무시 |
 | ![운영 이벤트](docs/images/events.png) | ![복구](docs/images/recovery.png) |
 | 운영 이벤트 타임라인 — 장애 전이 trace 포함 | 복구 — changelog(S3) 현황·SCN 재발행·go-live·정합 검증 |
-| ![캡처 장애 배너](docs/images/capture-banner.png) | |
-| 캡처 장애 경고 배너 — task FAILED 실측 화면. 감지 시각·근본 원인(Caused by)·전체 trace 펼침 + [복구 시작](초기 스냅샷/현재 시점 선택 재기동, 진행률은 Debezium notification 실측). connector RUNNING/task FAILED 불일치로 나흘간 숨어 있던 실제 장애를 계기로 추가 | |
+| ![캡처 장애 배너](docs/images/capture-banner.png) | ![재스냅샷 위저드](docs/images/resnapshot.png) |
+| 캡처 장애 경고 배너 — task FAILED 실측 화면. 감지 시각·근본 원인(Caused by)·전체 trace 펼침 + [복구 시작]. connector RUNNING/task FAILED 불일치로 나흘간 숨어 있던 실제 장애를 계기로 추가 | 재스냅샷 위저드 — 유입 차단→잔량 소진→타깃 비우기(실행 주체 승인·권한 홀드)→offset 리셋→초기 스냅샷(notification 실측 행수)→go-live. 실제 장애 복구에 사용된 run(10.5만 행, 50초) |
 
 ## 실행
 
@@ -109,6 +109,10 @@ Oracle은 별도 준비 필요 — ARCHIVELOG 모드, 캡처 계정 권한은 �
   changelog 73건 재발행 스모크(복구 경로)
 - ✅ 모니터링 실측화: 토픽 offset·sink별 consumer lag(AdminClient), DDL 이벤트 수집,
   커넥터 장애 전이 이벤트(trace 포함)
+- ✅ 캡처 장애 실전 복구: 공유 dev Oracle의 archive log 삭제로 재개 지점이 소실된
+  실제 장애(task FAILED, 나흘 경과)를 재스냅샷 위저드로 복구 — 타깃 truncate 재구축
+  포함 50초 만에 go-live, 진행률은 Debezium notification 실측. 이 장애를 계기로
+  task 상태 집계(UI가 connector 상태만 보던 착시)·장애 배너·단계형 복구 절차가 추가됨
 - ⏳ 복구 리허설 풀 사이클(타깃 훼손 → SCN 재발행 → 정합 검증 일치) — 기능은 갖춰짐, 실행 검증 대기
 - ⏳ 테이블별 incremental snapshot(기동 중 테이블 추가 시 초기적재 — Kafka signal),
   컬럼 리네임의 적재 반영(스톡 sink 한계로 저장만 — 방침 결정 대기)
