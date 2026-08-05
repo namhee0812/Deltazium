@@ -16,5 +16,11 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8090',
     },
+    // 이 서버에서 inotify 기반 감시가 변경을 놓쳐 낡은 모듈을 서빙하는 일이
+    // 반복돼(2026-08-04 2회) 폴링으로 전환 — dev 전용이라 CPU 비용 감수
+    watch: {
+      usePolling: true,
+      interval: 1000,
+    },
   },
 })
