@@ -22,6 +22,9 @@
  * 26. 08. 04.       | 최남희  | 재스냅샷에 "타깃 비우고 재적재(완전 재구축)" 체크박스 —
  * |                          | 갭 DELETE 고아 행까지 정리 (기본 해제, INITIAL 전용)
  * --------------------------------------------------
+ * 26. 08. 05.       | 최남희  | 재스냅샷을 단계 팝업(ResnapshotDialog)으로 개편 —
+ * |                          | 배너는 run 상태 요약 + 클릭 시 팝업, 다이얼로그 로직 이관
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -45,6 +48,8 @@ import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
 import { causeLine, effectiveState, traceOf } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
+import { ResnapshotDialog, RUN_ACTIVE } from './ResnapshotDialog'
+import type { RunStatus } from './ResnapshotDialog'
 
 /* 테이블 모니터링 (ui-reference v2·v3) — 전부 실측:
    행 = 등록 테이블, 총 이벤트 = 토픽 end offset, 이벤트/s = offset 증가율,
@@ -137,45 +142,34 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     return info ? effectiveState(info) : 'N/A'
   }
 
-  // 재스냅샷 — 상시 운영 액션(Qlik Reload·DMS Reload table에 해당) + 장애 복구 진입점 겸용
-  interface SnapshotStatus {
-    phase: 'NONE' | 'REQUESTED' | 'IN_PROGRESS' | 'COMPLETED' | 'ABORTED'
-    currentTable: string | null
-    tables: Record<string, number>
-    startedAtMs: number | null
-    completedAtMs: number | null
-  }
-  const [snapshot, setSnapshot] = useState<SnapshotStatus | null>(null)
+  // 재스냅샷 — 상시 운영 액션(Qlik Reload·DMS Reload table에 해당) + 장애 복구 진입점 겸용.
+  // 진행은 backend 상태 기계(run)가 담당, 여기서는 배너 표시용으로만 폴링 (상세는 팝업)
+  const [run, setRun] = useState<RunStatus | null>(null)
   // 'routine'(평시 — INITIAL만) | 'recover'(장애 배너 — NO_DATA 옵션 포함)
   const [resnapDialog, setResnapDialog] = useState<'routine' | 'recover' | null>(null)
-  const [resnapMode, setResnapMode] = useState<'INITIAL' | 'NO_DATA'>('INITIAL')
-  const [truncateTarget, setTruncateTarget] = useState(false)
 
   useEffect(() => {
     const poll = () =>
-      api<SnapshotStatus>('/api/capture/snapshot').then(setSnapshot).catch(() => setSnapshot(null))
+      api<RunStatus | undefined>('/api/capture/resnapshot/run')
+        .then((r) => setRun(r ?? null))
+        .catch(() => setRun(null))
     poll()
     const id = setInterval(poll, 5000)
     return () => clearInterval(id)
   }, [])
 
-  const snapshotActive = snapshot?.phase === 'REQUESTED' || snapshot?.phase === 'IN_PROGRESS'
+  const snapshotActive = RUN_ACTIVE(run)
   const goLiveJustNow =
-    snapshot?.phase === 'COMPLETED' &&
-    snapshot.completedAtMs !== null &&
-    Date.now() - snapshot.completedAtMs < 120_000
+    run?.phase === 'DONE' && run.finishedAtMs !== null && Date.now() - run.finishedAtMs < 120_000
 
-  const triggerResnapshot = () => {
-    const mode = resnapDialog === 'recover' ? resnapMode : 'INITIAL'
-    const truncate = mode === 'INITIAL' && truncateTarget
-    setResnapDialog(null)
-    setResnapMode('INITIAL')
-    setTruncateTarget(false)
-    void act(() =>
-      api('/api/capture/resnapshot', {
-        method: 'POST',
-        body: JSON.stringify({ mode, truncateTarget: truncate }),
-      }))
+  const RUN_PHASE_LABEL: Record<string, string> = {
+    STOPPING_SOURCE: '① 유입 차단',
+    DRAINING: '② 파이프 잔량 소진',
+    AWAITING_DECISION: '③ 타깃 비우기 — 실행 주체 선택 대기',
+    HELD: '③ 타깃 비우기 — 홀드 (DBA 실행 대기)',
+    TRUNCATING: '③ 타깃 비우기 실행 중',
+    RESETTING: '④ offset 리셋·재배포',
+    SNAPSHOTTING: '⑤ 초기 스냅샷',
   }
 
   const act = async (fn: () => Promise<unknown>) => {
@@ -366,29 +360,25 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       {snapshotActive && (
-        <div className="border-b border-[#53C8E8]/40 bg-[#53C8E8]/10 px-4 py-2.5 text-[13px]">
-          <span className="font-semibold text-[#53C8E8]">
-            {snapshot!.phase === 'REQUESTED' ? '⟳ 재스냅샷 요청됨' : '⟳ 초기 스냅샷 진행 중'}
-          </span>
+        <button
+          className="block w-full border-b border-[#53C8E8]/40 bg-[#53C8E8]/10 px-4 py-2.5 text-left text-[13px] hover:bg-[#53C8E8]/15"
+          onClick={() => setResnapDialog('routine')}
+        >
+          <span className="font-semibold text-[#53C8E8]">⟳ 재스냅샷 진행 중</span>
           <span className="ml-2 font-mono text-[12px] text-muted-foreground">
-            {snapshot!.phase === 'REQUESTED' &&
-              '커넥터 재기동 중 — 스냅샷 시작(STARTED) 알림 대기. 수 분째 그대로면 이벤트 탭·backend 로그 확인'}
-            {snapshot!.phase === 'IN_PROGRESS' && (
-              <>
-                {Object.keys(snapshot!.tables).length}개 테이블 완료
-                {' '}(총 {Object.values(snapshot!.tables).reduce((a, b) => a + b, 0).toLocaleString()}행)
-                {snapshot!.currentTable && <> · 진행 중: {snapshot!.currentTable}</>}
-                {' '}— 완료 시 자동으로 스트리밍(go-live) 전환
-              </>
-            )}
+            {RUN_PHASE_LABEL[run!.phase] ?? run!.phase}
+            {run!.phase === 'DRAINING' && ` (남은 ${run!.remainingLag.toLocaleString()}건)`}
+            {run!.phase === 'SNAPSHOTTING' &&
+              ` (${Object.keys(run!.snapshot?.tables ?? {}).length}개 테이블 완료)`}
+            {' '}— 클릭하여 상세
           </span>
-        </div>
+        </button>
       )}
       {goLiveJustNow && !snapshotActive && (
         <div className="border-b border-ok/40 bg-ok/10 px-4 py-2 text-[13px] text-ok">
           ✓ go-live — 초기 스냅샷 완료, 스트리밍 재개됨
           <span className="ml-2 font-mono text-[11px] text-muted-foreground">
-            {Object.entries(snapshot!.tables)
+            {Object.entries(run!.snapshot?.tables ?? {})
               .map(([t, r]) => `${t.split('.').slice(-1)[0]} ${r.toLocaleString()}행`)
               .join(' · ')}
           </span>
@@ -537,92 +527,11 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={resnapDialog !== null} onOpenChange={(o) => !o && setResnapDialog(null)}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>
-              {resnapDialog === 'recover' ? '캡처 복구' : '재스냅샷'}
-            </DialogTitle>
-            <DialogDescription>
-              캡처 커넥터를 offset 리셋 후 재기동합니다. 전 테이블 대상이며(캡처는 공용),
-              apply가 PK upsert(MERGE)라 타깃 데이터는 훼손되지 않습니다.
-              소스 DB에 스냅샷 읽기 부하가 발생하고, changelog에 스냅샷 행이 추가 기록됩니다.
-            </DialogDescription>
-          </DialogHeader>
-          {resnapDialog === 'recover' ? (
-            <div className="flex flex-col gap-2 text-sm">
-              <label className="flex items-start gap-2">
-                <input
-                  type="radio"
-                  className="mt-1"
-                  checked={resnapMode === 'INITIAL'}
-                  onChange={() => setResnapMode('INITIAL')}
-                />
-                <span>
-                  <b>초기 스냅샷부터</b> (권장)
-                  <span className="block text-xs text-muted-foreground">
-                    전 테이블 재적재 후 스트리밍 — 유실 없이 현재 상태로 재구축합니다.
-                  </span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2">
-                <input
-                  type="radio"
-                  className="mt-1"
-                  checked={resnapMode === 'NO_DATA'}
-                  onChange={() => setResnapMode('NO_DATA')}
-                />
-                <span>
-                  <b>현재 시점부터</b> (갭 유실 수용)
-                  <span className="block text-xs text-crit">
-                    장애 시점부터 지금까지의 변경은 영구 유실됩니다. 버튼을 누르는 시점
-                    전후로 진행 중이던 트랜잭션도 온전히 반영되지 않을 수 있습니다.
-                  </span>
-                </span>
-              </label>
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              초기 스냅샷부터 재기동합니다 — 타깃 표류(직접 DML)·정합 검증 불일치를
-              소스 기준으로 복구할 때 사용하세요.
-            </p>
-          )}
-          {(resnapDialog === 'routine' || resnapMode === 'INITIAL') && (
-            <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={truncateTarget}
-                onChange={(e) => setTruncateTarget(e.target.checked)}
-              />
-              <span>
-                타깃을 비우고 재적재 (완전 재구축)
-                <span className="block text-xs text-crit">
-                  타깃 테이블을 TRUNCATE한 뒤 채웁니다 — 소스에서 삭제된 행(고아)까지
-                  정리되는 유일한 방법. 단, 스냅샷 완료까지 타깃 조회가 비어 보입니다.
-                  순서는 자동 제어됩니다 (유입 차단 → sink 잔량 소진 → TRUNCATE → 스냅샷).
-                </span>
-              </span>
-            </label>
-          )}
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setResnapDialog(null)}>
-              취소
-            </Button>
-            <Button
-              variant={truncateTarget && resnapMode === 'INITIAL' ? 'destructive' : 'default'}
-              disabled={busy}
-              onClick={triggerResnapshot}
-            >
-              {resnapDialog === 'recover' && resnapMode === 'NO_DATA'
-                ? '현재 시점부터 재개'
-                : truncateTarget
-                  ? '타깃 비우고 초기 스냅샷 시작'
-                  : '초기 스냅샷 시작'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ResnapshotDialog
+        open={resnapDialog !== null}
+        context={resnapDialog ?? 'routine'}
+        onClose={() => setResnapDialog(null)}
+      />
     </div>
   )
 }
