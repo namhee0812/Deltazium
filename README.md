@@ -77,8 +77,8 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 
 | | |
 |---|---|
-| ![토폴로지](docs/images/topology.png) | ![등록 위저드](docs/images/wizard.png) |
-| 토폴로지 — 커넥터 상태 실시간, RUNNING 구간 흐름 애니메이션 | 등록 위저드 — 딕셔너리 조회, PK 없는 테이블 선택 차단, supp.log 경고 |
+| ![대시보드](docs/images/dashboard.png) | ![등록 위저드](docs/images/wizard.png) |
+| 대시보드 — 토폴로지(커넥터 상태 실시간) + 처리량(발행 vs apply)·lag 시계열 + 컴포넌트 자원(/proc 실측) + 최근 운영 이벤트 | 등록 위저드 — 딕셔너리 조회, PK 없는 테이블 선택 차단, supp.log 경고 |
 | ![테이블 모니터링](docs/images/tables.png) | ![DDL 타임라인](docs/images/ddl.png) |
 | 테이블 모니터링 — 실측 이벤트·lag, 정지/재개/삭제 | DDL 이력 — 수집·승인/거부·자동 무시 |
 | ![운영 이벤트](docs/images/events.png) | ![복구](docs/images/recovery.png) |

@@ -13,6 +13,9 @@
  * 26. 08. 04.       | 최남희  | 상태 판정을 effectiveState(connector+task 최악값)로 교체
  * |                          | - task만 FAILED인 장애가 초록으로 보이던 문제 수정
  * --------------------------------------------------
+ * 26. 08. 06.       | 최남희  | 대시보드로 확장 — 토폴로지 캔버스 + 처리량(발행 vs apply)·
+ * |                          | lag 시계열 차트 + 컴포넌트 자원(/proc) + 최근 운영 이벤트
+ * --------------------------------------------------
  */
 import { useEffect, useMemo, useState } from 'react'
 import { Background, Handle, Position, ReactFlow } from '@xyflow/react'
@@ -22,6 +25,7 @@ import { api } from '@/lib/api'
 import { effectiveState } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
 import type { DbConnection } from '@/features/connections/types'
+import { CHART_SERIES_COLORS, LineChart } from '@/components/LineChart'
 
 /* Deltazium 파이프라인 토폴로지 (architecture.md 2절) — 커넥터·DB 연결은 실데이터 */
 
@@ -83,9 +87,24 @@ function jdbcSinkAggregate(states: ConnectorStates | null): { status: NodeStatus
   return { status, count: sinks.length }
 }
 
+interface Dashboard {
+  throughput: { ts: string; publish: number; apply: number }[]
+  lag: { ts: string; jdbc: number; iceberg: number }[]
+  resources: { component: string; cpuPct: number; rssMb: number }[]
+}
+
+interface Ev {
+  occurredAt: string
+  eventType: string
+  severity: string
+  message: string
+}
+
 export function TopologyPanel() {
   const [connectors, setConnectors] = useState<ConnectorStates | null>(null)
   const [connections, setConnections] = useState<DbConnection[]>([])
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null)
+  const [events, setEvents] = useState<Ev[]>([])
 
   useEffect(() => {
     const load = () => {
@@ -94,6 +113,16 @@ export function TopologyPanel() {
     }
     load()
     const id = setInterval(load, 5000)
+    return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    const load = () => {
+      api<Dashboard>('/api/metrics/dashboard?hours=24').then(setDashboard).catch(() => {})
+      api<Ev[]>('/api/events?limit=6').then(setEvents).catch(() => {})
+    }
+    load()
+    const id = setInterval(load, 30000)
     return () => clearInterval(id)
   }, [])
 
@@ -195,25 +224,136 @@ export function TopologyPanel() {
     return { nodes, edges }
   }, [connectors, connections])
 
+  const toPoints = <T,>(rows: T[], ts: (r: T) => string, v: (r: T) => number) =>
+    rows.map((r) => ({ ts: Date.parse(ts(r)), value: v(r) }))
+
   return (
-    <div className="h-full min-h-[480px]">
+    <div className="h-full overflow-y-auto">
       {connectors === null && (
         <div className="border-b border-border bg-card px-4 py-2 text-xs text-warn">
           backend(8090)에 연결할 수 없습니다 — 상태는 표시용 기본값입니다.
         </div>
       )}
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        fitView
-        proOptions={{ hideAttribution: true }}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        colorMode="dark"
-      >
-        <Background color="#26334F" gap={24} />
-      </ReactFlow>
+      <div className="grid gap-3 p-3" style={{ gridTemplateColumns: 'minmax(0,1fr) 300px' }}>
+        {/* 토폴로지 캔버스 */}
+        <div className="h-[340px] rounded-lg border border-border bg-card">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            fitView
+            proOptions={{ hideAttribution: true }}
+            nodesDraggable={false}
+            nodesConnectable={false}
+            colorMode="dark"
+          >
+            <Background color="#26334F" gap={24} />
+          </ReactFlow>
+        </div>
+
+        {/* 우측: 컴포넌트 자원 + 최근 이벤트 */}
+        <div className="flex flex-col gap-3">
+          <div className="rounded-lg border border-border bg-card p-3">
+            <h3 className="mb-2 text-xs font-semibold text-muted-foreground">
+              컴포넌트 자원 <span className="font-normal">(/proc 실측, 1분 주기)</span>
+            </h3>
+            {(dashboard?.resources ?? []).length === 0 ? (
+              <p className="text-xs text-muted-foreground">수집 대기 중…</p>
+            ) : (
+              <table className="w-full font-mono text-[11px]">
+                <tbody>
+                  {dashboard!.resources
+                    .slice()
+                    .sort((a, b) => b.rssMb - a.rssMb)
+                    .map((r) => (
+                      <tr key={r.component}>
+                        <td className="py-0.5 text-foreground">{r.component}</td>
+                        <td className="py-0.5 text-right text-muted-foreground">
+                          CPU {r.cpuPct.toFixed(1)}%
+                        </td>
+                        <td className="py-0.5 text-right text-muted-foreground">
+                          {r.rssMb >= 1024
+                            ? (r.rssMb / 1024).toFixed(1) + ' GB'
+                            : r.rssMb + ' MB'}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <div className="min-h-0 flex-1 rounded-lg border border-border bg-card p-3">
+            <h3 className="mb-2 text-xs font-semibold text-muted-foreground">최근 운영 이벤트</h3>
+            {events.length === 0 ? (
+              <p className="text-xs text-muted-foreground">이벤트 없음</p>
+            ) : (
+              <ul className="flex flex-col gap-1.5 text-[11px]">
+                {events.map((e, i) => (
+                  <li key={i} className="flex items-baseline gap-1.5">
+                    <span
+                      className={
+                        e.severity === 'ERROR'
+                          ? 'text-crit'
+                          : e.severity === 'WARN'
+                            ? 'text-warn'
+                            : 'text-ok'
+                      }
+                    >
+                      ●
+                    </span>
+                    <span className="font-mono text-muted-foreground">
+                      {e.occurredAt.slice(5, 16).replace('T', ' ')}
+                    </span>
+                    <span className="truncate text-foreground" title={e.message}>
+                      {e.eventType}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+
+        {/* 하단: 시계열 차트 2종 (전 테이블 합, 24h) */}
+        <div className="rounded-lg border border-border bg-card p-3">
+          <h3 className="mb-1 text-xs font-semibold text-muted-foreground">
+            이벤트 처리량 <span className="font-normal">(분당 · 전 테이블 합 · 24h)</span>
+          </h3>
+          <LineChart
+            series={[
+              {
+                name: '발행 (캡처)',
+                color: CHART_SERIES_COLORS[0],
+                points: toPoints(dashboard?.throughput ?? [], (r) => r.ts, (r) => r.publish),
+              },
+              {
+                name: 'apply (타깃)',
+                color: CHART_SERIES_COLORS[1],
+                points: toPoints(dashboard?.throughput ?? [], (r) => r.ts, (r) => r.apply),
+              },
+            ]}
+          />
+        </div>
+        <div className="rounded-lg border border-border bg-card p-3">
+          <h3 className="mb-1 text-xs font-semibold text-muted-foreground">
+            sink lag 추이 <span className="font-normal">(이벤트 수 · 24h)</span>
+          </h3>
+          <LineChart
+            series={[
+              {
+                name: 'JDBC lag',
+                color: CHART_SERIES_COLORS[0],
+                points: toPoints(dashboard?.lag ?? [], (r) => r.ts, (r) => r.jdbc),
+              },
+              {
+                name: 'Iceberg lag',
+                color: CHART_SERIES_COLORS[1],
+                points: toPoints(dashboard?.lag ?? [], (r) => r.ts, (r) => r.iceberg),
+              },
+            ]}
+          />
+        </div>
+      </div>
     </div>
   )
 }
