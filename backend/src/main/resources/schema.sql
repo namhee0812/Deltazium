@@ -84,3 +84,6 @@ CREATE TABLE IF NOT EXISTS metrics_samples (
     sample_value2 BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_metrics_samples_at ON metrics_samples (sampled_at);
+-- 해상도: MIN(원본 48h) → HOUR(60일) → DAY(1년) 2단 롤업 (MetricsRollupService)
+ALTER TABLE metrics_samples ADD COLUMN IF NOT EXISTS resolution VARCHAR(5) NOT NULL DEFAULT 'MIN';
+CREATE INDEX IF NOT EXISTS idx_metrics_samples_res_at ON metrics_samples (resolution, sampled_at);

@@ -32,6 +32,8 @@ import org.springframework.stereotype.Component;
  * --------------------------------------------------
  * 26. 08. 06.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 06.       | 최남희  | resolution(MIN) 명시, 보존 정리를 MetricsRollupService로 이관
+ * --------------------------------------------------
  */
 @Component
 @ConditionalOnProperty(name = "deltazium.metrics-sampler.enabled",
@@ -70,11 +72,6 @@ public class MetricsSampler {
         } catch (Exception e) {
             log.debug("자원 샘플 실패: {}", e.getMessage());
         }
-        try {
-            repository.deleteBefore(now.minusDays(7));
-        } catch (Exception e) {
-            log.debug("보존 정리 실패: {}", e.getMessage());
-        }
         lastSampleAtMs = System.currentTimeMillis();
     }
 
@@ -86,8 +83,8 @@ public class MetricsSampler {
             delta(now, "PUBLISH", t.topic(), publish);
             delta(now, "APPLY_JDBC", t.topic(), jdbcApplied);
             delta(now, "APPLY_ICEBERG", t.topic(), icebergApplied);
-            repository.insert(now, "LAG_JDBC", t.topic(), Math.max(0, t.jdbcLag()), null);
-            repository.insert(now, "LAG_ICEBERG", t.topic(), Math.max(0, t.icebergLag()), null);
+            repository.insert(now, "LAG_JDBC", t.topic(), Math.max(0, t.jdbcLag()), null, "MIN");
+            repository.insert(now, "LAG_ICEBERG", t.topic(), Math.max(0, t.icebergLag()), null, "MIN");
         }
     }
 
@@ -95,7 +92,7 @@ public class MetricsSampler {
     private void delta(LocalDateTime now, String metric, String name, long cumulative) {
         Long prev = lastValues.put(metric + ":" + name, cumulative);
         if (prev != null && cumulative >= prev) {
-            repository.insert(now, metric, name, cumulative - prev, null);
+            repository.insert(now, metric, name, cumulative - prev, null, "MIN");
         }
     }
 
@@ -133,7 +130,7 @@ public class MetricsSampler {
                     cpuPctX10 = Math.round(cpuSec / (elapsedMs / 1000.0) * 100 * 10);
                 }
                 if (rssKb >= 0) {
-                    repository.insert(now, "RESOURCE", e.getKey(), rssKb, cpuPctX10);
+                    repository.insert(now, "RESOURCE", e.getKey(), rssKb, cpuPctX10, "MIN");
                 }
             } catch (Exception ex) {
                 log.debug("자원 수집 실패({}): {}", e.getKey(), ex.getMessage());
