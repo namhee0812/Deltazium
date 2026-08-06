@@ -18,6 +18,9 @@
  * 26. 08. 06.       | 최남희  | React Flow → 자체 SVG(교차 없는 직교 라우팅, 사라짐 이슈 제거),
  * |                          | 테이블 검색 콤보박스·주기(1분/1시간/1일) 선택 추가
  * --------------------------------------------------
+ * 26. 08. 06.       | 최남희  | 주기 버튼을 기간 중심(최근 6시간/7일/90일)으로, 해상도는 툴팁 —
+ * |                          | 보존·롤업 내부 설명 텍스트는 UI에서 제거 (문서 몫)
+ * --------------------------------------------------
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '@/lib/api'
@@ -48,9 +51,9 @@ interface RegisteredTable {
 
 /** 주기 선택 — 해상도와 조회 폭을 묶는다 (Grafana식 기간별 자동 해상도) */
 const PERIODS = [
-  { key: 'MIN', label: '1분 (6시간)', hours: 6 },
-  { key: 'HOUR', label: '1시간 (7일)', hours: 168 },
-  { key: 'DAY', label: '1일 (90일)', hours: 2160 },
+  { key: 'MIN', label: '최근 6시간', unit: '1분 단위', hours: 6 },
+  { key: 'HOUR', label: '최근 7일', unit: '1시간 단위', hours: 168 },
+  { key: 'DAY', label: '최근 90일', unit: '1일 단위', hours: 2160 },
 ] as const
 
 function connectorStatus(states: ConnectorStates | null, name: string): NodeStatus {
@@ -313,6 +316,7 @@ export function TopologyPanel() {
             {PERIODS.map((p) => (
               <button
                 key={p.key}
+                title={p.unit}
                 className={`px-3 py-1.5 text-xs ${
                   period.key === p.key
                     ? 'bg-surface2 font-semibold text-foreground'
@@ -324,9 +328,6 @@ export function TopologyPanel() {
               </button>
             ))}
           </div>
-          <span className="text-[11px] text-muted-foreground">
-            원본 1분(48h 보존) → 시간(60일) → 일(1년) 자동 롤업
-          </span>
         </div>
 
         {/* 시계열 차트 */}
