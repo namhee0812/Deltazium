@@ -63,13 +63,6 @@
       "Bash(hostname *)",
       "Bash(sleep *)",
       "Bash(kill -0 *)"
-    ],
-    "ask": [
-      "Bash(git push *)",
-      "Bash(rm *)",
-      "Bash(git rm *)",
-      "Bash(git reset *)",
-      "Bash(git clean *)"
     ]
   }
 }
