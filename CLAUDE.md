@@ -87,6 +87,18 @@ Oracle ──Debezium source(LogMiner)──▶ Kafka ──┬─▶ Debezium J
 - 허용된 초기 단순화: 초기 스냅샷은 Debezium `initial` 그대로, converter는 JSON(schemas.enabled=true), 모니터링·알람·DLQ는 범위 외.
 - 단, **Iceberg 스키마 고정(5절)과 복구 재발행 원칙(6절)은 처음부터 정확히** — 여기가 이 프로젝트의 존재 이유다.
 
+## 문서 규칙 (2026-08-06 결정)
+
+- **문서는 작업이 아니라 주제 단위** — 새 작업이 생기면 새 md를 만들지 말고 기존 문서의
+  해당 절을 갱신한다: 구현 판단 → `docs/internals.md`, 설계 기준 변경 → `architecture.md`,
+  운영 절차·화면 → `docs/operations.md`, 할 일 → `docs/TODO.md`.
+- **설계 판단이 포함된 변경은 해당 문서 절 갱신까지가 구현 완료다** ("왜"를 git history에만
+  남기지 않는다).
+- 새 문서 신설은 예외적으로만: 기존 문서 어느 절에도 안 맞는 새 주제, 시점 기록
+  (`incidents/`·`experiments/` — 건별 파일), 비대해진 문서의 분리. 신설 시 README 문서 표에
+  링크를 추가한다.
+- 세션 종료 시 미완 작업은 TODO.md 해당 항목에 진행 상태를 남긴다.
+
 ## 컨텍스트 절약 규칙
 
 - architecture.md는 필요한 절만 읽는다 (절 번호가 본 문서 곳곳에 표기됨).
