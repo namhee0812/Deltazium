@@ -117,6 +117,17 @@ Oracle은 별도 준비 필요 — ARCHIVELOG 모드, 캡처 계정 권한은 �
 - ⏳ 테이블별 incremental snapshot(기동 중 테이블 추가 시 초기적재 — Kafka signal),
   컬럼 리네임의 적재 반영(스톡 sink 한계로 저장만 — 방침 결정 대기)
 
+## 문서
+
+| 문서 | 내용 |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | 설계 기준 문서 — 모든 구현 판단의 근거 |
+| [docs/operations.md](docs/operations.md) | 운영 가이드 — 화면 안내, 장애 대응·복구 절차 |
+| [docs/internals.md](docs/internals.md) | 구현 내부 노트 — 상태 판정·재스냅샷 상태 기계·모니터링 파이프라인·밟은 함정들 |
+| [docs/incidents/](docs/incidents/2026-08-04-archive-log-loss.md) | 실장애 기록 — archive log 소실 장애의 타임라인·진단·파생 개선 |
+| [docs/experiments/](docs/experiments/2026-07-24-iceberg-sink-schema.md) | 실측 실험 기록 — 설계 개정의 근거 |
+| [docs/TODO.md](docs/TODO.md) | 백로그 (Prometheus/Grafana, incremental snapshot 등) |
+
 ## 스택
 
 Java 21 · Spring Boot 3.5 · React 19 + TypeScript + Vite · Tailwind CSS 4 + shadcn/ui ·
