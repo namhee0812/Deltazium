@@ -44,11 +44,13 @@ public class MetricsController {
         return metrics.tableMetrics();
     }
 
-    /** 대시보드 시계열 — 처리량(발행 vs apply)·lag 추이·컴포넌트 자원(최신). */
+    /** 대시보드 시계열 — 해상도(MIN|HOUR|DAY)·기간·테이블(all 또는 토픽) 선택. */
     @GetMapping("/dashboard")
     public DashboardService.Dashboard dashboard(
-            @RequestParam(defaultValue = "24") int hours) {
-        return dashboard.load(hours);
+            @RequestParam(defaultValue = "MIN") String res,
+            @RequestParam(defaultValue = "6") int hours,
+            @RequestParam(defaultValue = "all") String table) {
+        return dashboard.load(res, hours, table);
     }
 
     @ExceptionHandler(KafkaMetricsService.MetricsException.class)

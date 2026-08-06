@@ -14,18 +14,136 @@
         </constructor>
     </resultMap>
 
+    <resultMap id="seriesRow" type="io.deltazium.backend.metrics.SeriesRow">
+        <constructor>
+            <arg column="ts" javaType="java.time.LocalDateTime"/>
+            <arg column="metric" javaType="String"/>
+            <arg column="agg" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <!-- 시간 절단 — PG는 문자열 인자, H2는 키워드 인자 (MyBatisConfig의 databaseIdProvider로 분기).
+         databaseId 없는 변형은 provider가 없는 컨텍스트(@MybatisTest 슬라이스 = H2)용 기본값 -->
+    <sql id="truncHour" databaseId="postgresql">DATE_TRUNC('hour', ${col})</sql>
+    <sql id="truncHour" databaseId="h2">DATE_TRUNC(HOUR, ${col})</sql>
+    <sql id="truncHour">DATE_TRUNC(HOUR, ${col})</sql>
+    <sql id="truncDay" databaseId="postgresql">DATE_TRUNC('day', ${col})</sql>
+    <sql id="truncDay" databaseId="h2">DATE_TRUNC(DAY, ${col})</sql>
+    <sql id="truncDay">DATE_TRUNC(DAY, ${col})</sql>
+
     <insert id="insert">
-        INSERT INTO metrics_samples (sampled_at, metric, metric_name, sample_value, sample_value2)
-        VALUES (#{sampledAt}, #{metric}, #{name}, #{value}, #{value2})
+        INSERT INTO metrics_samples (sampled_at, metric, metric_name, sample_value, sample_value2, resolution)
+        VALUES (#{sampledAt}, #{metric}, #{name}, #{value}, #{value2}, #{resolution})
     </insert>
 
-    <select id="findSince" resultMap="metricsSample">
-        SELECT * FROM metrics_samples
-         WHERE sampled_at &gt;= #{from}
+    <select id="series" resultMap="seriesRow">
+        SELECT sampled_at AS ts, metric, SUM(sample_value) AS agg
+          FROM metrics_samples
+         WHERE resolution = #{resolution}
+           AND sampled_at &gt;= #{from}
+           AND metric IN
+           <foreach item="m" collection="metrics" open="(" separator="," close=")">#{m}</foreach>
+           <if test="name != null">AND metric_name = #{name}</if>
+         GROUP BY sampled_at, metric
          ORDER BY sampled_at
     </select>
 
-    <delete id="deleteBefore">
-        DELETE FROM metrics_samples WHERE sampled_at &lt; #{before}
+    <select id="recentResources" resultMap="metricsSample">
+        SELECT * FROM metrics_samples
+         WHERE resolution = 'MIN' AND metric = 'RESOURCE' AND sampled_at &gt;= #{from}
+         ORDER BY sampled_at
+    </select>
+
+    <!-- MIN → HOUR 롤업. 완결 구간만(cutoff 이전), 이미 롤업된 조합은 NOT EXISTS로 제외(멱등).
+         처리량(델타)=합, lag(게이지)=구간 최대(스파이크 보존), 자원=평균 -->
+    <insert id="rollupHourSum">
+        INSERT INTO metrics_samples (sampled_at, metric, metric_name, sample_value, sample_value2, resolution)
+        SELECT <include refid="truncHour"><property name="col" value="m.sampled_at"/></include>,
+               m.metric, m.metric_name, SUM(m.sample_value), NULL, 'HOUR'
+          FROM metrics_samples m
+         WHERE m.resolution = 'MIN' AND m.sampled_at &lt; #{cutoff}
+           AND m.metric IN ('PUBLISH','APPLY_JDBC','APPLY_ICEBERG')
+           AND NOT EXISTS (SELECT 1 FROM metrics_samples h
+                            WHERE h.resolution = 'HOUR'
+                              AND h.sampled_at = <include refid="truncHour"><property name="col" value="m.sampled_at"/></include>
+                              AND h.metric = m.metric AND h.metric_name = m.metric_name)
+         GROUP BY <include refid="truncHour"><property name="col" value="m.sampled_at"/></include>, m.metric, m.metric_name
+    </insert>
+
+    <insert id="rollupHourMax">
+        INSERT INTO metrics_samples (sampled_at, metric, metric_name, sample_value, sample_value2, resolution)
+        SELECT <include refid="truncHour"><property name="col" value="m.sampled_at"/></include>,
+               m.metric, m.metric_name, MAX(m.sample_value), NULL, 'HOUR'
+          FROM metrics_samples m
+         WHERE m.resolution = 'MIN' AND m.sampled_at &lt; #{cutoff}
+           AND m.metric IN ('LAG_JDBC','LAG_ICEBERG')
+           AND NOT EXISTS (SELECT 1 FROM metrics_samples h
+                            WHERE h.resolution = 'HOUR'
+                              AND h.sampled_at = <include refid="truncHour"><property name="col" value="m.sampled_at"/></include>
+                              AND h.metric = m.metric AND h.metric_name = m.metric_name)
+         GROUP BY <include refid="truncHour"><property name="col" value="m.sampled_at"/></include>, m.metric, m.metric_name
+    </insert>
+
+    <insert id="rollupHourAvg">
+        INSERT INTO metrics_samples (sampled_at, metric, metric_name, sample_value, sample_value2, resolution)
+        SELECT <include refid="truncHour"><property name="col" value="m.sampled_at"/></include>,
+               m.metric, m.metric_name,
+               CAST(AVG(m.sample_value) AS BIGINT), CAST(AVG(m.sample_value2) AS BIGINT), 'HOUR'
+          FROM metrics_samples m
+         WHERE m.resolution = 'MIN' AND m.sampled_at &lt; #{cutoff}
+           AND m.metric = 'RESOURCE'
+           AND NOT EXISTS (SELECT 1 FROM metrics_samples h
+                            WHERE h.resolution = 'HOUR'
+                              AND h.sampled_at = <include refid="truncHour"><property name="col" value="m.sampled_at"/></include>
+                              AND h.metric = m.metric AND h.metric_name = m.metric_name)
+         GROUP BY <include refid="truncHour"><property name="col" value="m.sampled_at"/></include>, m.metric, m.metric_name
+    </insert>
+
+    <!-- HOUR → DAY 롤업 -->
+    <insert id="rollupDaySum">
+        INSERT INTO metrics_samples (sampled_at, metric, metric_name, sample_value, sample_value2, resolution)
+        SELECT <include refid="truncDay"><property name="col" value="m.sampled_at"/></include>,
+               m.metric, m.metric_name, SUM(m.sample_value), NULL, 'DAY'
+          FROM metrics_samples m
+         WHERE m.resolution = 'HOUR' AND m.sampled_at &lt; #{cutoff}
+           AND m.metric IN ('PUBLISH','APPLY_JDBC','APPLY_ICEBERG')
+           AND NOT EXISTS (SELECT 1 FROM metrics_samples h
+                            WHERE h.resolution = 'DAY'
+                              AND h.sampled_at = <include refid="truncDay"><property name="col" value="m.sampled_at"/></include>
+                              AND h.metric = m.metric AND h.metric_name = m.metric_name)
+         GROUP BY <include refid="truncDay"><property name="col" value="m.sampled_at"/></include>, m.metric, m.metric_name
+    </insert>
+
+    <insert id="rollupDayMax">
+        INSERT INTO metrics_samples (sampled_at, metric, metric_name, sample_value, sample_value2, resolution)
+        SELECT <include refid="truncDay"><property name="col" value="m.sampled_at"/></include>,
+               m.metric, m.metric_name, MAX(m.sample_value), NULL, 'DAY'
+          FROM metrics_samples m
+         WHERE m.resolution = 'HOUR' AND m.sampled_at &lt; #{cutoff}
+           AND m.metric IN ('LAG_JDBC','LAG_ICEBERG')
+           AND NOT EXISTS (SELECT 1 FROM metrics_samples h
+                            WHERE h.resolution = 'DAY'
+                              AND h.sampled_at = <include refid="truncDay"><property name="col" value="m.sampled_at"/></include>
+                              AND h.metric = m.metric AND h.metric_name = m.metric_name)
+         GROUP BY <include refid="truncDay"><property name="col" value="m.sampled_at"/></include>, m.metric, m.metric_name
+    </insert>
+
+    <insert id="rollupDayAvg">
+        INSERT INTO metrics_samples (sampled_at, metric, metric_name, sample_value, sample_value2, resolution)
+        SELECT <include refid="truncDay"><property name="col" value="m.sampled_at"/></include>,
+               m.metric, m.metric_name,
+               CAST(AVG(m.sample_value) AS BIGINT), CAST(AVG(m.sample_value2) AS BIGINT), 'DAY'
+          FROM metrics_samples m
+         WHERE m.resolution = 'HOUR' AND m.sampled_at &lt; #{cutoff}
+           AND m.metric = 'RESOURCE'
+           AND NOT EXISTS (SELECT 1 FROM metrics_samples h
+                            WHERE h.resolution = 'DAY'
+                              AND h.sampled_at = <include refid="truncDay"><property name="col" value="m.sampled_at"/></include>
+                              AND h.metric = m.metric AND h.metric_name = m.metric_name)
+         GROUP BY <include refid="truncDay"><property name="col" value="m.sampled_at"/></include>, m.metric, m.metric_name
+    </insert>
+
+    <delete id="deleteResolutionBefore">
+        DELETE FROM metrics_samples WHERE resolution = #{resolution} AND sampled_at &lt; #{before}
     </delete>
 </mapper>

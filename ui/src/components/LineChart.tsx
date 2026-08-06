@@ -13,6 +13,8 @@
  * --------------------------------------------------
  * 26. 08. 06.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 06.       | 최남희  | timeFormat 프롭 — 시간/일 해상도의 축·툴팁 표기 지원
+ * --------------------------------------------------
  */
 import { useMemo, useRef, useState } from 'react'
 
@@ -30,10 +32,13 @@ export function LineChart({
   series,
   height = 180,
   format = (v: number) => v.toLocaleString(),
+  timeFormat,
 }: {
   series: ChartSeries[]
   height?: number
   format?: (v: number) => string
+  /** x축·툴팁 시각 표기 (기본 HH:MM — 일 단위 등 긴 주기는 호출측이 지정) */
+  timeFormat?: (ts: number) => string
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(560)
@@ -72,10 +77,10 @@ export function LineChart({
   const path = (pts: { ts: number; value: number }[]) =>
     pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.ts).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ')
 
-  const timeLabel = (ts: number) => {
+  const timeLabel = timeFormat ?? ((ts: number) => {
     const d = new Date(ts)
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  }
+  })
 
   // 크로스헤어: 가장 가까운 시점의 각 계열 값
   const hover = hoverTs === null ? null : (() => {
@@ -137,8 +142,8 @@ export function LineChart({
           return series.map((s) => {
             const last = s.points[s.points.length - 1]
             if (!last) return null
-            let ly = y(last.value) + 3
-            while (placed.some((p) => Math.abs(p - ly) < 11)) ly += 12
+            let ly = Math.min(y(last.value) + 3, PAD.top + ih - 14) // x축 눈금과 겹침 방지
+            while (placed.some((p) => Math.abs(p - ly) < 11)) ly -= 12
             placed.push(ly)
             return (
               <text key={s.name} x={x(last.ts) + 6} y={ly}
