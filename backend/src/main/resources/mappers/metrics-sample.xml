@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.deltazium.backend.metrics.MetricsSampleRepository">
+
+    <resultMap id="metricsSample" type="io.deltazium.backend.metrics.MetricsSample">
+        <constructor>
+            <idArg column="id" javaType="Long"/>
+            <arg column="sampled_at" javaType="java.time.LocalDateTime"/>
+            <arg column="metric" javaType="String"/>
+            <arg column="metric_name" javaType="String"/>
+            <arg column="sample_value" javaType="_long"/>
+            <arg column="sample_value2" javaType="Long"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insert">
+        INSERT INTO metrics_samples (sampled_at, metric, metric_name, sample_value, sample_value2)
+        VALUES (#{sampledAt}, #{metric}, #{name}, #{value}, #{value2})
+    </insert>
+
+    <select id="findSince" resultMap="metricsSample">
+        SELECT * FROM metrics_samples
+         WHERE sampled_at &gt;= #{from}
+         ORDER BY sampled_at
+    </select>
+
+    <delete id="deleteBefore">
+        DELETE FROM metrics_samples WHERE sampled_at &lt; #{before}
+    </delete>
+</mapper>

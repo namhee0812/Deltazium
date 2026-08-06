@@ -12,6 +12,8 @@
  * --------------------------------------------------
  * 26. 08. 04.       | 최남희  | 상단 요약 running 집계를 effectiveState(connector+task) 기준으로 교체
  * --------------------------------------------------
+ * 26. 08. 06.       | 최남희  | 토폴로지 탭 → 대시보드로 개명 (토폴로지+차트+자원 통합)
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
@@ -29,7 +31,7 @@ import { Button } from '@/components/ui/button'
 type View = 'topology' | 'tables' | 'ddl' | 'events' | 'recovery' | 'connections'
 
 const VIEWS: [View, string][] = [
-  ['topology', '토폴로지'],
+  ['topology', '대시보드'],
   ['tables', '테이블 모니터링'],
   ['ddl', 'DDL 이력'],
   ['events', '이벤트'],
