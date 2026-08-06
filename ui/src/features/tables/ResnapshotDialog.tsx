@@ -16,6 +16,8 @@
  * 26. 08. 05.       | 최남희  | 종료된 run 결과 화면이 닫은 뒤에도 재등장하던 버그 —
  * |                          | 닫으면 dismissed 처리해 다음 열기는 설정 화면부터
  * --------------------------------------------------
+ * 26. 08. 06.       | 최남희  | 설명·단계명에서 내부 용어(offset 리셋) 완화
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -222,7 +224,7 @@ function RunView({
       skip: !run.truncateTarget,
     },
     { name: '타깃 비우기', skip: !run.truncateTarget },
-    { name: 'offset 리셋 · 재배포' },
+    { name: '캡처 초기화 · 재기동' },
     {
       name: '초기 스냅샷',
       detail:

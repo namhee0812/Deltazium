@@ -25,6 +25,8 @@
  * 26. 08. 05.       | 최남희  | 재스냅샷을 단계 팝업(ResnapshotDialog)으로 개편 —
  * |                          | 배너는 run 상태 요약 + 클릭 시 팝업, 다이얼로그 로직 이관
  * --------------------------------------------------
+ * 26. 08. 06.       | 최남희  | 내부 용어 정리 — lag 설명은 컬럼 툴팁으로, offset 용어 완화
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -172,7 +174,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     AWAITING_DECISION: '③ 타깃 비우기 — 실행 주체 선택 대기',
     HELD: '③ 타깃 비우기 — 홀드 (DBA 실행 대기)',
     TRUNCATING: '③ 타깃 비우기 실행 중',
-    RESETTING: '④ offset 리셋·재배포',
+    RESETTING: '④ 캡처 초기화·재기동',
     SNAPSHOTTING: '⑤ 초기 스냅샷',
   }
 
@@ -276,7 +278,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       },
     }),
     columnHelper.accessor('jdbcLag', {
-      header: 'JDBC LAG',
+      header: () => <span title="타깃 DB에 아직 반영되지 않은 이벤트 수">JDBC LAG</span>,
       cell: ({ row, getValue }) => {
         // 정지 중 lag 증가는 당연한 결과 — 경고색 대신 회색 유지
         const paused = sinkState(row.original) === 'PAUSED'
@@ -296,7 +298,11 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       },
     }),
     columnHelper.accessor('icebergLag', {
-      header: 'ICEBERG LAG',
+      header: () => (
+        <span title="changelog에 아직 기록되지 않은 이벤트 수 — 커밋 주기(60초)만큼의 지연은 정상">
+          ICEBERG LAG
+        </span>
+      ),
       cell: ({ getValue }) => (
         <span className={`font-mono ${getValue() > 1000 ? 'text-warn' : 'text-foreground'}`}>
           {getValue().toLocaleString()}
@@ -465,7 +471,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
           재스냅샷
         </button>
         <span className="ml-auto font-mono text-[11px] text-muted-foreground">
-          {table.getRowModel().rows.length} tables · ICEBERG LAG은 커밋 주기(60s)만큼 지연이 정상
+          {table.getRowModel().rows.length} tables
         </span>
       </div>
 
