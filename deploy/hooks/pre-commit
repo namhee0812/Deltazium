@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#
+# Deltazium pre-commit — 절대 규칙 위반이면 커밋을 막는다.
+# 연결: git config --local core.hooksPath deploy/hooks
+#
+# 이 hook은 우회하지 말 것 (--no-verify 금지). 규칙이 틀렸다고 판단되면
+# 우회가 아니라 사용자에게 '결정 필요'로 보고한다.
+
+exec "$(git rev-parse --show-toplevel)/deploy/rule-check.sh" --staged

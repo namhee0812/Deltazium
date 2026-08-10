@@ -25,6 +25,7 @@ Connect 플러그인 (`~/deltazium-runtime/connect-plugins/`):
 ## 사용법
 
 ```bash
+git config --local core.hooksPath deploy/hooks   # 최초 1회: 절대 규칙 pre-commit hook 연결
 ./deploy/install-runtime.sh          # 최초 1회: 바이너리 다운로드 + 플러그인 설치 (멱등)
 
 ./deploy/dzadmin all start           # 전체 기동: infra(pg→minio→kafka→connect) → backend → web
@@ -35,6 +36,7 @@ Connect 플러그인 (`~/deltazium-runtime/connect-plugins/`):
 ./deploy/dzadmin backend restart     # 코드 반영 재기동 (별칭: engine)
 ./deploy/dzadmin web restart         # vite dev 서버 (--host 고정, 별칭: ui)
 ./deploy/smoke-test.sh               # 심층 헬스체크 (Connect 플러그인 3종 포함)
+./deploy/rule-check.sh               # 절대 규칙 검사 + 변경 규모 (커밋 시 hook이 자동 실행)
 ```
 
 `dzadmin`은 기존 start/stop 스크립트의 통합 진입점이다 — 개별 스크립트도 그대로 쓸 수 있다.
