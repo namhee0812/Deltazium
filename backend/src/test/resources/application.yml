@@ -31,6 +31,8 @@ deltazium:
     s3-access-key: deltazium
     s3-secret-key: deltazium123
     namespace: changelog
+  assist:
+    log-dir: /tmp
   recovery:
     launcher: /tmp/recovery-job-test
     log-dir: /tmp
