@@ -34,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 26. 08. 10.       | 최남희  | 최초 생성
  * 26. 08. 10.       | 최남희  | 최신 우선 선택·오름차순 반환·from>to 거부 검증 추가
  * 26. 08. 10.       | 최남희  | 최신성 판단을 mtime 기준으로 재작성 (index 정렬 전제 폐기 — 2026-08-04 사례)
+ * 26. 08. 11.       | 최남희  | AssistProperties에 lag-threshold 추가에 따른 생성자 인자 보정
  * --------------------------------------------------
  */
 class LogSearchServiceTest {
@@ -52,7 +53,7 @@ class LogSearchServiceTest {
     void setUp() throws IOException {
         root = Files.createDirectories(tmp.resolve("logs"));
         outside = Files.createDirectories(tmp.resolve("outside"));
-        service = new LogSearchService(new AssistProperties(root.toString()));
+        service = new LogSearchService(new AssistProperties(root.toString(), null));
     }
 
     private Path dayDir(LocalDate date) throws IOException {
@@ -320,7 +321,7 @@ class LogSearchServiceTest {
     @Test
     void 로그_루트_자체가_없어도_예외없이_빈_결과를_준다() {
         LogSearchService missing = new LogSearchService(
-                new AssistProperties(tmp.resolve("nope").toString()));
+                new AssistProperties(tmp.resolve("nope").toString(), null));
 
         LogSearchResult result = missing.search(LogSource.CONNECT, "ERROR", null, null, 100, 0);
 

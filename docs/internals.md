@@ -137,6 +137,42 @@ stack trace 줄 순서도 자연스럽다. `truncated`는 "조건에 맞는 매�
 로그 루트는 `deltazium.assist.log-dir`(기본 `${DZ_LOG_DIR:~/deltazium-runtime/logs}`).
 복구 잡 출력 경로인 `deltazium.recovery.log-dir`과는 용도가 달라 재사용하지 않는다.
 
+## AI 진단 어시스턴트 overview (assist 패키지)
+
+`GET /api/assist/overview` (파라미터 없음). "왜 CDC가 멈췄어?" 같은 **대상 미지정 질문의
+진입점**이다 — AI가 이 한 번의 호출로 어디가 이상한지 특정한 뒤, 로그 검색 등 기존 도구로
+파고든다. 새 데이터 소스는 없다: ConnectClient·KafkaMetricsService·TableEventService·
+DdlEventService 재사용만 (읽기 전용 원칙은 로그 검색과 동일).
+
+**정상은 개수만, 비정상만 상세를.** 응답 크기가 곧 토큰 비용이다. 그래서 정상 커넥터는
+running 카운트, 정상 테이블은 total 카운트로만 잡히고, FAILED·PAUSED·lag 초과·승인 대기만
+상세가 실린다. 같은 이유로 상세 목록엔 상한이 있다 — failed/paused/unassigned/lagging/
+pendingApproval 각 20건, recentErrors items 10건. 목록이 잘려도 전체 규모는 count 필드
+(failedCount·laggingCount·pendingCount 등)로 항상 보인다. recentErrors의 detail(스택 등
+대용량)과 trace 전문도 싣지 않는다 — traceHead는 앞 5줄, ddlSummary는 앞 120자이고, 깊이는
+로그 검색으로 판다.
+
+**"멈췄다"의 유형 구분이 응답 구조에 있다.** 원인과 조치가 전부 다르기 때문이다:
+커넥터 FAILED와 task만 FAILED는 둘 다 `failed` 목록이되 `connectorState`로 구분되고(후자는
+커넥터가 RUNNING), 사람이 세운 PAUSED는 이름만 실린다(고장이 아니다),
+failed/paused/unassigned 어디에도 안 걸리는 상태(STOPPED·RESTARTING·미지의 상태 문자열
+전부)는 `other`에 {name, state} 원문 그대로 실린다, 전부 RUNNING인데
+적재가 안 되는 유형은 `tables.lagging`(임계: `deltazium.assist.lag-threshold`, 기본 1000 —
+**offset 건수지 시간이 아니다**), DDL 승인 대기로 선 것은 `ddl.pendingApproval`
+(state=DETECTED만 — 이것도 고장이 아니라 사람의 결정 대기)로 나타난다. AI가 유형을
+텍스트에서 추론하는 게 아니라 구조에서 읽게 한다.
+
+**섹션별 장애 격리.** Kafka Connect가 죽어 있는 상황이야말로 이 API가 필요한 순간이므로,
+한 소스의 실패가 전체를 500으로 만들면 안 된다. 섹션별 독립 try-catch — 실패한 소스는
+`sources`(connect/kafka/db)에 UNREACHABLE로 표기하고 해당 섹션만 null. "Connect 자체가
+안 떠 있다"가 그 자체로 AI의 판단 근거가 된다. recentErrors와 ddl은 둘 다 메타데이터
+PG가 소스라 어느 한쪽 실패면 db=UNREACHABLE이다.
+
+STOPPED·RESTARTING·미지 상태를 별도 분류하지 않고 `other` 버킷(상한 20건, otherCount는
+항상 전체 수)에 상태 문자열 원문으로 담기로 결정(2026-08-11) — 아무 목록에도 안 실리면
+total≠running인데 이유가 안 보이는 응답이 되고, 멈춤 유형 구분이 이 API의 존재 이유다.
+미지 상태도 원문 그대로 노출하면 AI가 알아서 해석한다.
+
 ## 개발 환경 특이사항
 
 - vite dev 서버는 `usePolling` (vite.config.ts): 이 서버에서 inotify 감시가 변경을
