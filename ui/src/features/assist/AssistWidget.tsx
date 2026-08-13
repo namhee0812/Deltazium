@@ -1,20 +1,22 @@
 /**
- * 파일명 : AssistPanel.tsx
- * 작성일자 : 26. 08. 13.
+ * 파일명 : AssistWidget.tsx
+ * 작성일자 : 26. 08. 14.
  * 작성자 : 최남희
- * 설명 : AI 진단 채팅 탭 — 질문을 /api/chat(SSE)로 보내고 도구 진행 상황·최종 답변을
- * 표시한다. 대화 히스토리는 화면 표시용일 뿐 서버에는 매번 단일 질문만 보낸다
- * (서버는 턴마다 독립 — ChatService 참고).
+ * 설명 : AI 진단 채팅 — 우하단 플로팅 위젯(FAB + 패널). 질문을 /api/chat(SSE)로 보내고
+ * 도구 진행 상황·최종 답변을 표시한다. 대화 히스토리는 화면 표시용일 뿐 서버에는 매번
+ * 단일 질문만 보낸다(서버는 턴마다 독립 — ChatService 참고). App.tsx 최상위에 탭 조건부
+ * 밖에서 항상 마운트되므로, 열림/닫힘·확장은 표시 토글일 뿐 대화 상태(및 진행 중인
+ * 스트리밍)는 패널을 닫아도 유지된다.
  *
  * 수정 내역
  * --------------------------------------------------
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
- * 26. 08. 13.       | 최남희  | 최초 생성
+ * 26. 08. 14.       | 최남희  | 최초 생성 (구 AssistPanel.tsx의 상단 탭 채팅을 흡수해 플로팅 위젯으로 전환)
  * --------------------------------------------------
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Maximize2, MessageCircle, Minimize2, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
@@ -108,7 +110,9 @@ function MessageBubble({ msg }: { msg: Message }) {
   )
 }
 
-export function AssistPanel() {
+export function AssistWidget() {
+  const [open, setOpen] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -116,8 +120,8 @@ export function AssistPanel() {
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, progress])
+    if (open) endRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, progress, open])
 
   const send = useCallback(() => {
     const question = input.trim()
@@ -150,9 +154,43 @@ export function AssistPanel() {
     })
   }, [input, busy])
 
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        aria-label="AI 진단 열기"
+        className="fixed right-6 bottom-6 z-50 flex size-14 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-lg transition-transform hover:scale-105"
+      >
+        <MessageCircle className="size-6" />
+      </button>
+    )
+  }
+
   return (
-    <div className="mx-auto flex h-full max-w-[760px] flex-col p-5">
-      <div className="min-h-0 flex-1 overflow-y-auto">
+    <div
+      className={`fixed right-6 bottom-6 z-50 flex flex-col rounded-xl border border-border bg-card shadow-2xl transition-[width] ${
+        expanded ? 'w-[720px]' : 'w-[420px]'
+      }`}
+      style={{ height: 'min(70vh, 640px)' }}
+    >
+      <div className="flex items-center gap-1 border-b border-border px-4 py-2.5">
+        <span className="text-sm font-semibold">AI 진단</span>
+        <div className="ml-auto flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setExpanded((v) => !v)}
+            aria-label={expanded ? '축소' : '확장'}
+          >
+            {expanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+          </Button>
+          <Button variant="ghost" size="icon-sm" onClick={() => setOpen(false)} aria-label="닫기">
+            <X className="size-4" />
+          </Button>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {messages.length === 0 && (
           <p className="text-sm text-muted-foreground">
             CDC 파이프라인 상태에 대해 물어보세요. 지난 대화는 기억하지 않으니 질문마다 필요한
@@ -173,7 +211,7 @@ export function AssistPanel() {
         <div ref={endRef} />
       </div>
 
-      <div className="flex gap-2 border-t border-border pt-3">
+      <div className="flex gap-2 border-t border-border p-3">
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}

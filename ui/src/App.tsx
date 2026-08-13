@@ -16,12 +16,14 @@
  * --------------------------------------------------
  * 26. 08. 13.       | 최남희  | AI 진단 탭 추가
  * --------------------------------------------------
+ * 26. 08. 14.       | 최남희  | AI 진단을 상단 탭에서 우하단 플로팅 위젯(AssistWidget)으로 전환
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { effectiveState } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
-import { AssistPanel } from '@/features/assist/AssistPanel'
+import { AssistWidget } from '@/features/assist/AssistWidget'
 import { ConnectionsPanel } from '@/features/connections/ConnectionsPanel'
 import { DdlPanel } from '@/features/ddl/DdlPanel'
 import { EventsPanel } from '@/features/events/EventsPanel'
@@ -31,7 +33,7 @@ import { TablesPanel } from '@/features/tables/TablesPanel'
 import { TopologyPanel } from '@/features/topology/TopologyPanel'
 import { Button } from '@/components/ui/button'
 
-type View = 'topology' | 'tables' | 'ddl' | 'events' | 'recovery' | 'connections' | 'assist'
+type View = 'topology' | 'tables' | 'ddl' | 'events' | 'recovery' | 'connections'
 
 const VIEWS: [View, string][] = [
   ['topology', '대시보드'],
@@ -40,7 +42,6 @@ const VIEWS: [View, string][] = [
   ['events', '이벤트'],
   ['recovery', '복구'],
   ['connections', 'DB 연결'],
-  ['assist', 'AI 진단'],
 ]
 
 function App() {
@@ -119,7 +120,6 @@ function App() {
             <ConnectionsPanel />
           </div>
         )}
-        {view === 'assist' && <AssistPanel />}
       </main>
 
       <RegistrationWizard
@@ -130,6 +130,8 @@ function App() {
           setView('tables')
         }}
       />
+
+      <AssistWidget />
     </div>
   )
 }
