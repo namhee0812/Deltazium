@@ -14,11 +14,14 @@
  * --------------------------------------------------
  * 26. 08. 06.       | 최남희  | 토폴로지 탭 → 대시보드로 개명 (토폴로지+차트+자원 통합)
  * --------------------------------------------------
+ * 26. 08. 13.       | 최남희  | AI 진단 탭 추가
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { effectiveState } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
+import { AssistPanel } from '@/features/assist/AssistPanel'
 import { ConnectionsPanel } from '@/features/connections/ConnectionsPanel'
 import { DdlPanel } from '@/features/ddl/DdlPanel'
 import { EventsPanel } from '@/features/events/EventsPanel'
@@ -28,7 +31,7 @@ import { TablesPanel } from '@/features/tables/TablesPanel'
 import { TopologyPanel } from '@/features/topology/TopologyPanel'
 import { Button } from '@/components/ui/button'
 
-type View = 'topology' | 'tables' | 'ddl' | 'events' | 'recovery' | 'connections'
+type View = 'topology' | 'tables' | 'ddl' | 'events' | 'recovery' | 'connections' | 'assist'
 
 const VIEWS: [View, string][] = [
   ['topology', '대시보드'],
@@ -37,6 +40,7 @@ const VIEWS: [View, string][] = [
   ['events', '이벤트'],
   ['recovery', '복구'],
   ['connections', 'DB 연결'],
+  ['assist', 'AI 진단'],
 ]
 
 function App() {
@@ -115,6 +119,7 @@ function App() {
             <ConnectionsPanel />
           </div>
         )}
+        {view === 'assist' && <AssistPanel />}
       </main>
 
       <RegistrationWizard
