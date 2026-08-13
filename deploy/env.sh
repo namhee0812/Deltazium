@@ -32,4 +32,8 @@ export DZ_PID_DIR="$DZ_RT/pids"
 mkdir -p "$DZ_LOG_DIR" "$DZ_PID_DIR"
 
 # 비밀값(리포 밖): API 키 등은 conf/secrets.env에 둔다 (git 추적 안 됨)
-[ -f "$DZ_RT/conf/secrets.env" ] && . "$DZ_RT/conf/secrets.env"
+# 주의: `[ -f ] && .` 단축형은 파일이 없을 때 종료 코드 1을 남겨
+# set -e 환경(start-*.sh)에서 스크립트를 죽인다 — 반드시 if 문으로.
+if [ -f "$DZ_RT/conf/secrets.env" ]; then
+  . "$DZ_RT/conf/secrets.env"
+fi
