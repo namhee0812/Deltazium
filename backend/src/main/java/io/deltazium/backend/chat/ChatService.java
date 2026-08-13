@@ -14,7 +14,9 @@ import com.anthropic.models.beta.messages.BetaContentBlock;
 import com.anthropic.models.beta.messages.BetaMessage;
 import com.anthropic.models.beta.messages.BetaStopReason;
 import com.anthropic.models.beta.messages.BetaToolUseBlock;
+import com.anthropic.models.beta.messages.BetaCacheControlEphemeral;
 import com.anthropic.models.beta.messages.MessageCreateParams;
+import org.springframework.beans.factory.annotation.Value;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
@@ -52,6 +54,7 @@ import io.deltazium.backend.assist.OverviewService;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 08. 12.       | 최남희  | 최초 생성
+ * 26. 08. 13.       | 최남희  | prompt caching 적용, 모델 설정화(deltazium.chat.model), 왕복별 usage 로깅
  * --------------------------------------------------
  */
 @Service
@@ -59,7 +62,6 @@ public class ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatService.class);
 
-    private static final String MODEL = "claude-opus-5";
     private static final long MAX_TOKENS = 16000L;
     private static final String STRUCTURED_OUTPUTS_BETA = "structured-outputs-2025-11-13";
 
@@ -87,10 +89,13 @@ public class ChatService {
 
     private final ObjectMapper objectMapper;
     private final ExecutorService executor;
+    private final String model;
     private volatile AnthropicClient client;
 
     public ChatService(OverviewService overviewService, LogSearchService logSearchService,
-                       ObjectMapper objectMapper) {
+                       ObjectMapper objectMapper,
+                       @Value("${deltazium.chat.model:claude-sonnet-5}") String model) {
+        this.model = model;
         // 도구 클래스는 Jackson이 기본 생성자로 생성해 생성자 주입이 불가능하다 —
         // ToolBeans 참고(결정 필요로 플래그된 정적 브릿지).
         ToolBeans.overviewService = overviewService;
@@ -119,23 +124,30 @@ public class ChatService {
                 return;
             }
 
-            MessageCreateParams params = MessageCreateParams.builder()
-                    .model(MODEL)
+            MessageCreateParams.Builder builder = MessageCreateParams.builder()
+                    .model(model)
                     .maxTokens(MAX_TOKENS)
                     .addBeta(STRUCTURED_OUTPUTS_BETA)
-                    .addBeta(AnthropicBeta.SERVER_SIDE_FALLBACK_2026_07_01)
-                    .fallbacksDefault()
+                    // 반복 왕복에서 시스템 프롬프트·도구 정의·누적 히스토리가 매번 재전송된다 —
+                    // top-level cache 브레이크포인트(마지막 블록 자동 배치)로 반복분을 캐시 읽기(0.1배)로.
+                    .cacheControl(BetaCacheControlEphemeral.builder().build())
                     .system(SYSTEM_PROMPT)
                     .addTool(GetOverviewTool.class)
                     .addTool(SearchLogsTool.class)
-                    .addUserMessage(question)
-                    .build();
+                    .addUserMessage(question);
+            // server-side fallback은 Opus/Fable 계열 전용 — 다른 모델에 붙이면 400
+            if (model.startsWith("claude-opus") || model.startsWith("claude-fable")) {
+                builder.addBeta(AnthropicBeta.SERVER_SIDE_FALLBACK_2026_07_01).fallbacksDefault();
+            }
+            MessageCreateParams params = builder.build();
 
             BetaToolRunner runner = anthropicClient.beta().messages().toolRunner(params);
 
             BetaMessage lastMessage = null;
+            int iteration = 0;
             for (BetaMessage message : runner) {
                 lastMessage = message;
+                logUsage(++iteration, message);
                 for (BetaContentBlock block : message.content()) {
                     block.toolUse().ifPresent(toolUse -> emitToolEvent(emitter, toolUse));
                 }
@@ -154,6 +166,18 @@ public class ChatService {
         } finally {
             emitEvent(emitter, "done", Map.of());
             emitter.complete();
+        }
+    }
+
+    /** 왕복별 토큰 사용량 — 비용 분석과 cache 적중 검증용. cache_read가 0이면 캐시가 안 먹은 것. */
+    private void logUsage(int iteration, BetaMessage message) {
+        try {
+            var u = message.usage();
+            log.info("chat usage [{}] iter={} input={} cache_read={} cache_write={} output={}",
+                    model, iteration, u.inputTokens(),
+                    u.cacheReadInputTokens(), u.cacheCreationInputTokens(), u.outputTokens());
+        } catch (Exception e) {
+            log.debug("usage 로깅 실패 — {}", e.getMessage());
         }
     }
 

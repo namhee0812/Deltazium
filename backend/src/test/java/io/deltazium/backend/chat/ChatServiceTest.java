@@ -36,6 +36,7 @@ import static org.mockito.Mockito.verify;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 08. 12.       | 최남희  | 최초 생성
+ * 26. 08. 13.       | 최남희  | ChatService 생성자 변경(model 파라미터) 반영
  * --------------------------------------------------
  */
 class ChatServiceTest {
@@ -56,7 +57,7 @@ class ChatServiceTest {
         assumeTrue(key == null || key.isBlank(),
                 "ANTHROPIC_API_KEY가 설정된 환경에서는 실제 호출을 피하기 위해 이 테스트를 건너뛴다");
 
-        ChatService service = new ChatService(mock(OverviewService.class), mock(LogSearchService.class), JSON);
+        ChatService service = new ChatService(mock(OverviewService.class), mock(LogSearchService.class), JSON, "claude-sonnet-5");
 
         SseEmitter emitter = spy(new SseEmitter());
 

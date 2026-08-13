@@ -39,6 +39,9 @@ deltazium:
     log-dir: ${DZ_LOG_DIR:${user.home}/deltazium-runtime/logs}
     # overview에서 lagging으로 분류하는 임계값 — offset 건수 (시간 아님)
     lag-threshold: 1000
+  chat:
+    # AI 진단 어시스턴트 모델. opus 대비 sonnet이 절반 이하 단가 — 품질 비교 후 확정 (2026-08-13)
+    model: claude-sonnet-5
   recovery:
     # recovery-job 실행 스크립트 (gradle :recovery-job:installDist 산출물)
     launcher: ../recovery-job/build/install/recovery-job/bin/recovery-job

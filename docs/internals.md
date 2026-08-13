@@ -218,6 +218,18 @@ YES로 재검증). 그래서 사용하지 않는 nullable 필드 하나(`unused`
 지연 초기화하며, 요청이 들어왔을 때만 환경변수를 확인한다 — 키가 없으면 클라이언트를
 만들지 않고 `{"type":"error", ...}` 이벤트 후 `{"type":"done"}`으로 스트림을 정리한다.
 
+**비용 구조와 prompt caching (2026-08-13).** tool use는 왕복마다 시스템 프롬프트·도구
+정의·누적 히스토리를 재전송한다 — 캐시 없이 opus로 도구 왕복 14회짜리 진단 1건에
+약 $1이 나왔다. top-level cache 브레이크포인트(`cacheControl`, 마지막 블록 자동 배치)를
+걸면 왕복 N의 캐시 쓰기를 왕복 N+1이 그대로 읽어(0.1배 단가) 반복분이 사실상 사라진다.
+실측: sonnet + 캐시로 동일 질문이 신규입력 6 / 캐시읽기 4,239 / 캐시쓰기 14,857 토큰
+≈ **$0.06**. 왕복별 usage는 backend.log에 `chat usage` INFO로 남는다(cache_read=0이면
+캐시 미적중 — 회귀 신호).
+
+**모델은 `deltazium.chat.model`로 설정** (기본 claude-sonnet-5). opus 대비 단가 절반
+이하에 도구 호출 횟수도 크게 적었다(2회 vs 14회 — 빠르고 싸지만 탐색 깊이는 얕다).
+server-side fallback은 Opus/Fable 계열 전용이라 모델명 prefix로 조건부 적용한다.
+
 ## 개발 환경 특이사항
 
 - vite dev 서버는 `usePolling` (vite.config.ts): 이 서버에서 inotify 감시가 변경을
