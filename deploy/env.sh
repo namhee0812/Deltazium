@@ -30,3 +30,6 @@ export DZ_PLUGIN_PATH="$DZ_RT/connect-plugins"
 export DZ_LOG_DIR="$DZ_RT/logs"
 export DZ_PID_DIR="$DZ_RT/pids"
 mkdir -p "$DZ_LOG_DIR" "$DZ_PID_DIR"
+
+# 비밀값(리포 밖): API 키 등은 conf/secrets.env에 둔다 (git 추적 안 됨)
+[ -f "$DZ_RT/conf/secrets.env" ] && . "$DZ_RT/conf/secrets.env"

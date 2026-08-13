@@ -173,6 +173,51 @@ STOPPED·RESTARTING·미지 상태를 별도 분류하지 않고 `other` 버킷(
 total≠running인데 이유가 안 보이는 응답이 되고, 멈춤 유형 구분이 이 API의 존재 이유다.
 미지 상태도 원문 그대로 노출하면 AI가 알아서 해석한다.
 
+## AI 진단 어시스턴트 Claude 연동 (chat 패키지)
+
+`POST /api/chat` (body `{"question":"..."}`, 응답 `text/event-stream`). assist 패키지의
+GetOverview·SearchLogs를 Claude API tool use로 묶어 대화형 진단을 만든다. **backend가
+도구를 실행한다** — Claude가 우리 API를 직접 호출하는 게 아니라, backend가 Claude API를
+호출하고(질문 전달) Claude가 tool_use로 돌려준 요청을 backend가 같은 프로세스의
+OverviewService·LogSearchService로 직접 실행해(HTTP 왕복 없음) 결과를 다시 Claude에
+넘기는 왕복을 반복한다. Java SDK의 `BetaToolRunner`가 이 왕복을 자동화한다
+(`client.beta().messages().toolRunner(params)`).
+
+**도구는 읽기 전용 2종뿐 — 조치 실행 도구는 의도적으로 없다.** GetOverviewTool·
+SearchLogsTool 모두 assist 패키지 서비스를 호출만 한다. 시스템 프롬프트가 "조치는
+제안만"이라고 지시하는 것과 별개로, 애초에 실행 수단 자체가 없어야 프롬프트 우회에도
+안전하다 — 프롬프트 지시는 우회될 수 있어도 없는 도구는 호출할 수 없다.
+
+**근거 강제.** 시스템 프롬프트가 모든 주장에 "어느 도구의 어떤 필드/로그 파일·줄 번호"
+근거를 요구한다. CDC 파이프라인 진단은 오탐의 비용이 크다(불필요한 재시작·복구 트리거로
+이어질 수 있음) — 모델이 그럴듯하게 추측하는 것보다 "모른다"고 말하는 편이 안전하다.
+
+**도구 클래스가 Spring 빈에 접근하는 방법 — 정적 브릿지(결정 필요로 남김).**
+`BetaToolRunner.addTool(Class)`는 Jackson이 도구 클래스를 매 호출마다 기본 생성자로
+새로 만든다(anthropic-java-core:2.53.0 확인 — `RunnableTool.FromClass.run()`이 매번
+새 인스턴스를 역직렬화). 그래서 OverviewService·LogSearchService를 생성자로 주입할 수
+없다 — `ToolBeans`(정적 필드)로 우회했다. 두 서비스가 상태 없는 읽기 전용 싱글턴이라
+요청 간 공유가 안전하다고 보고 택한 방식이지만, 더 나은 대안이 있는지는 확인이
+필요하다(`ToolBeans.java` 주석 참고).
+
+**파라미터 없는 도구의 스키마 제약.** GetOverview는 원래 파라미터가 없지만,
+anthropic-java-core:2.53.0의 로컬 스키마 검증이 `properties`가 빈 도구를 거부한다
+(addTool의 `JsonSchemaLocalValidation` 인자와 무관하게 `RunnableTool.FromClass`가 항상
+YES로 재검증). 그래서 사용하지 않는 nullable 필드 하나(`unused`)를 스키마에 남겨
+검증을 통과시킨다 — Claude에게는 "값을 채우지 말 것"으로 설명한다.
+
+**필드명은 camelCase 그대로.** 도구 클래스의 Java 필드명이 스키마 프로퍼티명·Claude가
+보내는 JSON 키에 그대로 쓰인다(snake_case로 자동 변환되지 않음 — 실측 확인). optional
+필드는 `org.springframework.lang.Nullable`(심플 이름이 "Nullable"이면 어느 패키지든
+인식된다)로 표시하면 스키마 타입에 `null`이 허용되지만, strict 스키마 특성상
+`required` 배열에서는 빠지지 않는다 — Claude는 항상 키를 보내되 값으로 `null`을 쓸 수
+있다.
+
+**키 미설정 시 SSE로 안내만 하고 종료.** `ANTHROPIC_API_KEY`는 `deploy/env.sh`가
+`~/deltazium-runtime/conf/secrets.env`를 있으면 로드한다(git 추적 안 됨). 클라이언트는
+지연 초기화하며, 요청이 들어왔을 때만 환경변수를 확인한다 — 키가 없으면 클라이언트를
+만들지 않고 `{"type":"error", ...}` 이벤트 후 `{"type":"done"}`으로 스트림을 정리한다.
+
 ## 개발 환경 특이사항
 
 - vite dev 서버는 `usePolling` (vite.config.ts): 이 서버에서 inotify 감시가 변경을

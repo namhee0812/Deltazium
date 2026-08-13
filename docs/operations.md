@@ -18,6 +18,12 @@
 - 로그 위치·로테이션: [deploy/README.md](../deploy/README.md) — 일 단위,
   지난 날짜는 `logs/yyyy-MM-dd/` 디렉터리.
 
+## AI 진단 어시스턴트 키 설정
+
+`~/deltazium-runtime/conf/secrets.env` 파일을 만들고 `export ANTHROPIC_API_KEY=sk-ant-...`
+한 줄을 넣는다(git 추적 안 됨). `deploy/env.sh`가 있으면 자동으로 로드하므로 backend
+재기동(`./deploy/dzadmin backend restart`)만 하면 된다.
+
 ## 화면 안내
 
 | 탭 | 용도 |
