@@ -48,6 +48,38 @@ Debezium 공식 문서(3.6, Oracle)가 이 상황의 해법으로 명시한 설�
 - 보존 기간 산정: 최대 계획 정지 시간 + 여유 (heartbeat가 못 지켜주는 커넥터
   다운 구간의 보험).
 
+## 추가 관찰 (2026-08-14): heartbeat가 못 막는 세 번째 경로 — 장기 트랜잭션 pin
+
+heartbeat 적용 다음 날 dz-source가 같은 예외(`LogFileNotFoundException`, offset SCN
+31,095,228,051)로 다시 FAILED. **heartbeat는 정상 작동 중이었다** —
+`__debezium-heartbeat.dz` 토픽에 하루 만에 1,459건(60초 주기와 일치).
+
+원인은 offset 값 자체의 정체다. 실패 약 1시간 전 경고가 정확히 말해준다:
+
+```
+09:17:13 WARN Offset SCN 31095199770 has not changed in 25 mining session
+iterations. This may indicate long running transaction(s),
+active transactions: [01001700e81b0200]
+```
+
+Debezium은 재시작 시 **가장 오래된 미커밋 트랜잭션의 시작 SCN부터** 다시 읽어야
+하므로, 트랜잭션이 열려 있는 동안 offset은 그 시작 SCN에 고정(pin)된다. heartbeat는
+offset을 자주 flush해줄 뿐, pin된 값을 전진시키지는 못한다. 공유 dev Oracle의 로그
+정리가 그 SCN 구간을 지우면 동일 예외로 사망.
+
+정리하면 이 장애 계열의 경로는 셋이고 방어책이 각각 다르다:
+
+| 경로 | offset이 뒤처지는 이유 | 방어 |
+|---|---|---|
+| 유휴 트래픽 (08-13) | 발행이 없어 flush가 없음 | heartbeat ✅ 적용됨 |
+| 커넥터 다운 (08-04) | 죽어 있는 동안 flush 불가 | archive 보존 > 최대 다운타임 |
+| **장기 트랜잭션 (08-14)** | **미커밋 tx 시작 SCN에 pin** | tx 원인 제거, 또는 `log.mining.transaction.retention.ms`(정합 트레이드오프 있음 — 아래) |
+
+`log.mining.transaction.retention.ms`는 지정 시간을 넘긴 미커밋 트랜잭션을 버리고
+offset을 전진시킨다. **버린 트랜잭션이 나중에 커밋되면 그 변경은 유실된다** — 캡처
+대상 테이블에 정당한 장기 트랜잭션이 있을 수 있는 환경에서는 함부로 켤 수 없고,
+켠다면 재스냅샷으로 복구 가능한 개발 환경 전제여야 한다. 적용 여부 미결.
+
 ## 교훈
 
 - 장애 후속은 감지·복구·**예방** 세 축을 다 채웠는지 확인해야 한다. 08-04 때

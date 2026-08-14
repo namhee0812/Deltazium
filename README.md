@@ -33,8 +33,8 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 
 | 모듈 | 내용 |
 |---|---|
-| `backend/` | Spring Boot 3 제어면 — DB 연결 저장소(Oracle 연결 테스트), 소스 딕셔너리 조회(와일드카드 전개), 사전 점검(PK·supplemental logging·LogMiner 권한 8종 — 누락 시 DBA GRANT 안내·배포 차단), 컬럼 매핑 검증, 커넥터 템플릿 렌더링·배포(Connect REST), changelog 테이블 사전 생성(JdbcCatalog), 스냅샷 모드 선택, CDC 정지/재개/삭제(offset 정리 포함), DDL 승인 워크플로(schema change topic 상시 소비·비전파성 DDL 자동 무시·타깃 이름 치환), 복구 트리거·정합 검증·go-live 자동 재개, 테이블별 운영 이벤트 이력(커넥터 장애 전이 trace 적재), Kafka 실측 메트릭(offset·lag). 메타데이터 쿼리는 MyBatis 매퍼 XML |
-| `ui/` | React 19 + TypeScript 콘솔 — 토폴로지 캔버스(React Flow, 커넥터 상태 실시간), 6단계 등록 위저드(딕셔너리 조회→컬럼 매핑→사전 점검→배포), 테이블 모니터링 그리드(실측 lag·정지/재개/삭제), DDL 타임라인(승인/거부), 운영 이벤트 타임라인, 복구 화면(changelog 현황 브라우저 포함) |
+| `backend/` | Spring Boot 3 제어면 — DB 연결 저장소(Oracle 연결 테스트), 소스 딕셔너리 조회(와일드카드 전개), 사전 점검(PK·supplemental logging·LogMiner 권한 8종 — 누락 시 DBA GRANT 안내·배포 차단), 컬럼 매핑 검증, 커넥터 템플릿 렌더링·배포(Connect REST), changelog 테이블 사전 생성(JdbcCatalog), 스냅샷 모드 선택, CDC 정지/재개/삭제(offset 정리 포함), DDL 승인 워크플로(schema change topic 상시 소비·비전파성 DDL 자동 무시·타깃 이름 치환), 복구 트리거·정합 검증·go-live 자동 재개, 테이블별 운영 이벤트 이력(커넥터 장애 전이 trace 적재), Kafka 실측 메트릭(offset·lag), AI 진단 어시스턴트(Claude tool use — 읽기 전용 도구 2종: 파이프라인 상태 요약·로그 검색, 근거 강제, prompt caching으로 진단당 ~$0.1). 메타데이터 쿼리는 MyBatis 매퍼 XML |
+| `ui/` | React 19 + TypeScript 콘솔 — 토폴로지 캔버스(React Flow, 커넥터 상태 실시간), 6단계 등록 위저드(딕셔너리 조회→컬럼 매핑→사전 점검→배포), 테이블 모니터링 그리드(실측 lag·정지/재개/삭제), DDL 타임라인(승인/거부), 운영 이벤트 타임라인, 복구 화면(changelog 현황 브라우저 포함), AI 진단 플로팅 위젯(SSE 스트리밍·도구 진행 표시·마크다운 답변) |
 | `recovery-job/` | 플레인 Java — Iceberg scan(SCN 필터·순서 복원) → envelope 재조립 → 복구 토픽 발행. 왕복 동등성 테스트 |
 | `connectors/` | 커넥터 설정 템플릿 4종 (설정 키 전수 공식 문서 검증) |
 | `deploy/` | 베어메탈 설치·기동·smoke test 스크립트 (멱등), 로그 위치 표준화 |
