@@ -85,6 +85,8 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 | 운영 이벤트 타임라인 — 장애 전이 trace 포함 | 복구 — changelog(S3) 현황·SCN 재발행·go-live·정합 검증 |
 | ![캡처 장애 배너](docs/images/capture-banner.png) | ![재스냅샷 위저드](docs/images/resnapshot.png) |
 | 캡처 장애 경고 배너 — task FAILED 실측 화면. 감지 시각·근본 원인(Caused by)·전체 trace 펼침 + [복구 시작]. connector RUNNING/task FAILED 불일치로 나흘간 숨어 있던 실제 장애를 계기로 추가 | 재스냅샷 위저드 — 유입 차단→잔량 소진→타깃 비우기(실행 주체 승인·권한 홀드)→offset 리셋→초기 스냅샷(notification 실측 행수)→go-live. 실제 장애 복구에 사용된 run(10.5만 행, 50초) |
+| ![AI 진단](docs/images/assist.png) | |
+| AI 진단 — 우하단 플로팅 위젯. 질문을 받으면 상태 조회·로그 검색 도구를 스스로 호출해 로그 라인 근거와 함께 원인을 짚는다(사용 도구는 답변 위에 표시). 화면은 dz-source의 LogFileNotFoundException 장애를 진단한 실측 대화 | |
 
 ## 실행
 
