@@ -5,257 +5,242 @@
 <style>
   @page {
     size: A4;
-    margin: 18mm 16mm;
-    @bottom-right { content: counter(page) " / " counter(pages); font-size: 8pt; color: #999; }
+    margin: 20mm 18mm;
+    @bottom-center { content: counter(page) " / " counter(pages); font-size: 8pt; color: #888; }
   }
   * { box-sizing: border-box; }
   body {
     font-family: "Droid Sans", "Droid Sans Fallback", sans-serif;
-    font-size: 9.5pt; line-height: 1.62; color: #1a2233; margin: 0;
+    font-size: 9.8pt; line-height: 1.7; color: #222; margin: 0;
   }
-  h1 { font-size: 20pt; margin: 0 0 2mm; letter-spacing: -0.5px; }
-  h1 .accent { color: #0e7490; }
+  h1 { font-size: 17pt; margin: 0 0 1mm; color: #111; font-weight: bold; letter-spacing: -0.3px; }
+  .subtitle { font-size: 10.5pt; color: #444; margin: 0 0 1.5mm; }
+  .meta { font-size: 8.8pt; color: #666; margin: 0 0 2mm; }
+  .headrule { border: 0; border-top: 1.2pt solid #333; margin: 3mm 0 6mm; }
   h2 {
-    font-size: 12.5pt; margin: 8mm 0 3mm; padding-bottom: 1.2mm;
-    border-bottom: 2px solid #0e7490; color: #0f172a;
+    font-size: 12pt; margin: 9mm 0 2.5mm; color: #1c2e4a;
+    padding-bottom: 1mm; border-bottom: 0.5pt solid #aaa;
   }
-  h3 { font-size: 10.5pt; margin: 4mm 0 1.5mm; color: #0e7490; }
-  p { margin: 1.2mm 0; }
-  .subtitle { font-size: 11pt; color: #475569; margin-bottom: 1mm; }
-  .meta { font-size: 8.5pt; color: #64748b; }
-  .meta b { color: #334155; }
-  table { border-collapse: collapse; width: 100%; margin: 2mm 0; font-size: 8.8pt; }
-  th { background: #f1f5f9; text-align: left; padding: 1.4mm 2.2mm; border: 0.5pt solid #cbd5e1; font-size: 8.3pt; }
-  td { padding: 1.4mm 2.2mm; border: 0.5pt solid #cbd5e1; vertical-align: top; }
+  h3 { font-size: 10.2pt; margin: 5mm 0 1mm; color: #111; }
+  p { margin: 1.4mm 0; text-align: justify; }
+  table { border-collapse: collapse; width: 100%; margin: 2.5mm 0; font-size: 9pt; }
+  th { border-top: 1pt solid #333; border-bottom: 0.5pt solid #333; text-align: left;
+       padding: 1.4mm 2mm; font-size: 8.6pt; background: none; font-weight: bold; }
+  td { padding: 1.4mm 2mm; border-bottom: 0.4pt solid #ccc; vertical-align: top; }
   pre.diagram {
-    background: #0f172a; color: #cde3f5; border-radius: 2mm; padding: 3.5mm 4mm;
-    font-family: "DejaVu Sans Mono", monospace; font-size: 7.6pt; line-height: 1.5;
-    overflow: hidden; white-space: pre;
+    background: #f6f7f8; color: #111; border: 0.5pt solid #bbb; padding: 3mm 3.5mm;
+    font-family: "DejaVu Sans Mono", monospace; font-size: 7.1pt; line-height: 1.6;
+    overflow: hidden; white-space: pre; margin: 2.5mm 0;
   }
   ul { margin: 1.5mm 0 1.5mm 5mm; padding: 0; }
   li { margin: 1mm 0; }
-  .cols { display: flex; gap: 5mm; }
-  .cols > div { flex: 1; }
-  .card {
-    border: 0.5pt solid #cbd5e1; border-left: 3pt solid #0e7490;
-    border-radius: 1.5mm; padding: 2.5mm 3.5mm; margin: 2mm 0;
-    page-break-inside: avoid;
-  }
-  .card h3 { margin-top: 0; }
-  .badge {
-    display: inline-block; background: #ecfeff; color: #0e7490; border: 0.5pt solid #a5d8e2;
-    border-radius: 1mm; padding: 0 1.8mm; font-size: 8pt; margin-right: 1.2mm;
-  }
-  .ok { color: #047857; font-weight: bold; }
-  .num { font-size: 16pt; font-weight: bold; color: #0e7490; }
-  .stat { text-align: center; border: 0.5pt solid #cbd5e1; border-radius: 1.5mm; padding: 2.5mm 1mm; }
-  .stat .lbl { font-size: 7.8pt; color: #64748b; }
-  .small { font-size: 8.3pt; color: #475569; }
+  code { font-family: "DejaVu Sans Mono", monospace; font-size: 8.6pt; }
+  .small { font-size: 8.6pt; color: #555; }
   .keep { page-break-inside: avoid; }
-  code { font-family: "DejaVu Sans Mono", monospace; font-size: 8.3pt; background: #f1f5f9; padding: 0 1mm; border-radius: 0.8mm; }
+  .fig { margin: 4mm 0; }
+  .fig img { width: 100%; border: 0.4pt solid #999; }
+  .fig .cap { font-size: 8.4pt; color: #555; text-align: center; margin-top: 1mm; }
+  .scope { font-size: 8.8pt; color: #555; margin: 2mm 0 0; }
 </style>
 </head>
 <body>
 
-<h1>Delta<span class="accent">zium</span></h1>
-<p class="subtitle">Debezium + Kafka 기반 Oracle CDC 파이프라인 · 복구(replay) 아키텍처 · 웹 제어 콘솔</p>
-<p class="meta"><b>최남희</b> · 단독 설계·개발 · 2026.07–08 · <b>github.com/namhee0812/Deltazium</b> · 상용 CDC 솔루션 개발 경험 기반의 검증 프로젝트</p>
+<h1>Deltazium — Oracle CDC 파이프라인 구축·운영 기록</h1>
+<p class="subtitle">Debezium + Kafka 기반 변경 데이터 캡처, changelog 보관·복구(replay) 아키텍처, 웹 제어 콘솔</p>
+<p class="meta">최남희 · 단독 설계·개발 · 2026.07 – 08 · 상용 CDC 솔루션 개발 경험 기반의 검증 프로젝트</p>
+<hr class="headrule">
 
-<h2>1. 프로젝트 개요</h2>
+<h2>1. 개요</h2>
 <p>
-Oracle의 변경(CDC)을 LogMiner로 캡처해 <b>같은 스트림을 두 갈래로 병행 적재</b>한다 —
-타깃 Oracle에는 현재 상태를(실적재), Iceberg/S3에는 모든 변경 이력을(append-only changelog).
-changelog는 미러링이 아니라 <b>특정 SCN 시점부터의 복구(replay)를 위한 원본</b>이며,
-이 복구 아키텍처의 성립을 실제 배선으로 증명하는 것이 프로젝트의 목적이다.
-그 위에 테이블 등록·사전 점검·DDL 승인·복구를 담당하는 제어면(Spring Boot + React)을 얹었고,
-운영 중 실제 발생한 장애(archive log 소실로 인한 캡처 정지)를 계기로 <b>장애 감지 → 원인 표시 →
-버튼 한 번의 복구(단계형 재스냅샷)</b>까지 운영 사이클을 완성했다. 시계열 모니터링(처리량·lag·자원)은
-자체 경량 수집·2단 롤업으로 구현했다.
+Oracle의 변경(CDC)을 LogMiner로 캡처해 같은 스트림을 두 갈래로 병행 적재한다.
+타깃 Oracle에는 현재 상태를(실적재), Iceberg/S3에는 모든 변경 이력을(append-only changelog) 쌓는다.
+changelog는 미러링이 아니라 특정 SCN 시점부터의 복구(replay)를 위한 원본이며, 이 복구 아키텍처가
+실제 배선에서 성립하는지 증명하는 것이 프로젝트의 목적이었다. 그 위에 테이블 등록·사전 점검·DDL 승인·복구를
+담당하는 제어면(Spring Boot + React)을 얹었고, 운영 중 실제 발생한 장애들을 계기로 장애 감지 → 원인 표시 →
+단계형 복구, 그리고 로그·상태를 스스로 조회해 원인을 짚는 AI 진단 어시스턴트까지 운영 사이클을 확장했다.
+</p>
+<p class="scope">
+규모 — Java 9.9k · TypeScript 5.3k 라인, 자동화 테스트 136건, 실트래픽 CDC 이벤트 53만+,
+실장애 4건 전건 원인 확정 후 복구(유실 0).
 </p>
 
-<div class="cols">
-  <div class="stat"><div class="num">93</div><div class="lbl">자동화 테스트</div></div>
-  <div class="stat"><div class="num">11.2k</div><div class="lbl">코드 라인 (Java 7.4k · TS 3.8k)</div></div>
-  <div class="stat"><div class="num">53만+</div><div class="lbl">실트래픽 CDC 이벤트</div></div>
-  <div class="stat"><div class="num">2건</div><div class="lbl">실장애 복구 (유실 0 · 완전 재구축)</div></div>
-</div>
-
 <h2>2. 아키텍처</h2>
-<pre class="diagram">Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─▶ Debezium JDBC sink ──▶ Oracle(TGT)  · 실적재(현재 상태)
-                                                          └─▶ Iceberg sink (append) ─▶ Iceberg / MinIO(S3)  · changelog(이력)
+<pre class="diagram">Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─▶ Debezium JDBC sink ──▶ Oracle(TGT) · 실적재
+                                                          └─▶ Iceberg sink(append) ──▶ MinIO(S3) · changelog
 
-복구:  recovery-job ──(Iceberg scan · SCN 순서 복원 · envelope 재조립)──▶ 복구 토픽 ──▶ recovery-sink(동일 apply 설정) ──▶ Oracle(TGT)
+복구:  recovery-job ──(Iceberg scan · SCN 순서 복원 · envelope 재조립)──▶ 복구 토픽 ──▶ recovery-sink ──▶ Oracle(TGT)
 
-[Web UI(React)] ⇄ [backend(Spring Boot): 등록·사전 점검 · DDL 승인 · 복구 트리거 · 이벤트 이력 · 실측 메트릭]</pre>
+[Web UI(React)] ⇄ [backend(Spring Boot): 등록·사전 점검 · DDL 승인 · 복구 · 이벤트 이력 · 실측 메트릭 · AI 진단]</pre>
 
 <table>
-  <tr><th style="width:22%">컴포넌트</th><th>역할</th><th style="width:30%">보존/특성</th></tr>
-  <tr><td>Kafka (KRaft)</td><td>짧은 버퍼 · fan-out (두 sink가 독립 consumer group — lag 격리)</td><td>retention 24h — 이력 보관 책임 없음</td></tr>
-  <tr><td>Iceberg / MinIO</td><td>장기 이력 · 복구 원본 (envelope-as-is, append-only)</td><td>1일 파티션 drop = 보존 정책</td></tr>
+  <tr><th style="width:20%">컴포넌트</th><th>역할</th><th style="width:30%">보존/특성</th></tr>
+  <tr><td>Kafka (KRaft)</td><td>짧은 버퍼 · fan-out — 두 sink가 독립 consumer group으로 lag 격리</td><td>retention 24h, 이력 보관 책임 없음</td></tr>
+  <tr><td>Iceberg / MinIO</td><td>장기 이력 · 복구 원본 (envelope-as-is, append-only)</td><td>1일 파티션 drop이 곧 보존 정책</td></tr>
   <tr><td>Oracle 타깃</td><td>현재 상태 (PK upsert 멱등 apply)</td><td>—</td></tr>
 </table>
+<p>데이터 경로에는 기성 커넥터만 쓰고 자체 코드는 제어면·복구·UI에만 둔다.
+apply 시맨틱을 JDBC sink 단일 경로로 유지해, 복구 결과가 라이브 적재와 달라지는 사고를 구조적으로 차단하기 위함이다.</p>
 
-<h2>3. 핵심 설계 판단</h2>
+<h2>3. 설계 판단</h2>
 
-<div class="card keep">
-<h3>멱등 apply를 전제로 한 복구 단순화</h3>
-<p>전달 보장은 at-least-once로 두고, apply를 PK 기반 upsert(MERGE)로 통일해 <b>몇 번을 재적용해도 결과가 같게</b> 만들었다.
+<div class="keep">
+<h3>3.1 멱등 apply를 전제로 한 복구 단순화</h3>
+<p>전달 보장은 at-least-once로 두고, apply를 PK 기반 upsert(MERGE)로 통일해 몇 번을 재적용해도 결과가 같게 했다.
 복구 재생의 경계 중복을 정밀 절단 없이 흡수하는 근거이며, PK 없는 테이블은 등록 단계에서 거부한다.
 복구는 재발행 단일 경로 — recovery-job은 Iceberg를 읽어 복구 토픽에 재발행까지만 하고,
-apply는 라이브와 동일한 JDBC sink 설정이 담당해 <b>복구 결과와 라이브 적재가 달라질 수 없는 구조</b>다.</p>
+apply는 라이브와 동일한 JDBC sink 설정이 담당한다.</p>
 </div>
 
-<div class="card keep">
-<h3>changelog 스키마를 실측 실험으로 확정</h3>
+<div class="keep">
+<h3>3.2 changelog 스키마를 실측 실험으로 확정</h3>
 <p>원안(평탄화 스키마)이 기성 커넥터·SMT 조합으로 구현 불가함을 실험으로 증명하고
 (스톡 SMT는 중첩 필드 승격 불가, 기존 변환 SMT는 before 이미지 소실 — 무손실 재조립 불변식 위반),
-<b>envelope 구조 그대로 저장 + backend가 테이블 사전 생성 + 1일 파티션</b>으로 설계를 개정했다.
+envelope 구조 그대로 저장 + backend가 테이블 사전 생성 + 1일 파티션으로 설계를 개정했다.
 envelope 왕복 테스트(원본 → Iceberg 행 → 재조립 동등성)가 이 불변식의 회귀 방어선이다.</p>
 </div>
 
-<div class="card keep">
-<h3>캡처 장애의 재현·진단·전환 — 유실 0</h3>
-<p>공유 dev Oracle에서 LogMiner <code>redo_log_catalog</code> 전략이 ORA-1371(complete dictionary
-not found) 재시도 루프에 빠져 <b>커넥터는 RUNNING인데 캡처가 멈추는</b> 장애를 재현했다.
-딕셔너리 아카이브 존재를 소스 딕셔너리 조회로 확인해 전략 자체의 취약점으로 진단,
-<code>online_catalog</code>로 전환(DDL 이벤트는 양 전략 모두 발행됨을 확인해 승인 워크플로 유지)했고,
-소스 redo 재마이닝으로 밀린 9,673건을 전량 회수했다.
-커넥터 삭제 후 재등록 시 잔존 offset으로 스냅샷이 건너뛰어지는 함정도 실측으로 발견해 등록 해제 시 offset 정리를 자동화했다.</p>
+<div class="keep">
+<h3>3.3 캡처 장애의 재현·진단·전환 — 유실 0</h3>
+<p>공유 dev Oracle에서 LogMiner <code>redo_log_catalog</code> 전략이 ORA-1371(complete dictionary not found)
+재시도 루프에 빠져 커넥터는 RUNNING인데 캡처가 멈추는 장애를 재현했다. 딕셔너리 아카이브 존재를 확인해
+전략 자체의 취약점으로 진단하고 <code>online_catalog</code>로 전환(DDL 이벤트는 양 전략 모두 발행됨을 확인해
+승인 워크플로 유지), 소스 redo 재마이닝으로 밀린 9,673건을 전량 회수했다. 커넥터 삭제 후 재등록 시
+잔존 offset으로 스냅샷이 건너뛰어지는 함정도 실측으로 발견해 등록 해제 시 offset 정리를 자동화했다.</p>
 </div>
 
-<div class="card keep">
-<h3>캡처 계정 최소 권한 8개 도출</h3>
-<p>Debezium 문서의 보수적 권한 목록(20여 개)을 실 배선의 권한 실패를 재현하며 8개로 압축.
-<code>SELECT ANY DICTIONARY</code>가 V$ 뷰 개별 grant를 대체함을 확인하고, <code>DBMS_LOGMNR_D</code>(딕셔너리 전략 전용)·
-<code>FLASHBACK ANY TABLE</code>(초기 스냅샷 전용 — flashback query 일관성)의 용도를 구분해 문서화했다.
+<div class="keep">
+<h3>3.4 캡처 계정 최소 권한 8개 도출</h3>
+<p>Debezium 문서의 보수적 권한 목록(20여 개)을 실 배선의 권한 실패를 재현하며 8개로 압축했다.
+<code>SELECT ANY DICTIONARY</code>가 V$ 뷰 개별 grant를 대체함을 확인하고, <code>DBMS_LOGMNR_D</code>(딕셔너리
+전략 전용)·<code>FLASHBACK ANY TABLE</code>(초기 스냅샷 전용)의 용도를 구분해 문서화했다.
 사전 점검이 권한 누락 시 DBA용 GRANT 스크립트를 생성해 안내하고 배포를 차단한다.</p>
 </div>
 
-<div class="card keep">
-<h3>운영 동작의 원칙화</h3>
+<div class="keep">
+<h3>3.5 운영 동작의 원칙화</h3>
 <p>jdbc-sink를 테이블별 커넥터로 분리해 타깃 이름 매핑과 테이블 단위 정지(DDL 거부 격리)를 가능하게 했고,
-recovery-sink는 apply 완료(consumer lag 소진)를 감지해 자동 정지한다("평시 정지" 원칙).
-복구 트리거의 자동 재개 옵션으로 <b>"정지 → S3 복구 → 라이브 복귀(go-live)"가 한 번의 조작으로 완결</b>된다 —
+recovery-sink는 apply 완료(consumer lag 소진)를 감지해 자동 정지한다(평시 정지 원칙).
+복구 트리거의 자동 재개 옵션으로 "정지 → S3 복구 → 라이브 복귀(go-live)"가 한 번의 조작으로 완결된다 —
 경계 중복은 전부 멱등이 흡수하므로 절단 시점 계산이 필요 없다.</p>
 </div>
 
-<div class="card keep">
-<h3>실장애: connector RUNNING / task FAILED — 나흘 미감지의 해부와 복구</h3>
+<div class="keep">
+<h3>3.6 실장애: connector RUNNING / task FAILED — 나흘 미감지의 해부와 복구</h3>
 <p>공유 dev Oracle의 archive log 정리로 재개 지점 SCN이 소실돼 캡처 task가 죽었는데,
-connector는 RUNNING·발행이 없으니 lag도 0 — <b>모든 지표가 "평온"을 가리키는 나흘</b>이 흘렀다.
-Connect REST의 task trace로 원인을 확정하고, 이 장애에서 기능을 파생시켰다:
-task 포함 상태 판정(최악값 집계), 장애 배너(감지 시각·원인 한 줄·전체 trace),
-행별 재시도, 그리고 <b>단계형 재스냅샷 워크플로</b>. 최종 복구는 타깃 truncate 완전 재구축으로
-10.5만 행을 50초에 go-live — 갭 중 소스에서 삭제된 행(고아 +2,237)까지 정리했다.
-전 과정을 장애 기록 문서(타임라인·진단 경로·교훈)로 남겼다.</p>
+connector는 RUNNING·발행이 없으니 lag도 0 — 모든 지표가 "평온"을 가리키는 나흘이 흘렀다.
+Connect REST의 task trace로 원인을 확정하고 이 장애에서 기능을 파생시켰다:
+task 포함 상태 판정(최악값 집계), 장애 배너(감지 시각·원인·전체 trace), 행별 재시도,
+단계형 재스냅샷 워크플로. 최종 복구는 타깃 truncate 완전 재구축으로 10.5만 행을 50초에 go-live —
+갭 중 소스에서 삭제된 행(고아 +2,237)까지 정리했다. "lag 0은 따라잡음과 무소식을 구분하지 못한다"는
+교훈은 대시보드의 발행 vs apply 겹침 차트로 만들었다.</p>
 </div>
 
-<div class="card keep">
-<h3>단계형 재스냅샷 — 승인·홀드가 있는 상태 기계</h3>
-<p>재스냅샷을 블랙박스 버튼이 아니라 <b>관찰 가능한 단계</b>로 만들었다:
-유입 차단 → 파이프 잔량 소진(실시간 lag) → 타깃 비우기 승인(시스템 실행은 권한 사전 점검,
-권한 불충분·직접 실행은 <b>DBA 홀드</b> — 테이블별 count=0을 폴링해 자동 진행) → 재기동 → 스냅샷 →
-go-live. 되돌릴 수 없는 지점(offset 삭제) 전까지는 취소·실패 시 원복이 보장되고,
-스냅샷 진행률은 Debezium notification 채널을 소비해 <b>추정이 아닌 실측</b>으로 표시한다
-(테이블별 스캔 행수·완료 전이).</p>
+<div class="keep">
+<h3>3.7 단계형 재스냅샷 — 승인·홀드가 있는 상태 기계</h3>
+<p>재스냅샷을 블랙박스 버튼이 아니라 관찰 가능한 단계로 만들었다: 유입 차단 → 파이프 잔량 소진(실시간 lag)
+→ 타깃 비우기 승인(시스템 실행은 권한 사전 점검, 직접 실행은 DBA 홀드 — 테이블별 count=0 폴링으로 자동 진행)
+→ 재기동 → 스냅샷 → go-live. 되돌릴 수 없는 지점(offset 삭제) 전까지는 취소·실패 시 원복이 보장되고,
+스냅샷 진행률은 Debezium notification 채널을 소비해 추정이 아닌 실측으로 표시한다.</p>
 </div>
 
-<div class="card keep">
-<h3>모니터링: 자체 경량 수집 → 2단 롤업</h3>
-<p>1분 샘플러(토픽 offset 델타·sink lag·pid 파일 기반 /proc CPU·RSS)를 PG에 적재하고,
-완결 구간만 대상으로 <b>분(48h) → 시간(60일) → 일(1년)</b> 롤업한다 — NOT EXISTS 멱등이라 재실행
-중복이 없고, 집계는 지표 성격대로(처리량=합, lag=구간 최대로 스파이크 보존).
-대시보드의 <b>발행 vs apply 겹침 차트</b>는 두 선이 벌어지는 순간이 곧 lag 누적이라는 조기 신호로,
-"lag 0은 따라잡음과 무소식을 구분 못 한다"는 이번 장애의 교훈을 화면으로 만든 것이다.
+<div class="keep">
+<h3>3.8 모니터링: 자체 경량 수집 → 2단 롤업</h3>
+<p>1분 샘플러(토픽 offset 델타·sink lag·pid 기반 /proc CPU·RSS)를 PostgreSQL에 적재하고,
+완결 구간만 대상으로 분(48h) → 시간(60일) → 일(1년) 롤업한다. NOT EXISTS 멱등이라 재실행 중복이 없고,
+집계는 지표 성격대로 처리량은 합, lag은 구간 최대로 스파이크를 보존한다.
 Prometheus/Grafana는 의도적으로 미도입(백로그) — 무엇을 보여줘야 하는가를 먼저 검증했다.</p>
 </div>
 
-<div class="card keep">
-<h3>재개 지점(offset SCN) 유실 — 같은 예외, 세 경로의 방어</h3>
+<div class="keep">
+<h3>3.9 재개 지점(offset SCN) 유실 — 같은 예외, 세 경로의 방어</h3>
 <p>같은 종착점(<code>LogFileNotFoundException</code>)의 장애가 서로 다른 세 경로로 실발생했다:
-커넥터 다운 중 archive 정리, 유휴 트래픽 중 offset 정체(Debezium offset은 <b>이벤트 발행 시에만
-영속화</b>된다 — "유휴 기간 &gt; 보존 기간"이면 결정론적 재현), 그리고 미커밋 장기 트랜잭션이
-offset을 시작 SCN에 pin하는 경우(heartbeat로도 전진 불가 — 후속 트랜잭션 처리는 막히지 않고
-재시작 지점만 잡힌다). 경로별 방어를 공식 문서 검증 후 적용했다:
+커넥터 다운 중 archive 정리, 유휴 트래픽 중 offset 정체(Debezium offset은 이벤트 발행 시에만 영속화되므로
+"유휴 기간 &gt; 보존 기간"이면 결정론적으로 재현), 미커밋 장기 트랜잭션의 시작 SCN pin(heartbeat로도 전진
+불가 — 후속 트랜잭션 처리는 막히지 않고 재시작 지점만 잡힌다). 경로별 방어를 공식 문서 검증 후 적용했다:
 <code>heartbeat.interval.ms</code> 60s(유휴) · archive 보존 기간(다운타임) ·
-<code>log.mining.transaction.retention.ms</code> 2h(장기 tx — 버려진 트랜잭션이 이후 커밋되면
-복제에서 빠지는 대가를 문서화하고 선택). 롤오버 index가 시각 순서와 무관한 회전 슬롯이라는
-함정 등 진단 과정의 발견도 장애 기록으로 남겼다.</p>
+<code>log.mining.transaction.retention.ms</code> 2h(장기 트랜잭션 — 버려진 트랜잭션이 이후 커밋되면 복제에서
+빠지는 대가를 문서화하고 선택). 롤오버 index가 시각 순서와 무관한 회전 슬롯이라는 함정 등 진단 과정의
+발견도 장애 기록으로 남겼다.</p>
 </div>
 
-<div class="card keep">
-<h3>AI 진단 어시스턴트 — tool use 기반 임베디드 에이전트</h3>
-<p>"왜 CDC가 멈췄어?" 질문을 받으면 Claude가 읽기 전용 도구 2종(파이프라인 상태 요약 ·
-로그 검색)을 스스로 골라 호출해 원인을 짚는다 — 실시간 상태 진단이라 RAG가 아닌 tool use를
-선택했다. 도구 표면은 AI용으로 별도 설계(비정상만 상세 · 서버측 응답 캡 · 근거 위치 포함)하고
-같은 프로세스에서 직접 실행하며, <b>조치 실행 도구는 의도적으로 두지 않았다</b> — 제안까지만,
-실행은 사람이 화면에서 한다. 모든 주장에 로그 파일·줄 번호 근거를 강제해 답변을 grep으로
-검증할 수 있다. tool use 왕복의 반복 전송을 prompt caching으로 흡수해 진단 1건 비용을
-$1 → $0.06으로 낮췄다(실측 — 왕복별 토큰 로깅으로 캐시 적중 회귀 감시).</p>
+<div class="keep">
+<h3>3.10 AI 진단 어시스턴트 — tool use 기반 임베디드 에이전트</h3>
+<p>"왜 CDC가 멈췄어?" 질문을 받으면 Claude가 읽기 전용 도구 2종(파이프라인 상태 요약 · 로그 검색)을 스스로
+골라 호출해 원인을 짚는다 — 실시간 상태 진단이라 RAG가 아닌 tool use를 선택했다. 도구 표면은 AI용으로 별도
+설계(비정상만 상세 · 서버측 응답 캡 · 근거 위치 포함)하고 같은 프로세스에서 직접 실행하며, 조치 실행 도구는
+의도적으로 두지 않았다 — 제안까지만, 실행은 사람이 화면에서 한다. 모든 주장에 로그 파일·줄 번호 근거를
+강제해 답변을 grep으로 검증할 수 있다. tool use 왕복의 반복 전송을 prompt caching으로 흡수해 진단 1건
+비용을 $1 → $0.06으로 낮췄다(실측 — 왕복별 토큰 로깅으로 캐시 적중 회귀 감시).</p>
 </div>
 
-<h2>4. 웹 콘솔 주요 기능</h2>
+<h2>4. 웹 콘솔 기능</h2>
 <table>
-  <tr><th style="width:24%">화면</th><th>기능</th></tr>
-  <tr><td>대시보드</td><td>토폴로지(자체 SVG — 교차 없는 직교 라우팅·흐름 애니메이션) + 처리량(발행 vs apply)·lag 시계열(테이블 검색 선택·최근 6시간/7일/90일) + 컴포넌트 자원(/proc 실측) + 최근 운영 이벤트</td></tr>
-  <tr><td>CDC 등록 위저드</td><td>6단계: 소스 선택 → 딕셔너리 조회(와일드카드 전개, PK 없는 테이블 선택 차단) → 타깃 → 컬럼 매핑(체크박스 제외·<code>${소스컬럼}</code> 변환식·구문 검증) → 사전 점검(supp.log 승인 후 적용 · 권한 GRANT 안내) → 스냅샷 모드 선택(초기적재/현재부터) · 배포</td></tr>
-  <tr><td>테이블 모니터링</td><td>실측 지표 — 총 이벤트(offset)·이벤트/s·sink별 lag(AdminClient), 정지/재개/재시도/삭제, 캡처 장애 배너(원인·trace·복구 진입), 재스냅샷(단계 팝업·truncate 재구축)</td></tr>
+  <tr><th style="width:22%">화면</th><th>기능</th></tr>
+  <tr><td>대시보드</td><td>토폴로지(자체 SVG — 교차 없는 직교 라우팅·흐름 애니메이션) + 처리량(발행 vs apply)·lag 시계열(테이블·기간 선택) + 컴포넌트 자원(/proc 실측) + 최근 운영 이벤트</td></tr>
+  <tr><td>CDC 등록 위저드</td><td>6단계: 소스 선택 → 딕셔너리 조회(와일드카드 전개, PK 없는 테이블 선택 차단) → 타깃 → 컬럼 매핑(제외·변환식·구문 검증) → 사전 점검(supp.log 승인 후 적용 · 권한 GRANT 안내) → 스냅샷 모드 선택·배포</td></tr>
+  <tr><td>테이블 모니터링</td><td>실측 지표(총 이벤트·이벤트/s·sink별 lag), 정지/재개/재시도/삭제, 캡처 장애 배너(원인·trace·복구 진입), 재스냅샷</td></tr>
   <tr><td>DDL 이력</td><td>schema change topic 상시 수집(retention 만료 대비 DB 적재), 승인(타깃 이름 치환 실행)/거부(테이블 단위 apply 정지), 비전파성 DDL 자동 무시</td></tr>
   <tr><td>이벤트</td><td>테이블별 운영 이력 — 등록·정지·DDL·복구·커넥터 장애 전이(원인 trace 포함) 타임라인</td></tr>
-  <tr><td>AI 진단 위젯</td><td>전 화면 공통 플로팅 채팅 — 상태 요약·로그 검색 도구 자율 호출, 로그 라인 근거와 함께 원인 제시(SSE 스트리밍·사용 도구 표시), 조치는 제안만</td></tr>
   <tr><td>복구</td><td>changelog(S3) 현황(용량·보존 구간·파티션별) · SCN 지정 재발행 · go-live 자동 재개 · SRC/TGT 정합 검증(행수+체크섬)</td></tr>
+  <tr><td>AI 진단 위젯</td><td>전 화면 공통 플로팅 채팅 — 상태 요약·로그 검색 도구 자율 호출, 로그 라인 근거와 함께 원인 제시(SSE 스트리밍·사용 도구 표시), 조치는 제안만</td></tr>
 </table>
 
 <h2>5. 검증 결과</h2>
-<ul>
-  <li><span class="ok">✔</span> 실 Oracle end-to-end: 초기 스냅샷(30,088행) → LogMiner 실시간 스트리밍 → 타깃 apply(lag 0) + changelog 커밋까지 실트래픽 확인</li>
-  <li><span class="ok">✔</span> 캡처 장애(ORA-1371) 재현 → 전략 전환 → 밀린 9,673건 유실 0 회수</li>
-  <li><span class="ok">✔</span> envelope 왕복 동등성·changelog 사전 생성(실 카탈로그)·복구 재발행 스모크(73건) 등 자동화 테스트 136건</li>
-  <li><span class="ok">✔</span> 사전 점검 게이트 실동작: LogMiner 권한 누락 감지 → GRANT 안내 → 부여 후 통과</li>
-  <li><span class="ok">✔</span> 실장애 복구: archive log 소실로 죽은 캡처(나흘 경과)를 재스냅샷 워크플로로 복구 — truncate 완전 재구축 10.5만 행·50초 go-live, 스냅샷 진행률 notification 실측</li>
-  <li><span class="ok">✔</span> 정합 검증(행 수+ORA_HASH 체크섬)으로 고아 행 편차(+2,237) 검출 → 재구축 후 수렴 확인</li>
-  <li><span class="ok">✔</span> AI 진단 실전: 재발 장애(offset SCN 유실)를 위젯 질문 한 번으로 원인 확정 — connect.log 라인 근거 인용, 실패 1시간 전 선행 경고(장기 트랜잭션)까지 로그에서 발굴</li>
-  <li><span class="ok">✔</span> SCN 유실 방어 실증: heartbeat 적용 후 heartbeat 토픽 1,459건/일 발행 확인, 세 번째 경로(장기 tx pin) 재발을 로그로 원인 확정 후 retention 적용</li>
-  <li><span class="ok">✔</span> 모니터링 실측: 분당 2,262건 버스트에서 발행·apply 추적, lag 스파이크·소진 시계열 기록, 롤업 멱등 테스트</li>
-</ul>
+<table>
+  <tr><th style="width:28%">항목</th><th>내용</th></tr>
+  <tr><td>실 Oracle end-to-end</td><td>초기 스냅샷(30,088행) → LogMiner 실시간 스트리밍 → 타깃 apply(lag 0) + changelog 커밋까지 실트래픽으로 확인</td></tr>
+  <tr><td>캡처 장애 전환</td><td>ORA-1371 재현 → online_catalog 전환 → 밀린 9,673건 유실 0 회수</td></tr>
+  <tr><td>자동화 테스트 136건</td><td>envelope 왕복 동등성 · changelog 사전 생성(실 카탈로그) · 복구 재발행 스모크(73건) · 로그 검색·상태 요약·chat 단위 테스트 포함</td></tr>
+  <tr><td>사전 점검 게이트</td><td>LogMiner 권한 누락 감지 → GRANT 안내 → 부여 후 통과 (실동작)</td></tr>
+  <tr><td>실장애 복구</td><td>archive log 소실로 죽은 캡처(나흘 경과)를 재스냅샷 워크플로로 복구 — truncate 완전 재구축 10.5만 행·50초 go-live, 진행률 notification 실측</td></tr>
+  <tr><td>정합 검증</td><td>행 수 + ORA_HASH 체크섬으로 고아 행 편차(+2,237) 검출 → 재구축 후 수렴 확인</td></tr>
+  <tr><td>SCN 유실 방어 실증</td><td>heartbeat 적용 후 heartbeat 토픽 1,459건/일 발행 확인, 세 번째 경로(장기 트랜잭션 pin) 재발을 로그로 원인 확정 후 retention 적용</td></tr>
+  <tr><td>AI 진단 실전</td><td>재발 장애(offset SCN 유실)를 위젯 질문 한 번으로 원인 확정 — connect.log 라인 근거 인용, 실패 1시간 전 선행 경고(장기 트랜잭션)까지 로그에서 발굴</td></tr>
+  <tr><td>모니터링 실측</td><td>분당 2,262건 버스트에서 발행·apply 추적, lag 스파이크·소진 시계열 기록, 롤업 멱등 테스트</td></tr>
+</table>
 
-<h2>6. 기술 스택</h2>
-<p class="small">
-<span class="badge">Java 21</span><span class="badge">Spring Boot 3.5</span><span class="badge">MyBatis</span><span class="badge">Debezium 3.6 (Oracle LogMiner · JDBC sink)</span><span class="badge">Kafka 4.3 KRaft</span><span class="badge">Apache Iceberg 1.11</span><span class="badge">MinIO(S3)</span><span class="badge">PostgreSQL 15</span><span class="badge">React 19</span><span class="badge">TypeScript</span><span class="badge">Vite</span><span class="badge">Tailwind 4 · shadcn/ui</span><span class="badge">TanStack Table</span><span class="badge">자체 SVG (토폴로지·차트)</span><span class="badge">Claude API (tool use · SSE)</span>
+<h2>6. 기술 스택 · 문서화</h2>
+<p>
+Java 21 · Spring Boot 3.5 · MyBatis · Debezium 3.6 (Oracle LogMiner · JDBC sink) · Kafka 4.3 KRaft ·
+Apache Iceberg 1.11 · MinIO(S3) · PostgreSQL 15 · React 19 · TypeScript · Vite · Tailwind 4 · shadcn/ui ·
+TanStack Table · 자체 SVG(토폴로지·차트) · Claude API(tool use · SSE).
 </p>
-<p class="small">데이터 경로는 기성 커넥터만 사용(자체 코드는 제어면·복구·UI에 한정 — apply 시맨틱 단일 경로 유지가 설계 원칙).
-인프라는 베어메탈 스크립트로 멱등 구축(Iceberg Kafka Connect sink는 공식 프리빌드가 없어 소스 빌드).
-Iceberg 읽기는 Spark/Trino 없이 iceberg-data 라이브러리 단일 프로세스.</p>
-
-<h2>7. 문서화 · 남은 과제</h2>
 <p class="small">
-설계 기준(architecture.md)·운영 가이드(operations.md)·구현 내부 노트(internals.md)·
-실장애 기록(incidents/)·실측 실험 기록(experiments/)을 리포에 유지 —
+설계 기준(architecture.md) · 운영 가이드(operations.md) · 구현 내부 노트(internals.md) ·
+실장애 기록(incidents/, 건별 타임라인·진단 경로·교훈) · 실측 실험 기록(experiments/)을 리포에 유지 —
 "UI에는 사용자 결정에 필요한 것만, 시스템 내부는 문서·주석에" 원칙.
 남은 과제: 기동 중 테이블 추가 시 초기적재(incremental snapshot + Kafka signal) ·
-Prometheus/Grafana(JMX exporter) 도입 후 자체 수집과 비교 ·
-컬럼 리네임의 적재 반영(스톡 sink 한계 — 정책 결정 대기) · S3 복구 풀 리허설 실행 검증 ·
-AI 진단 멀티턴(후속 질문 맥락 유지) · offset 정체 조기 경보(실패 전 WARN의 운영 이벤트 승격)
+Prometheus/Grafana(JMX exporter) 도입 후 자체 수집과 비교 · 컬럼 리네임의 적재 반영(스톡 sink 한계 — 정책
+결정 대기) · S3 복구 풀 리허설 실행 검증 · AI 진단 멀티턴(후속 질문 맥락 유지) · offset 정체 조기 경보(실패 전
+WARN의 운영 이벤트 승격)
 </p>
 
+<h2 style="page-break-before: always;">부록 A. 콘솔 화면</h2>
+<p class="small">개발 환경 화면 캡처이며, 내부 주소 등 일부 정보는 가림 처리했다.</p>
 
-<h2 style="page-break-before: always;">8. 콘솔 화면</h2>
-<div class="keep"><img src="/home/nhchoi/deltazium/docs/images/dashboard.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm;">
-<p class="small" style="text-align:center; margin-top:1mm;">대시보드 — 토폴로지(자체 SVG)·처리량(발행 vs apply)·lag 시계열·컴포넌트 자원·최근 이벤트 (분당 2,262건 버스트 실측)</p></div>
-<div class="keep"><img src="/home/nhchoi/deltazium/docs/images/wizard.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm; margin-top:3mm;">
-<p class="small" style="text-align:center; margin-top:1mm;">등록 위저드 — 소스 딕셔너리 조회: PK 없는 테이블 선택 차단·supplemental logging 경고·행수</p></div>
-<div class="keep"><img src="/home/nhchoi/deltazium/docs/images/tables.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm; margin-top:3mm;">
-<p class="small" style="text-align:center; margin-top:1mm;">테이블 모니터링 — 실측 이벤트 수·이벤트/s·sink별 lag, 정지/재개/삭제</p></div>
-<div class="keep"><img src="/home/nhchoi/deltazium/docs/images/recovery.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm; margin-top:3mm;">
-<p class="small" style="text-align:center; margin-top:1mm;">복구 — changelog(S3) 현황(보존 구간·파티션)·SCN 지정 재발행·go-live 자동 재개·정합 검증</p></div>
-<div class="keep"><img src="/home/nhchoi/deltazium/docs/images/events.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm; margin-top:3mm;">
-<p class="small" style="text-align:center; margin-top:1mm;">운영 이벤트 타임라인 — 등록·정지·DDL·복구·커넥터 장애 전이(원인 trace 펼침)</p></div>
-<div class="keep"><img src="/home/nhchoi/deltazium/docs/images/capture-banner.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm; margin-top:3mm;">
-<p class="small" style="text-align:center; margin-top:1mm;">캡처 장애 경고 배너(실장애 실측) — connector RUNNING/task FAILED 불일치, 감지 시각·원인·전체 trace·[복구 시작]</p></div>
-<div class="keep"><img src="/home/nhchoi/deltazium/docs/images/resnapshot.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm; margin-top:3mm;">
-<p class="small" style="text-align:center; margin-top:1mm;">단계형 재스냅샷 완료(실장애 복구에 사용된 run) — 유입 차단→잔량 소진→타깃 비우기→재기동→스냅샷(10.5만 행)→go-live</p></div>
-<div class="keep"><img src="/home/nhchoi/deltazium/docs/images/assist.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm; margin-top:3mm;">
-<p class="small" style="text-align:center; margin-top:1mm;">AI 진단 위젯(실장애 실측) — dz-source 장애를 도구 자율 호출로 진단: 사용 도구 표시·connect.log 라인 근거 인용·조치 제안</p></div>
+<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/masked/dashboard.png">
+<p class="cap">그림 1. 대시보드 — 토폴로지(자체 SVG)·처리량(발행 vs apply)·lag 시계열·컴포넌트 자원·최근 이벤트 (분당 2,262건 버스트 실측)</p></div>
+
+<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/wizard.png">
+<p class="cap">그림 2. 등록 위저드 — 소스 딕셔너리 조회: PK 없는 테이블 선택 차단·supplemental logging 경고·행수</p></div>
+
+<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/tables.png">
+<p class="cap">그림 3. 테이블 모니터링 — 실측 이벤트 수·이벤트/s·sink별 lag, 정지/재개/삭제</p></div>
+
+<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/recovery.png">
+<p class="cap">그림 4. 복구 — changelog(S3) 현황(보존 구간·파티션)·SCN 지정 재발행·go-live 자동 재개·정합 검증</p></div>
+
+<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/masked/events.png">
+<p class="cap">그림 5. 운영 이벤트 타임라인 — 등록·정지·DDL·복구·커넥터 장애 전이(원인 trace 펼침)</p></div>
+
+<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/capture-banner.png">
+<p class="cap">그림 6. 캡처 장애 경고 배너(실장애 실측) — connector RUNNING/task FAILED 불일치, 감지 시각·원인·전체 trace·복구 진입</p></div>
+
+<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/resnapshot.png">
+<p class="cap">그림 7. 단계형 재스냅샷 완료(실장애 복구에 사용된 run) — 유입 차단→잔량 소진→타깃 비우기→재기동→스냅샷(10.5만 행)→go-live</p></div>
+
+<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/masked/assist.png">
+<p class="cap">그림 8. AI 진단 위젯(실장애 실측) — dz-source 장애를 도구 자율 호출로 진단: 사용 도구 표시·connect.log 라인 근거 인용·조치 제안</p></div>
 
 </body>
 </html>
