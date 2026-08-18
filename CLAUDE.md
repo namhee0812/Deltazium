@@ -5,7 +5,7 @@ Oracle → Kafka → (실 적재: Oracle) + (changelog 보관: Iceberg/MinIO) �
 
 **모든 설계 판단의 기준 문서는 `docs/architecture.md`다. 이 파일과 충돌하면 architecture.md가 우선한다. 구현 전에 해당 절을 반드시 읽을 것.**
 
-> 참고: DeltaStream NG(별도 리포)와는 별개 트랙. 이 프로젝트는 Kafka 스택으로 CDC 시맨틱(envelope·스냅샷·DDL·복구)을 학습·검증하는 것이 목적이고, 제품화 시 지식을 NG의 trail 기반 설계로 이전한다.
+> 참고: 이 프로젝트는 Kafka 스택으로 CDC 시맨틱(envelope·스냅샷·DDL·복구)을 학습·검증하는 것이 목적이다.
 
 ## 절대 규칙
 

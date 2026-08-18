@@ -6,7 +6,7 @@ Debezium + Kafka 기반 Oracle CDC 파이프라인과 이를 제어하는 웹 �
 **Iceberg에 append-only changelog 보관**(특정 SCN 시점부터의 복구 재생용). 그 위에
 테이블 등록·사전 점검·DDL 승인·복구 트리거를 담당하는 제어면(Spring Boot + React)을 얹었다.
 
-> 상용 CDC 솔루션(DeltaStream) 개발 경험을 바탕으로, Kafka 스택에서 CDC 시맨틱
+> 상용 CDC 솔루션 개발 경험을 바탕으로, Kafka 스택에서 CDC 시맨틱
 > (envelope, 스냅샷 일관성, 멱등 apply, 복구 재생)을 검증하기 위해 만든 프로젝트다.
 
 ## 아키텍처

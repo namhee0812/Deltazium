@@ -1,4 +1,4 @@
-# deploy — 베어메탈 인프라 (SQueryDev 서버)
+# deploy — 베어메탈 인프라 (단일 dev 서버)
 
 2026-07-23 결정: docker-compose 대신 베어메탈 기동을 1순위로 한다. compose 포장은 추후.
 
