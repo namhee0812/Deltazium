@@ -170,6 +170,30 @@ go-live. 되돌릴 수 없는 지점(offset 삭제) 전까지는 취소·실패 
 Prometheus/Grafana는 의도적으로 미도입(백로그) — 무엇을 보여줘야 하는가를 먼저 검증했다.</p>
 </div>
 
+<div class="card keep">
+<h3>재개 지점(offset SCN) 유실 — 같은 예외, 세 경로의 방어</h3>
+<p>같은 종착점(<code>LogFileNotFoundException</code>)의 장애가 서로 다른 세 경로로 실발생했다:
+커넥터 다운 중 archive 정리, 유휴 트래픽 중 offset 정체(Debezium offset은 <b>이벤트 발행 시에만
+영속화</b>된다 — "유휴 기간 &gt; 보존 기간"이면 결정론적 재현), 그리고 미커밋 장기 트랜잭션이
+offset을 시작 SCN에 pin하는 경우(heartbeat로도 전진 불가 — 후속 트랜잭션 처리는 막히지 않고
+재시작 지점만 잡힌다). 경로별 방어를 공식 문서 검증 후 적용했다:
+<code>heartbeat.interval.ms</code> 60s(유휴) · archive 보존 기간(다운타임) ·
+<code>log.mining.transaction.retention.ms</code> 2h(장기 tx — 버려진 트랜잭션이 이후 커밋되면
+복제에서 빠지는 대가를 문서화하고 선택). 롤오버 index가 시각 순서와 무관한 회전 슬롯이라는
+함정 등 진단 과정의 발견도 장애 기록으로 남겼다.</p>
+</div>
+
+<div class="card keep">
+<h3>AI 진단 어시스턴트 — tool use 기반 임베디드 에이전트</h3>
+<p>"왜 CDC가 멈췄어?" 질문을 받으면 Claude가 읽기 전용 도구 2종(파이프라인 상태 요약 ·
+로그 검색)을 스스로 골라 호출해 원인을 짚는다 — 실시간 상태 진단이라 RAG가 아닌 tool use를
+선택했다. 도구 표면은 AI용으로 별도 설계(비정상만 상세 · 서버측 응답 캡 · 근거 위치 포함)하고
+같은 프로세스에서 직접 실행하며, <b>조치 실행 도구는 의도적으로 두지 않았다</b> — 제안까지만,
+실행은 사람이 화면에서 한다. 모든 주장에 로그 파일·줄 번호 근거를 강제해 답변을 grep으로
+검증할 수 있다. tool use 왕복의 반복 전송을 prompt caching으로 흡수해 진단 1건 비용을
+$1 → $0.06으로 낮췄다(실측 — 왕복별 토큰 로깅으로 캐시 적중 회귀 감시).</p>
+</div>
+
 <h2>4. 웹 콘솔 주요 기능</h2>
 <table>
   <tr><th style="width:24%">화면</th><th>기능</th></tr>
@@ -178,6 +202,7 @@ Prometheus/Grafana는 의도적으로 미도입(백로그) — 무엇을 보여�
   <tr><td>테이블 모니터링</td><td>실측 지표 — 총 이벤트(offset)·이벤트/s·sink별 lag(AdminClient), 정지/재개/재시도/삭제, 캡처 장애 배너(원인·trace·복구 진입), 재스냅샷(단계 팝업·truncate 재구축)</td></tr>
   <tr><td>DDL 이력</td><td>schema change topic 상시 수집(retention 만료 대비 DB 적재), 승인(타깃 이름 치환 실행)/거부(테이블 단위 apply 정지), 비전파성 DDL 자동 무시</td></tr>
   <tr><td>이벤트</td><td>테이블별 운영 이력 — 등록·정지·DDL·복구·커넥터 장애 전이(원인 trace 포함) 타임라인</td></tr>
+  <tr><td>AI 진단 위젯</td><td>전 화면 공통 플로팅 채팅 — 상태 요약·로그 검색 도구 자율 호출, 로그 라인 근거와 함께 원인 제시(SSE 스트리밍·사용 도구 표시), 조치는 제안만</td></tr>
   <tr><td>복구</td><td>changelog(S3) 현황(용량·보존 구간·파티션별) · SCN 지정 재발행 · go-live 자동 재개 · SRC/TGT 정합 검증(행수+체크섬)</td></tr>
 </table>
 
@@ -185,16 +210,18 @@ Prometheus/Grafana는 의도적으로 미도입(백로그) — 무엇을 보여�
 <ul>
   <li><span class="ok">✔</span> 실 Oracle end-to-end: 초기 스냅샷(30,088행) → LogMiner 실시간 스트리밍 → 타깃 apply(lag 0) + changelog 커밋까지 실트래픽 확인</li>
   <li><span class="ok">✔</span> 캡처 장애(ORA-1371) 재현 → 전략 전환 → 밀린 9,673건 유실 0 회수</li>
-  <li><span class="ok">✔</span> envelope 왕복 동등성·changelog 사전 생성(실 카탈로그)·복구 재발행 스모크(73건) 등 자동화 테스트 72건</li>
+  <li><span class="ok">✔</span> envelope 왕복 동등성·changelog 사전 생성(실 카탈로그)·복구 재발행 스모크(73건) 등 자동화 테스트 136건</li>
   <li><span class="ok">✔</span> 사전 점검 게이트 실동작: LogMiner 권한 누락 감지 → GRANT 안내 → 부여 후 통과</li>
   <li><span class="ok">✔</span> 실장애 복구: archive log 소실로 죽은 캡처(나흘 경과)를 재스냅샷 워크플로로 복구 — truncate 완전 재구축 10.5만 행·50초 go-live, 스냅샷 진행률 notification 실측</li>
   <li><span class="ok">✔</span> 정합 검증(행 수+ORA_HASH 체크섬)으로 고아 행 편차(+2,237) 검출 → 재구축 후 수렴 확인</li>
+  <li><span class="ok">✔</span> AI 진단 실전: 재발 장애(offset SCN 유실)를 위젯 질문 한 번으로 원인 확정 — connect.log 라인 근거 인용, 실패 1시간 전 선행 경고(장기 트랜잭션)까지 로그에서 발굴</li>
+  <li><span class="ok">✔</span> SCN 유실 방어 실증: heartbeat 적용 후 heartbeat 토픽 1,459건/일 발행 확인, 세 번째 경로(장기 tx pin) 재발을 로그로 원인 확정 후 retention 적용</li>
   <li><span class="ok">✔</span> 모니터링 실측: 분당 2,262건 버스트에서 발행·apply 추적, lag 스파이크·소진 시계열 기록, 롤업 멱등 테스트</li>
 </ul>
 
 <h2>6. 기술 스택</h2>
 <p class="small">
-<span class="badge">Java 21</span><span class="badge">Spring Boot 3.5</span><span class="badge">MyBatis</span><span class="badge">Debezium 3.6 (Oracle LogMiner · JDBC sink)</span><span class="badge">Kafka 4.3 KRaft</span><span class="badge">Apache Iceberg 1.11</span><span class="badge">MinIO(S3)</span><span class="badge">PostgreSQL 15</span><span class="badge">React 19</span><span class="badge">TypeScript</span><span class="badge">Vite</span><span class="badge">Tailwind 4 · shadcn/ui</span><span class="badge">TanStack Table</span><span class="badge">자체 SVG (토폴로지·차트)</span>
+<span class="badge">Java 21</span><span class="badge">Spring Boot 3.5</span><span class="badge">MyBatis</span><span class="badge">Debezium 3.6 (Oracle LogMiner · JDBC sink)</span><span class="badge">Kafka 4.3 KRaft</span><span class="badge">Apache Iceberg 1.11</span><span class="badge">MinIO(S3)</span><span class="badge">PostgreSQL 15</span><span class="badge">React 19</span><span class="badge">TypeScript</span><span class="badge">Vite</span><span class="badge">Tailwind 4 · shadcn/ui</span><span class="badge">TanStack Table</span><span class="badge">자체 SVG (토폴로지·차트)</span><span class="badge">Claude API (tool use · SSE)</span>
 </p>
 <p class="small">데이터 경로는 기성 커넥터만 사용(자체 코드는 제어면·복구·UI에 한정 — apply 시맨틱 단일 경로 유지가 설계 원칙).
 인프라는 베어메탈 스크립트로 멱등 구축(Iceberg Kafka Connect sink는 공식 프리빌드가 없어 소스 빌드).
@@ -207,7 +234,8 @@ Iceberg 읽기는 Spark/Trino 없이 iceberg-data 라이브러리 단일 프로�
 "UI에는 사용자 결정에 필요한 것만, 시스템 내부는 문서·주석에" 원칙.
 남은 과제: 기동 중 테이블 추가 시 초기적재(incremental snapshot + Kafka signal) ·
 Prometheus/Grafana(JMX exporter) 도입 후 자체 수집과 비교 ·
-컬럼 리네임의 적재 반영(스톡 sink 한계 — 정책 결정 대기) · S3 복구 풀 리허설 실행 검증
+컬럼 리네임의 적재 반영(스톡 sink 한계 — 정책 결정 대기) · S3 복구 풀 리허설 실행 검증 ·
+AI 진단 멀티턴(후속 질문 맥락 유지) · offset 정체 조기 경보(실패 전 WARN의 운영 이벤트 승격)
 </p>
 
 
@@ -226,6 +254,8 @@ Prometheus/Grafana(JMX exporter) 도입 후 자체 수집과 비교 ·
 <p class="small" style="text-align:center; margin-top:1mm;">캡처 장애 경고 배너(실장애 실측) — connector RUNNING/task FAILED 불일치, 감지 시각·원인·전체 trace·[복구 시작]</p></div>
 <div class="keep"><img src="/home/nhchoi/deltazium/docs/images/resnapshot.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm; margin-top:3mm;">
 <p class="small" style="text-align:center; margin-top:1mm;">단계형 재스냅샷 완료(실장애 복구에 사용된 run) — 유입 차단→잔량 소진→타깃 비우기→재기동→스냅샷(10.5만 행)→go-live</p></div>
+<div class="keep"><img src="/home/nhchoi/deltazium/docs/images/assist.png" style="width:100%; border:0.5pt solid #cbd5e1; border-radius:1.5mm; margin-top:3mm;">
+<p class="small" style="text-align:center; margin-top:1mm;">AI 진단 위젯(실장애 실측) — dz-source 장애를 도구 자율 호출로 진단: 사용 도구 표시·connect.log 라인 근거 인용·조치 제안</p></div>
 
 </body>
 </html>
