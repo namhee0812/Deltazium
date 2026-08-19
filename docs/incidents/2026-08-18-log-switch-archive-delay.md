@@ -37,10 +37,19 @@ Debezium 3.6 `SqlUtils.allMinableLogsQuery`는 마이닝 대상 로그를 두 �
 
 ## 조치 (2026-08-19)
 
-- `connectors/source.json.tmpl`에 `log.mining.log.query.max.retries=20` 추가, 운영 중인
+- `connectors/source.json.tmpl`에 **`internal.log.mining.log.query.max.retries=20`** 추가, 운영 중인
   dz-source에도 PUT 반영. 백오프가 60s에서 포화하므로 20회면 마지막 검사가 스위치 후
   약 14분 뒤 — 아카이빙 수 분 지연까지 흡수한다. 정상 시엔 첫 시도에서 통과하므로 비용 없음.
 - task 재시작으로 복구. 재스냅샷 불필요(로그 유실 아님).
+
+**키 이름 함정 (1차 조치 무효, 10:39 스위치에서 재발).** 소스의 Field 정의는
+`Field.createInternal("log.mining.log.query.max.retries")`인데, `createInternal`은 실제 키에
+`internal.` 접두를 붙인다 — `Field.name()`은 `internal.log.mining.log.query.max.retries`.
+접두 없는 키를 넣으면 Connect도 Debezium 설정 dump도 20을 그대로 되비추지만(미지 키는 통과)
+`OracleConnectorConfig`는 기본값 5를 쓴다. 설치 jar로 직접 확인:
+`new OracleConnectorConfig(config with "log.mining...=20").getMaximumNumberOfLogQueryRetries()`
+→ 5, `internal.log.mining...=20` → 20. 공식 문서에 없는 internal 설정이므로 버전 업 시
+존재 여부를 다시 확인할 것 (`javap -c OracleConnectorConfig | grep max.retries`).
 
 ## 세 번째 경로
 
