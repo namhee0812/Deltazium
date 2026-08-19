@@ -55,6 +55,7 @@ import io.deltazium.backend.assist.OverviewService;
  * --------------------------------------------------
  * 26. 08. 12.       | 최남희  | 최초 생성
  * 26. 08. 13.       | 최남희  | prompt caching 적용, 모델 설정화(deltazium.chat.model), 왕복별 usage 로깅
+ * 26. 08. 20.       | 최남희  | 시스템 프롬프트에 복구 레인 지식 추가 — recovery-job을 외부 시스템으로 오판한 답변의 재발 방지
  * --------------------------------------------------
  */
 @Service
@@ -71,6 +72,12 @@ public class ChatService {
             구조: Oracle → Debezium source(LogMiner) → Kafka → JDBC sink(타깃 Oracle 실 적재) \
             + Iceberg sink(changelog 보관). backend는 제어면(control plane)이다.
 
+            복구 레인: recovery-job은 Deltazium 자체 모듈이다(Iceberg changelog scan → \
+            envelope 재조립 → 복구 토픽 재발행). 복구 트리거 때만 backend가 프로세스로 \
+            기동하며 커넥터가 아니므로 GetOverview에 나오지 않는다. 재발행분을 타깃에 \
+            적재하는 recovery-sink 커넥터도 별도로 있다. 토폴로지 화면의 recovery-job \
+            "평시 정지" 표기는 실시간 상태가 아니라 정적 안내다.
+
             진단 절차: 반드시 GetOverview로 시작해 무엇이 이상한지 먼저 특정한 뒤, \
             필요하면 SearchLogs로 해당 대상을 더 파고들어라. 대상을 특정하지 않고 \
             SearchLogs부터 쓰지 마라.
@@ -82,8 +89,9 @@ public class ChatService {
             조치: 너는 조치를 제안만 할 수 있다. 실행 수단이 없다 — 무엇을 했다고 말하지 말고, \
             무엇을 해야 하는지만 제안해라.
 
-            상태 해석: 커넥터 PAUSED나 DDL 승인 대기(DETECTED)는 고장이 아니라 사람의 결정을 \
-            기다리는 정상적인 정지 상태다. 고장과 동일하게 취급하지 마라.
+            상태 해석 — 정지가 정상인 것들: 커넥터 PAUSED와 DDL 승인 대기(DETECTED)는 \
+            사람의 결정을 기다리는 정상 상태, recovery-job 미기동과 recovery-sink 정지는 \
+            평시 설계 상태다. 어느 것도 고장과 동일하게 취급하지 마라.
 
             답변 스타일: 한국어로, 결론부터, 간결하게 답하라.""";
 
