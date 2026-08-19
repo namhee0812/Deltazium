@@ -18,6 +18,10 @@
   발행되므로** 7절 워크플로는 유지된다. online_catalog의 제약은 "DDL 직전 redo를 DDL 이후
   딕셔너리로 해석할 수 있다"는 것 — 실시간 스트리밍에선 그 창이 초 단위라 수용.
   부수 이점: 마이닝 빠름, 딕셔너리 redo 기록 없음, DBMS_LOGMNR_D 권한 불필요해짐(grant는 유지 무방).
+- `log.mining.log.query.max.retries=20` (**2026-08-19 추가**): 기본 5회(마지막 검사가 스위치 후
+  +31s)는 이 DB의 4 GB redo 아카이빙(~50s)보다 짧아 로그 스위치 때 확률적으로 task가 죽었다.
+  스위치 직후 직전 시퀀스는 online(CURRENT만 수집)에도 archived(완료 후 등록)에도 없는 창이
+  생기기 때문. 상세: `docs/incidents/2026-08-18-log-switch-archive-delay.md`.
 - `schema.evolution=none` (jdbc-sink): 스키마 변경은 7절 승인 워크플로가 처리한다. sink가 임의로 타깃 DDL을 치면 안 됨.
 - `iceberg.tables.auto-create-enabled=false`: changelog 테이블 스키마는 5절에 고정 —
   테이블은 backend가 명시 스키마로 생성하고 sink는 append만 한다.

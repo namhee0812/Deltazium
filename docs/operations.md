@@ -75,6 +75,13 @@
 
 ### 캡처 장애 (테이블 모니터링 상단 빨간 배너)
 전 테이블 수집이 멈춘 상태 — 배너에 감지 시각·원인·전체 trace가 뜬다.
+
+**`LogFileNotFoundException`이면 복구 시작 전에 offset SCN을 담은 archive가 남아 있는지
+먼저 확인한다** (`v$archived_log where :scn between first_change# and next_change#`).
+남아 있으면 로그 유실이 아니라 로그 스위치 중 아카이빙 대기 초과
+([08-18 기록](incidents/2026-08-18-log-switch-archive-delay.md))이므로 재스냅샷 없이
+task 재시작(`POST /connectors/dz-source/tasks/0/restart`)만으로 같은 offset에서 재개된다.
+
 [복구 시작] → 방식 선택:
 - **초기 스냅샷부터** (권장): 유실 없이 전 테이블 재구축
 - **현재 시점부터**: 장애 구간 유실을 수용하고 스트리밍만 재개
