@@ -33,6 +33,9 @@ import org.springframework.stereotype.Service;
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 24.       | 최남희  | AdminClient에 default.api.timeout.ms/request.timeout.ms 추가
+ * |                          | - Kafka 다운 시 60초+ 매달림 방지, 5초 내 실패
+ * --------------------------------------------------
  */
 @Service
 public class KafkaMetricsService {
@@ -159,7 +162,10 @@ public class KafkaMetricsService {
                 if (admin == null) {
                     Properties props = new Properties();
                     props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
-                    props.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "5000");
+                    props.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "4000");
+                    // Kafka 다운 시 60초 이상 매달리지 않고 5초 내 실패해 API가 즉시 에러를
+                    // 반환하도록 한다 (26-08-20 디스크 풀 장애 미검출 재발 방지).
+                    props.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "5000");
                     admin = AdminClient.create(props);
                 }
                 a = admin;
