@@ -18,6 +18,27 @@
 - 로그 위치·로테이션: [deploy/README.md](../deploy/README.md) — 일 단위,
   지난 날짜는 `logs/yyyy-MM-dd/` 디렉터리.
 
+## 장애 자동 감지 (watchdog)
+
+`deploy/watchdog.sh`가 `dzadmin status` 출력을 파싱해 infra(pg/minio/kafka/connect)·backend
+중 DOWN인 컴포넌트를 dzadmin의 해당 컴포넌트 `start`로 자동 재기동한다.
+web(vite)은 개발 도구이므로 감시 대상에서 제외한다.
+
+- 재기동 판단은 5분 주기 실행을 전제로 한다(crontab). 이 리포는 crontab 등록까지는
+  하지 않으므로 필요하면 직접 등록한다:
+  ```
+  */5 * * * * /home/nhchoi/deltazium/deploy/watchdog.sh
+  ```
+- 로그: `~/deltazium-runtime/logs/watchdog.log` — **정상일 때는 아무것도 기록하지 않는다**
+  (5분 주기로 계속 도는 로그가 오염되지 않도록). DOWN 감지·재기동 시도·결과만 남는다.
+- 동시 실행은 `flock`으로 막는다(`/tmp/dz-watchdog.lock`) — 재기동이 다음 주기보다
+  오래 걸리는 경우 중복 실행 방지.
+- infra는 컴포넌트별로 이미 떠 있으면 건너뛰는 멱등 스크립트라, 일부만 죽어 있어도
+  `dzadmin infra start` 한 번으로 죽은 것만 재기동된다.
+- 26-08-20 디스크 풀로 Kafka가 죽고 나흘간 미검출됐던 장애의 재발 방지 목적이다. 다만
+  watchdog은 "죽은 프로세스를 다시 띄우는 것"까지만 한다 — 디스크가 다시 가득 차면
+  재기동도 계속 실패한다. 근본 원인(디스크 사용률)은 아래 경고 센터로 사전에 본다.
+
 ## AI 진단 어시스턴트 키 설정
 
 `~/deltazium-runtime/conf/secrets.env` 파일을 만들고 `export ANTHROPIC_API_KEY=sk-ant-...`
@@ -47,6 +68,29 @@
 - 근거로 제시된 로그 위치는 `grep -n`으로 직접 검증할 수 있다.
 - API 키 설정은 위(`secrets.env`) 참고. 질문당 비용 감각은 sonnet 기준 $0.1 안팎
   (backend.log의 `chat usage` INFO로 왕복별 토큰 확인 가능).
+
+### 경고 센터 (헤더 우측 칩)
+
+평시엔 아무것도 표시되지 않는다. 아래 3종 경고 중 하나라도 감지되면 헤더 우측에
+칩(예: "⚠ 2")이 뜨고, **클릭하면** 팝오버로 목록(제목·상세·발생 시각)을 보여준다.
+30초 주기로 `GET /api/system/warnings`를 폴링한다.
+
+| 경고 | 판정 기준 | 심각도 |
+|---|---|---|
+| 디스크 사용률 | `deltazium.runtime-dir`(기본 `~/deltazium-runtime`) 파일시스템 사용률이 `deltazium.disk-warn-pct`(기본 85%) 이상 | WARN |
+| Kafka 연결 불가 | AdminClient `describeCluster` 실패(타임아웃 포함) | CRITICAL |
+| 커넥터 상태 | 커넥터/태스크가 FAILED면 커넥터별 CRITICAL, RUNNING이 아닌 그 외 상태(UNASSIGNED·PAUSED 등)면 WARN, Connect REST 자체 접근 불가면 개별 대신 CRITICAL 1건 | WARN 또는 CRITICAL |
+
+- 칩 색상은 목록 중 최고 심각도 기준 — CRITICAL이 하나라도 있으면 destructive 색,
+  없으면(WARN만) warning 색.
+- 임계값은 `backend/src/main/resources/application.yml`의 `deltazium.runtime-dir` /
+  `deltazium.disk-warn-pct`에서 조정한다.
+- **API 호출 자체가 실패하면(backend가 완전히 다운)** 칩을 CRITICAL로 띄우고
+  "backend 연결 끊김" 경고를 클라이언트에서 합성해 보여준다 — 배너를 숨기지 않고
+  오히려 가장 눈에 띄게 뜨는 것이 이 기능의 핵심이다(26-08-20 "겉보기엔 정상, 실은
+  나흘째 다운" 장애 재발 방지).
+- 테이블 모니터링 탭의 지표 조회 실패 배너·캡처 장애 배너와는 역할이 다르다 — 경고
+  센터는 "시스템 전체가 정상인가", 화면 배너는 "이 화면(테이블)의 데이터가 최신인가".
 
 ## CDC 등록
 
@@ -91,6 +135,13 @@ task 재시작(`POST /connectors/dz-source/tasks/0/restart`)만으로 같은 off
 진행은 단계 팝업으로 표시되며(닫아도 계속), TRUNCATE 실행 주체를 물어본다 —
 [시스템이 실행](권한 자동 점검) 또는 [직접/DBA가 실행](비워지면 자동 진행되는 홀드).
 완료(go-live) 후 복구 화면에서 **정합 검증**으로 일치를 확인한다.
+
+### 테이블 목록과 지표 조회 실패
+테이블 모니터링의 행 목록은 항상 `/api/registrations`(PostgreSQL 조회) 기준이라 Kafka가
+죽어도 그대로 보인다. 이벤트 수·lag 등 지표(`/api/metrics/tables`, Kafka AdminClient
+조회)만 별도로 갱신되며, 이 조회가 실패하면 지표 셀은 "—"로 바뀌고 상단에
+"지표 조회 실패(Kafka 연결 확인): ..." 배너가 뜬다 — 테이블이 0건으로 보이는
+오검출(26-08-20 장애의 증상 중 하나)을 막기 위한 분리다.
 
 ### 평시 재스냅샷
 테이블 모니터링 헤더의 [재스냅샷] — 장애가 아니어도 쓰는 운영 액션:

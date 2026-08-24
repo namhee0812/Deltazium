@@ -4,6 +4,17 @@
 
 ## 모니터링
 
+- [x] **장애 자동 감지·재기동(watchdog) + 경고 센터** (2026-08-24, 26-08-20 디스크 풀
+      미검출 장애 재발 방지)
+  - `deploy/watchdog.sh` — infra(pg/minio/kafka/connect)·backend DOWN 자동 재기동
+    (crontab 등록은 사용자 몫, `docs/operations.md` 참고)
+  - 헤더 경고 센터(`GET /api/system/warnings`) — 디스크 사용률·Kafka 연결·커넥터 상태
+    3종, backend 다운 시에도 칩이 뜨도록 클라이언트 합성 경고 포함
+  - `KafkaMetricsService` AdminClient에 5초 타임아웃 — 지표 API가 Kafka 다운 시
+    60초+ 매달리지 않게
+  - 남은 갭: watchdog·경고 센터는 감지·재기동까지다. 디스크가 실제로 가득 차는
+    근본 원인(로그 보존 정책, 파티션 분리 등)은 미해결 — 아래 Prometheus 도입과
+    함께 재검토
 - [ ] **Prometheus + Grafana 도입** (2026-08-06 결정: 추후 학습 겸 도입)
   - Kafka·Connect에 JMX exporter 붙여 JVM(힙·GC)·커넥터 메트릭 노출
   - 현재 자체 경량 수집(1분 샘플러 → PG)과 병행 비교 후 대체 여부 판단
