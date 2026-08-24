@@ -18,6 +18,8 @@
  * --------------------------------------------------
  * 26. 08. 14.       | 최남희  | AI 진단을 상단 탭에서 우하단 플로팅 위젯(AssistWidget)으로 전환
  * --------------------------------------------------
+ * 26. 08. 24.       | 최남희  | 헤더 우측에 전역 경고 센터(WarningCenter) 칩 추가
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
@@ -31,6 +33,7 @@ import { RecoveryPanel } from '@/features/recovery/RecoveryPanel'
 import { RegistrationWizard } from '@/features/registration/RegistrationWizard'
 import { TablesPanel } from '@/features/tables/TablesPanel'
 import { TopologyPanel } from '@/features/topology/TopologyPanel'
+import { WarningCenter } from '@/features/system/WarningCenter'
 import { Button } from '@/components/ui/button'
 
 type View = 'topology' | 'tables' | 'ddl' | 'events' | 'recovery' | 'connections'
@@ -107,6 +110,7 @@ function App() {
             </>
           )}
         </div>
+        <WarningCenter />
       </header>
 
       <main className="min-h-0 flex-1">

@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 
 import io.deltazium.backend.registration.RegisteredTable;
 import io.deltazium.backend.registration.RegisteredTableRepository;
@@ -35,6 +36,9 @@ import org.springframework.stereotype.Service;
  * --------------------------------------------------
  * 26. 08. 24.       | 최남희  | AdminClient에 default.api.timeout.ms/request.timeout.ms 추가
  * |                          | - Kafka 다운 시 60초+ 매달림 방지, 5초 내 실패
+ * --------------------------------------------------
+ * 26. 08. 24.       | 최남희  | reachable() 추가 — 경고 센터(SystemWarningService)의
+ * |                          | kafka-unreachable 판정용
  * --------------------------------------------------
  */
 @Service
@@ -152,6 +156,16 @@ public class KafkaMetricsService {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new MetricsException("lag 조회 중단", e);
+        }
+    }
+
+    /** Kafka 브로커 도달 가능 여부 — SystemWarningService(경고 센터)의 kafka-unreachable 판정용. */
+    public boolean reachable() {
+        try {
+            admin().describeCluster().nodes().get(6, TimeUnit.SECONDS);
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 

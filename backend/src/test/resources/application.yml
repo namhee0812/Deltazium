@@ -22,6 +22,8 @@ deltazium:
   kafka:
     bootstrap: localhost:9092
   topic-prefix: dz
+  runtime-dir: /tmp
+  disk-warn-pct: 85
   iceberg:
     catalog-uri: jdbc:postgresql://localhost:5433/iceberg_catalog
     catalog-user: deltazium
