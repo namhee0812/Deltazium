@@ -32,6 +32,7 @@ import org.springframework.stereotype.Service;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 08. 24.       | 최남희  | 최초 생성
+ * 26. 08. 24.       | 최남희  | 커넥터 RUNNING인데 task 0개인 상태를 WARN으로 판정 (소비 정지 맹점)
  * --------------------------------------------------
  */
 @Service
@@ -134,6 +135,11 @@ public class SystemWarningService {
             } else if (!"RUNNING".equals(state)) {
                 addWarning(out, now, "connector-degraded:" + name, "WARN",
                         name + " 비정상 상태", "현재 상태: " + state);
+            } else if (status.path("tasks").isEmpty()) {
+                // 커넥터 RUNNING이라도 task가 하나도 없으면 소비가 멈춘 상태다
+                // (리밸런스 직후 일시 상태일 수 있으나, 지속되면 개입이 필요하므로 WARN)
+                addWarning(out, now, "connector-no-tasks:" + name, "WARN",
+                        name + " task 없음", "커넥터는 RUNNING이지만 task가 0개 — 소비 정지 상태");
             }
         }
     }
