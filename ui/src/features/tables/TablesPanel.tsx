@@ -27,8 +27,11 @@
  * --------------------------------------------------
  * 26. 08. 06.       | 최남희  | 내부 용어 정리 — lag 설명은 컬럼 툴팁으로, offset 용어 완화
  * --------------------------------------------------
+ * 26. 08. 24.       | 최남희  | 행 원천을 /api/registrations로 분리 — /api/metrics/tables 실패해도
+ * |                          | 테이블 목록은 유지되고 지표 셀만 "—"로 표시 (Kafka 다운 오검출 방지)
+ * --------------------------------------------------
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createColumnHelper,
   flexRender,
@@ -73,20 +76,32 @@ interface RegisteredTable {
   tableName: string
 }
 
+/** 그리드 행 — 목록은 항상 /api/registrations(PG 조회, 항상 성공)에서 오고,
+ * 지표(topic·이벤트·lag)는 /api/metrics/tables(Kafka AdminClient 조회) 성공 시에만 채워진다.
+ * metrics가 null이면 지표 조회 실패/미완료 — 셀은 "—"로 표시한다. */
+interface Row {
+  id: number
+  schemaName: string
+  tableName: string
+  metrics: TableMetrics | null
+}
+
 const COLOR = { ok: '#56D89C', warn: '#F5B453', crit: '#F0647A', accent: '#53C8E8', dim: '#8A97B4' }
 
-const columnHelper = createColumnHelper<TableMetrics>()
+const columnHelper = createColumnHelper<Row>()
 
 const suffix = (m: { schemaName: string; tableName: string }) =>
   `${m.schemaName}_${m.tableName}`.toLowerCase()
 
+const METRICS_ERROR_PREFIX = '지표 조회 실패(Kafka 연결 확인): '
+
 export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
-  const [rows, setRows] = useState<TableMetrics[] | null>(null)
-  const [registered, setRegistered] = useState<RegisteredTable[]>([])
+  const [registered, setRegistered] = useState<RegisteredTable[] | null>(null)
+  const [metrics, setMetrics] = useState<TableMetrics[] | null>(null)
   const [connectors, setConnectors] = useState<ConnectorStates>({})
   const [error, setError] = useState<string | null>(null)
   const [globalFilter, setGlobalFilter] = useState('')
-  const [deleting, setDeleting] = useState<TableMetrics | null>(null)
+  const [deleting, setDeleting] = useState<Row | null>(null)
   const [dropChangelog, setDropChangelog] = useState(false)
   const [busy, setBusy] = useState(false)
   // 토픽별 이벤트/s 이력 (스파크라인용, 최근 24포인트)
@@ -94,17 +109,23 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   const [, forceRender] = useState(0)
 
   const load = useCallback(() => {
+    api<RegisteredTable[]>('/api/registrations')
+      .then(setRegistered)
+      .catch((e: Error) => setError('테이블 목록 조회 실패: ' + e.message))
     api<TableMetrics[]>('/api/metrics/tables')
       .then((data) => {
         for (const m of data) {
           const h = history.current[m.topic] ?? []
           history.current[m.topic] = [...h.slice(-23), m.eventsPerSec]
         }
-        setRows(data)
+        setMetrics(data)
         setError(null)
       })
-      .catch((e: Error) => setError('지표 조회 실패: ' + e.message))
-    api<RegisteredTable[]>('/api/registrations').then(setRegistered).catch(() => {})
+      .catch((e: Error) => {
+        // 행 목록(registered)은 그대로 유지 — 지표만 "—"로 빠진다.
+        setMetrics(null)
+        setError(METRICS_ERROR_PREFIX + e.message)
+      })
     api<ConnectorStates>('/api/connectors').then(setConnectors).catch(() => {})
   }, [])
 
@@ -114,8 +135,16 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     return () => clearInterval(id)
   }, [load, refreshKey])
 
-  const idOf = (m: TableMetrics) =>
-    registered.find((r) => r.schemaName === m.schemaName && r.tableName === m.tableName)?.id
+  const rows = useMemo<Row[] | null>(() => {
+    if (registered === null) return null
+    const byKey = new Map((metrics ?? []).map((m) => [`${m.schemaName}.${m.tableName}`, m]))
+    return registered.map((r) => ({
+      id: r.id,
+      schemaName: r.schemaName,
+      tableName: r.tableName,
+      metrics: byKey.get(`${r.schemaName}.${r.tableName}`) ?? null,
+    }))
+  }, [registered, metrics])
 
   // 캡처(dz-source) 전역 상태 — 행별 배지는 각 테이블의 jdbc-sink만 보므로,
   // 캡처가 죽으면 여기 배너로 알린다 (sink 초록 + lag 0 = 정상처럼 보이는 착시 방지)
@@ -139,7 +168,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       .catch(() => setDetectedAt(null))
   }, [sourceBroken])
 
-  const sinkState = (m: TableMetrics) => {
+  const sinkState = (m: Row) => {
     const info = connectors[`dz-jdbc-sink-${suffix(m)}`]
     return info ? effectiveState(info) : 'N/A'
   }
@@ -191,18 +220,15 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     }
   }
 
-  const pauseResume = (m: TableMetrics) => {
-    const id = idOf(m)
-    if (id == null) return
+  const pauseResume = (m: Row) => {
     const action = sinkState(m) === 'PAUSED' ? 'resume' : 'pause'
-    void act(() => api(`/api/registrations/${id}/${action}`, { method: 'POST' }))
+    void act(() => api(`/api/registrations/${m.id}/${action}`, { method: 'POST' }))
   }
 
   const confirmDelete = () => {
-    const id = deleting ? idOf(deleting) : null
-    if (id == null) return
+    if (!deleting) return
     void act(async () => {
-      await api(`/api/registrations/${id}?dropChangelog=${dropChangelog}`, { method: 'DELETE' })
+      await api(`/api/registrations/${deleting.id}?dropChangelog=${dropChangelog}`, { method: 'DELETE' })
       setDeleting(null)
       setDropChangelog(false)
     })
@@ -214,10 +240,11 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       header: '',
       cell: ({ row }) => {
         const state = sinkState(row.original)
+        const lag = row.original.metrics?.jdbcLag ?? 0
         // 노랑은 "봐야 할 신호(lag 경고)" 전용 — 의도된 정지는 회색으로 구분
         const color =
           state === 'RUNNING'
-            ? row.original.jdbcLag > 100
+            ? lag > 100
               ? COLOR.warn
               : COLOR.ok
             : state === 'PAUSED' || state === 'N/A'
@@ -255,31 +282,43 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       id: 'topic',
       header: 'TOPIC',
       cell: ({ row }) => (
-        <span className="font-mono text-[11px] text-muted-foreground">{row.original.topic}</span>
+        <span className="font-mono text-[11px] text-muted-foreground">
+          {row.original.metrics?.topic ?? '—'}
+        </span>
       ),
     }),
-    columnHelper.accessor('totalEvents', {
+    columnHelper.display({
+      id: 'events',
       header: 'EVENTS',
-      cell: ({ getValue }) => <span className="font-mono">{getValue().toLocaleString()}</span>,
+      cell: ({ row }) => (
+        <span className="font-mono">
+          {row.original.metrics ? row.original.metrics.totalEvents.toLocaleString() : '—'}
+        </span>
+      ),
     }),
     columnHelper.display({
       id: 'rate',
       header: 'EVENTS/s (실측)',
       cell: ({ row }) => {
-        const h = history.current[row.original.topic] ?? []
+        const m = row.original.metrics
+        if (!m) return <span className="font-mono text-[11px] text-muted-foreground">—</span>
+        const h = history.current[m.topic] ?? []
         return (
           <div className="flex items-center gap-2">
             {h.length > 1 && <Spark data={h} color={COLOR.accent} />}
             <span className="font-mono text-[11px] text-muted-foreground">
-              {row.original.eventsPerSec.toFixed(1)}/s
+              {m.eventsPerSec.toFixed(1)}/s
             </span>
           </div>
         )
       },
     }),
-    columnHelper.accessor('jdbcLag', {
+    columnHelper.display({
+      id: 'jdbcLag',
       header: () => <span title="타깃 DB에 아직 반영되지 않은 이벤트 수">JDBC LAG</span>,
-      cell: ({ row, getValue }) => {
+      cell: ({ row }) => {
+        const m = row.original.metrics
+        if (!m) return <span className="font-mono text-muted-foreground">—</span>
         // 정지 중 lag 증가는 당연한 결과 — 경고색 대신 회색 유지
         const paused = sinkState(row.original) === 'PAUSED'
         return (
@@ -287,27 +326,32 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
             className={`font-mono ${
               paused
                 ? 'text-muted-foreground'
-                : getValue() > 100
+                : m.jdbcLag > 100
                   ? 'text-warn'
                   : 'text-foreground'
             }`}
           >
-            {getValue().toLocaleString()}
+            {m.jdbcLag.toLocaleString()}
           </span>
         )
       },
     }),
-    columnHelper.accessor('icebergLag', {
+    columnHelper.display({
+      id: 'icebergLag',
       header: () => (
         <span title="changelog에 아직 기록되지 않은 이벤트 수 — 커밋 주기(60초)만큼의 지연은 정상">
           ICEBERG LAG
         </span>
       ),
-      cell: ({ getValue }) => (
-        <span className={`font-mono ${getValue() > 1000 ? 'text-warn' : 'text-foreground'}`}>
-          {getValue().toLocaleString()}
-        </span>
-      ),
+      cell: ({ row }) => {
+        const m = row.original.metrics
+        if (!m) return <span className="font-mono text-muted-foreground">—</span>
+        return (
+          <span className={`font-mono ${m.icebergLag > 1000 ? 'text-warn' : 'text-foreground'}`}>
+            {m.icebergLag.toLocaleString()}
+          </span>
+        )
+      },
     }),
     columnHelper.display({
       id: 'actions',

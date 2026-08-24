@@ -23,6 +23,9 @@ deltazium:
     bootstrap: localhost:9092
   # Debezium topic.prefix — 토픽명은 <prefix>.<schema>.<table>
   topic-prefix: dz
+  # 워치독·경고 센터(SystemWarningService) 디스크 사용률 판정 대상 경로 — deploy/env.sh DZ_RT와 일치
+  runtime-dir: ${DZ_RT:${user.home}/deltazium-runtime}
+  disk-warn-pct: 85
   # changelog 저장소 (Deltazium 자체 인프라 — 사용자 등록 대상 아님, deploy/env.sh와 일치)
   iceberg:
     catalog-uri: jdbc:postgresql://localhost:5433/iceberg_catalog

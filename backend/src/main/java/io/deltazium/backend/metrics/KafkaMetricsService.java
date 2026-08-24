@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 
 import io.deltazium.backend.registration.RegisteredTable;
 import io.deltazium.backend.registration.RegisteredTableRepository;
@@ -32,6 +33,12 @@ import org.springframework.stereotype.Service;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ * 26. 08. 24.       | 최남희  | AdminClient에 default.api.timeout.ms/request.timeout.ms 추가
+ * |                          | - Kafka 다운 시 60초+ 매달림 방지, 5초 내 실패
+ * --------------------------------------------------
+ * 26. 08. 24.       | 최남희  | reachable() 추가 — 경고 센터(SystemWarningService)의
+ * |                          | kafka-unreachable 판정용
  * --------------------------------------------------
  */
 @Service
@@ -152,6 +159,16 @@ public class KafkaMetricsService {
         }
     }
 
+    /** Kafka 브로커 도달 가능 여부 — SystemWarningService(경고 센터)의 kafka-unreachable 판정용. */
+    public boolean reachable() {
+        try {
+            admin().describeCluster().nodes().get(6, TimeUnit.SECONDS);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private AdminClient admin() {
         AdminClient a = admin;
         if (a == null) {
@@ -159,7 +176,10 @@ public class KafkaMetricsService {
                 if (admin == null) {
                     Properties props = new Properties();
                     props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
-                    props.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "5000");
+                    props.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "4000");
+                    // Kafka 다운 시 60초 이상 매달리지 않고 5초 내 실패해 API가 즉시 에러를
+                    // 반환하도록 한다 (26-08-20 디스크 풀 장애 미검출 재발 방지).
+                    props.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "5000");
                     admin = AdminClient.create(props);
                 }
                 a = admin;
