@@ -15,6 +15,7 @@
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 08. 24.       | 최남희  | 최초 생성
+ * 26. 08. 25.       | 최남희  | 합성 경고 문구를 사용자 용어로 — "backend"→"엔진", 복제 별개 동작 안내 추가
  * --------------------------------------------------
  */
 import { useEffect, useRef, useState } from 'react'
@@ -64,8 +65,8 @@ export function WarningCenter() {
             {
               id: 'backend-unreachable',
               severity: 'CRITICAL',
-              title: 'backend 연결 끊김',
-              detail: `경고 센터 API 조회 실패 — backend가 다운됐을 수 있습니다 (${e.message})`,
+              title: '엔진 연결 끊김',
+              detail: `관제 화면이 Deltazium 엔진에 연결하지 못했습니다. 복제 파이프라인(Kafka·Connect)은 이 화면과 별개로 동작 중일 수 있습니다. (${e.message})`,
               sinceMs: unreachableSince.current,
             },
           ])
