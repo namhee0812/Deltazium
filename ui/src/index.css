@@ -134,3 +134,85 @@
     @apply font-sans;
     }
 }
+
+/* 다크/라이트 테마 토글 — 해/달 스위치 (uiverse.io, andrew-demchenk0 원안을 헤더
+   높이에 맞춰 축소: 48×26, 노브 22px, 아이콘 18px, translateX 22px).
+   장식 요소라 하늘·밤·노브 색상은 원안 리터럴을 그대로 쓰고 디자인 토큰과는 별개다.
+   전역 이름 충돌 방지를 위해 .theme-switch 접두를 쓴다(범용 .switch/.slider 금지). */
+.theme-switch {
+  position: relative;
+  display: inline-flex;
+  width: 48px;
+  height: 26px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.theme-switch__input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.theme-switch__slider {
+  position: absolute;
+  inset: 0;
+  background-color: #73C0FC;
+  border-radius: 999px;
+  transition: background-color 0.4s;
+}
+.theme-switch__slider::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  bottom: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background-color: #e8e8e8;
+  transition: transform 0.4s;
+  z-index: 2;
+}
+.theme-switch__input:checked + .theme-switch__slider {
+  background-color: #183153;
+}
+.theme-switch__input:checked + .theme-switch__slider::before {
+  transform: translateX(22px);
+}
+.theme-switch__input:focus-visible + .theme-switch__slider {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+.theme-switch__sun,
+.theme-switch__moon {
+  position: absolute;
+  top: 4px;
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+.theme-switch__sun {
+  left: 26px;
+  color: #F5A623;
+  animation: theme-switch-rotate 15s linear infinite;
+}
+.theme-switch__moon {
+  left: 4px;
+  color: #73C0FC;
+  animation: theme-switch-tilt 5s linear infinite;
+}
+@keyframes theme-switch-rotate {
+  from { transform: rotate(0); }
+  to { transform: rotate(360deg); }
+}
+@keyframes theme-switch-tilt {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(-10deg); }
+  75% { transform: rotate(10deg); }
+  100% { transform: rotate(0deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .theme-switch__sun,
+  .theme-switch__moon {
+    animation: none;
+  }
+}
