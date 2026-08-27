@@ -99,7 +99,7 @@ function App() {
         </Button>
         <div className="flex gap-4 font-mono text-xs text-muted-foreground">
           {summary === null ? (
-            <span className="text-crit">● backend 연결 안 됨</span>
+            <span className="text-crit">● 엔진 연결 안 됨</span>
           ) : (
             <>
               <span title="Kafka Connect 커넥터 수 (테이블 수 아님)">
