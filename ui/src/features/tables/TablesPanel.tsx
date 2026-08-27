@@ -31,6 +31,7 @@
  * |                          | 테이블 목록은 유지되고 지표 셀만 "—"로 표시 (Kafka 다운 오검출 방지)
  * --------------------------------------------------
  * 26. 08. 27.       | 최남희  | 하드코딩 hex를 CSS 변수/토큰 클래스로 교체 — 라이트 테마 대응
+ * 26. 08. 27.       | 최남희  | 토큰명 accent-cyan → brand (VS Code풍 중립 팔레트 전환으로 시안 아님)
  * --------------------------------------------------
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -92,7 +93,7 @@ const COLOR = {
   ok: 'var(--ok)',
   warn: 'var(--warn)',
   crit: 'var(--crit)',
-  accent: 'var(--accent-cyan)',
+  accent: 'var(--brand)',
   dim: 'var(--chart-dim)',
 }
 
@@ -423,10 +424,10 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     <div className="flex h-full min-h-0 flex-col">
       {snapshotActive && (
         <button
-          className="block w-full border-b border-accent-cyan/40 bg-accent-cyan/10 px-4 py-2.5 text-left text-[13px] hover:bg-accent-cyan/15"
+          className="block w-full border-b border-brand/40 bg-brand/10 px-4 py-2.5 text-left text-[13px] hover:bg-brand/15"
           onClick={() => setResnapDialog('routine')}
         >
-          <span className="font-semibold text-accent-cyan">⟳ 재스냅샷 진행 중</span>
+          <span className="font-semibold text-brand">⟳ 재스냅샷 진행 중</span>
           <span className="ml-2 font-mono text-[12px] text-muted-foreground">
             {RUN_PHASE_LABEL[run!.phase] ?? run!.phase}
             {run!.phase === 'DRAINING' && ` (남은 ${run!.remainingLag.toLocaleString()}건)`}

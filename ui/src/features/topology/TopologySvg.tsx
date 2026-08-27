@@ -14,6 +14,7 @@
  * 26. 08. 06.       | 최남희  | 최초 생성 (React Flow 제거)
  * --------------------------------------------------
  * 26. 08. 27.       | 최남희  | 하드코딩 hex를 CSS 변수(var(--ok) 등)로 교체 — 라이트 테마 대응
+ * 26. 08. 27.       | 최남희  | 토큰명 accent-cyan → brand (VS Code풍 중립 팔레트 전환으로 시안 아님)
  * --------------------------------------------------
  */
 
@@ -87,7 +88,7 @@ function ortho(points: [number, number][]): string {
 function EdgePath({ d, active, dashed }: { d: string; active: boolean; dashed?: boolean }) {
   return (
     <g>
-      <path d={d} fill="none" stroke={active ? 'var(--accent-cyan)' : 'var(--chart-grid)'} strokeWidth="2"
+      <path d={d} fill="none" stroke={active ? 'var(--brand)' : 'var(--chart-grid)'} strokeWidth="2"
         strokeDasharray={dashed ? '5 5' : active ? '7 5' : undefined}
         className={active && !dashed ? 'topo-flow' : undefined} />
     </g>

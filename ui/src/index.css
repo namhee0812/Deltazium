@@ -13,7 +13,7 @@
     --color-warn: var(--warn);
     --color-crit: var(--crit);
     --color-surface2: var(--surface2);
-    --color-accent-cyan: var(--accent-cyan);
+    --color-brand: var(--brand);
     --color-chart-grid: var(--chart-grid);
     --color-chart-dim: var(--chart-dim);
     --color-chart-series-1: var(--chart-series-1);
@@ -58,29 +58,30 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Deltazium 콘솔 라이트 팔레트 — 다크 팔레트와 동일한 색상(hue)을 유지하며
-   흰 배경 대비 4.5:1 이상을 확보한 값 (계산 근거: 브랜치 커밋 보고 참조).
-   1차안은 다크 파스텔을 명도만 낮춰 채도가 빠진 회갈색 톤이라 동일 명도에서
-   채도를 올린 값으로 교체(2026-08-27, 사용자 피드백). */
+/* Deltazium 콘솔 팔레트 — VS Code(Light/Dark Modern)·Chrome 계열의 중립 회색 베이스 +
+   파랑 악센트 (2026-08-27 사용자 결정: 네이비 틴트 팔레트에서 전환).
+   라이트: 페이지 #F3F3F3 위에 흰 카드, 텍스트 #1F1F1F, 악센트 #005FB8.
+   상태색은 GitHub 시맨틱(ok/warn/crit)에서 흰 배경 대비 4.5:1 이상인 값.
+   토폴로지 캔버스가 밝아 보이지 않도록 surface2·chart-grid는 VS Code 원안보다 한 단계 진하게. */
 :root {
-    --background: #F3F5FA;
-    --foreground: #0F1B33;
+    --background: #F3F3F3;
+    --foreground: #1F1F1F;
     --card: #FFFFFF;
-    --card-foreground: #0F1B33;
+    --card-foreground: #1F1F1F;
     --popover: #FFFFFF;
-    --popover-foreground: #0F1B33;
-    --primary: #0A7A9E;
+    --popover-foreground: #1F1F1F;
+    --primary: #005FB8;
     --primary-foreground: #FFFFFF;
-    --secondary: #E9EDF5;
-    --secondary-foreground: #0F1B33;
-    --muted: #E9EDF5;
-    --muted-foreground: #56647F;
-    --accent: #E9EDF5;
-    --accent-foreground: #0F1B33;
-    --destructive: #D1293D;
-    --border: #D6DCE8;
-    --input: #D6DCE8;
-    --ring: #0A7A9E;
+    --secondary: #E8E8E8;
+    --secondary-foreground: #1F1F1F;
+    --muted: #E8E8E8;
+    --muted-foreground: #616161;
+    --accent: #E8E8E8;
+    --accent-foreground: #1F1F1F;
+    --destructive: #CF222E;
+    --border: #E0E0E0;
+    --input: #E0E0E0;
+    --ring: #005FB8;
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
@@ -95,40 +96,40 @@
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.708 0 0);
-    /* Deltazium 상태·그래픽 색 (라이트) — 다크와 같은 hue, 흰 배경 대비 확보.
-       accent-cyan은 카드 위 4.89:1이지만 배경(--background) 위 텍스트로 쓰이는
-       곳(TablesPanel 재스냅샷 배너)이 있어 그 기준(4.5:1)에 맞춰 한 단계 낮췄다. */
-    --ok: #15803D;
-    --warn: #B45309;
-    --crit: #D1293D;
-    --surface2: #E9EDF5;
-    --accent-cyan: #09748F;
-    --chart-grid: #DDE3EE;
-    --chart-dim: #6B7891;
-    --chart-series-1: #0E86A8;
-    --chart-series-2: #6A4DD8;
+    /* 상태·그래픽 색 (라이트). chart-series-1은 2px 선 전용(카드 위 4.5:1 미만) — 텍스트 금지. */
+    --ok: #1A7F37;
+    --warn: #9A6700;
+    --crit: #CF222E;
+    --surface2: #E8E8E8;
+    --brand: #005FB8;
+    --chart-grid: #BEBEBE;
+    --chart-dim: #6E6E6E;
+    --chart-series-1: #0078D4;
+    --chart-series-2: #8250DF;
 }
 
-/* Deltazium 콘솔 다크 팔레트 — ui-reference 프로토타입 디자인 토큰 기준 */
+/* 다크: VS Code Dark Modern 기준 — 페이지 #181818, 카드(에디터) #1F1F1F, 텍스트 #CCCCCC.
+   버튼(primary)은 #0078D4 + 흰 글씨, 텍스트 악센트(brand)는 더 밝은 #4DAAFC로 분리.
+   (ui-reference 프로토타입의 네이비 팔레트는 2026-08-27 사용자 결정으로 폐기) */
 .dark {
-    --background: #0E1526;
-    --foreground: #E6ECF7;
-    --card: #151F36;
-    --card-foreground: #E6ECF7;
-    --popover: #151F36;
-    --popover-foreground: #E6ECF7;
-    --primary: #53C8E8;
-    --primary-foreground: #0A1220;
-    --secondary: #1B2745;
-    --secondary-foreground: #E6ECF7;
-    --muted: #1B2745;
-    --muted-foreground: #8A97B4;
-    --accent: #1B2745;
-    --accent-foreground: #E6ECF7;
-    --destructive: #F0647A;
-    --border: #26334F;
-    --input: #26334F;
-    --ring: #53C8E8;
+    --background: #181818;
+    --foreground: #CCCCCC;
+    --card: #1F1F1F;
+    --card-foreground: #CCCCCC;
+    --popover: #202020;
+    --popover-foreground: #CCCCCC;
+    --primary: #0078D4;
+    --primary-foreground: #FFFFFF;
+    --secondary: #2A2A2A;
+    --secondary-foreground: #CCCCCC;
+    --muted: #2A2A2A;
+    --muted-foreground: #9D9D9D;
+    --accent: #2A2A2A;
+    --accent-foreground: #CCCCCC;
+    --destructive: #F85149;
+    --border: #333333;
+    --input: #313131;
+    --ring: #0078D4;
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
@@ -142,16 +143,16 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
-    /* Deltazium 상태·그래픽 색 (다크) — 프로토타입 원안 값 */
-    --ok: #56D89C;
-    --warn: #F5B453;
-    --crit: #F0647A;
-    --surface2: #1B2745;
-    --accent-cyan: #53C8E8;
-    --chart-grid: #26334F;
-    --chart-dim: #8A97B4;
-    --chart-series-1: #2BA3C4;
-    --chart-series-2: #8B6FE8;
+    /* 상태·그래픽 색 (다크) — GitHub dark 시맨틱 */
+    --ok: #3FB950;
+    --warn: #D29922;
+    --crit: #F85149;
+    --surface2: #2A2A2A;
+    --brand: #4DAAFC;
+    --chart-grid: #3A3A3A;
+    --chart-dim: #8B8B8B;
+    --chart-series-1: #4DAAFC;
+    --chart-series-2: #B392F0;
 }
 
 @layer base {

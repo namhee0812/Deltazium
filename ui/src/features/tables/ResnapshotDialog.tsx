@@ -19,6 +19,7 @@
  * 26. 08. 06.       | 최남희  | 설명·단계명에서 내부 용어(offset 리셋) 완화
  * --------------------------------------------------
  * 26. 08. 27.       | 최남희  | 하드코딩 hex(#53C8E8)를 text-accent-cyan 토큰 클래스로 교체
+ * 26. 08. 27.       | 최남희  | 토큰명 accent-cyan → brand (VS Code풍 중립 팔레트 전환으로 시안 아님)
  * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
@@ -251,7 +252,7 @@ function RunView({
   const color = (i: number) => {
     if (steps[i].skip) return 'text-muted-foreground/50'
     if (cur > i || run.phase === 'DONE') return 'text-ok'
-    if (cur === i) return 'text-accent-cyan'
+    if (cur === i) return 'text-brand'
     return 'text-muted-foreground'
   }
 
