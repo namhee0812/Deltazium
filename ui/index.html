@@ -1,10 +1,33 @@
 <!doctype html>
-<html lang="ko" class="dark">
+<html lang="ko">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Deltazium Console</title>
+    <!-- 테마 FOUC 방지: React 마운트 전에 dark 클래스를 먼저 결정한다.
+         우선순위 — localStorage('dz-theme') → matchMedia → 기본값(dark).
+         ui/src/lib/theme.ts의 useTheme()과 동일한 규칙을 유지할 것. -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('dz-theme');
+          var dark;
+          if (stored === 'dark' || stored === 'light') {
+            dark = stored === 'dark';
+          } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            dark = true;
+          } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+            dark = false;
+          } else {
+            dark = true;
+          }
+          document.documentElement.classList.toggle('dark', dark);
+        } catch (e) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
