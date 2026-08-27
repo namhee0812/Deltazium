@@ -30,6 +30,8 @@
  * 26. 08. 24.       | 최남희  | 행 원천을 /api/registrations로 분리 — /api/metrics/tables 실패해도
  * |                          | 테이블 목록은 유지되고 지표 셀만 "—"로 표시 (Kafka 다운 오검출 방지)
  * --------------------------------------------------
+ * 26. 08. 27.       | 최남희  | 하드코딩 hex를 CSS 변수/토큰 클래스로 교체 — 라이트 테마 대응
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -86,7 +88,13 @@ interface Row {
   metrics: TableMetrics | null
 }
 
-const COLOR = { ok: '#56D89C', warn: '#F5B453', crit: '#F0647A', accent: '#53C8E8', dim: '#8A97B4' }
+const COLOR = {
+  ok: 'var(--ok)',
+  warn: 'var(--warn)',
+  crit: 'var(--crit)',
+  accent: 'var(--accent-cyan)',
+  dim: 'var(--chart-dim)',
+}
 
 const columnHelper = createColumnHelper<Row>()
 
@@ -415,10 +423,10 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     <div className="flex h-full min-h-0 flex-col">
       {snapshotActive && (
         <button
-          className="block w-full border-b border-[#53C8E8]/40 bg-[#53C8E8]/10 px-4 py-2.5 text-left text-[13px] hover:bg-[#53C8E8]/15"
+          className="block w-full border-b border-accent-cyan/40 bg-accent-cyan/10 px-4 py-2.5 text-left text-[13px] hover:bg-accent-cyan/15"
           onClick={() => setResnapDialog('routine')}
         >
-          <span className="font-semibold text-[#53C8E8]">⟳ 재스냅샷 진행 중</span>
+          <span className="font-semibold text-accent-cyan">⟳ 재스냅샷 진행 중</span>
           <span className="ml-2 font-mono text-[12px] text-muted-foreground">
             {RUN_PHASE_LABEL[run!.phase] ?? run!.phase}
             {run!.phase === 'DRAINING' && ` (남은 ${run!.remainingLag.toLocaleString()}건)`}
