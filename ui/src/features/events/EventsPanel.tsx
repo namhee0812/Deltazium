@@ -10,6 +10,8 @@
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 27.       | 최남희  | 하드코딩 hex를 CSS 변수/토큰 클래스로 교체 — 라이트 테마 대응
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
@@ -37,9 +39,9 @@ const sevColor: Record<TableEvent['severity'], string> = {
 }
 
 const dotColor: Record<TableEvent['severity'], string> = {
-  INFO: '#56D89C',
-  WARN: '#F5B453',
-  ERROR: '#F0647A',
+  INFO: 'var(--ok)',
+  WARN: 'var(--warn)',
+  ERROR: 'var(--crit)',
 }
 
 export function EventsPanel() {
@@ -136,7 +138,7 @@ export function EventsPanel() {
                     </span>
                   </div>
                   {isOpen && e.detail && (
-                    <pre className="mt-2 max-h-64 overflow-auto rounded-lg border border-border bg-background p-3 font-mono text-[11px] leading-relaxed text-[#B9C7E4]">
+                    <pre className="mt-2 max-h-64 overflow-auto rounded-lg border border-border bg-background p-3 font-mono text-[11px] leading-relaxed text-foreground/90">
                       {e.detail}
                     </pre>
                   )}

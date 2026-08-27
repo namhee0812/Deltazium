@@ -13,6 +13,8 @@
  * --------------------------------------------------
  * 26. 08. 06.       | 최남희  | 최초 생성 (React Flow 제거)
  * --------------------------------------------------
+ * 26. 08. 27.       | 최남희  | 하드코딩 hex를 CSS 변수(var(--ok) 등)로 교체 — 라이트 테마 대응
+ * --------------------------------------------------
  */
 
 export type NodeStatus = 'ok' | 'warn' | 'crit' | 'none'
@@ -35,10 +37,10 @@ export interface TopoData {
 }
 
 const STATUS_COLOR: Record<NodeStatus, string> = {
-  ok: '#56D89C',
-  warn: '#F5B453',
-  crit: '#F0647A',
-  none: '#8A97B4',
+  ok: 'var(--ok)',
+  warn: 'var(--warn)',
+  crit: 'var(--crit)',
+  none: 'var(--chart-dim)',
 }
 
 const W = 150
@@ -61,16 +63,16 @@ function Node({ id, n }: { id: keyof typeof POS; n: TopoNode }) {
   return (
     <g>
       <rect x={x} y={y} width={W} height={H} rx={10}
-        fill="#1B2745" stroke="#26334F" strokeWidth="1" />
+        fill="var(--surface2)" stroke="var(--chart-grid)" strokeWidth="1" />
       <circle cx={x + 16} cy={y + 19} r={4} fill={STATUS_COLOR[n.status]}>
         {n.status === 'crit' && (
           <animate attributeName="opacity" values="1;0.25;1" dur="1.2s" repeatCount="indefinite" />
         )}
       </circle>
-      <text x={x + 28} y={y + 23} fontSize="12.5" fontWeight="600" fill="#E6ECF8">
+      <text x={x + 28} y={y + 23} fontSize="12.5" fontWeight="600" fill="var(--foreground)">
         {n.label.length > 16 ? n.label.slice(0, 15) + '…' : n.label}
       </text>
-      <text x={x + 16} y={y + 41} fontSize="9.5" fontFamily="monospace" fill="#8A97B4">
+      <text x={x + 16} y={y + 41} fontSize="9.5" fontFamily="monospace" fill="var(--chart-dim)">
         {n.sub.length > 26 ? n.sub.slice(0, 25) + '…' : n.sub}
       </text>
     </g>
@@ -85,7 +87,7 @@ function ortho(points: [number, number][]): string {
 function EdgePath({ d, active, dashed }: { d: string; active: boolean; dashed?: boolean }) {
   return (
     <g>
-      <path d={d} fill="none" stroke={active ? '#53C8E8' : '#26334F'} strokeWidth="2"
+      <path d={d} fill="none" stroke={active ? 'var(--accent-cyan)' : 'var(--chart-grid)'} strokeWidth="2"
         strokeDasharray={dashed ? '5 5' : active ? '7 5' : undefined}
         className={active && !dashed ? 'topo-flow' : undefined} />
     </g>
@@ -135,9 +137,9 @@ export function TopologySvg({ data }: { data: TopoData }) {
       ))}
 
       {/* 레인 주석 */}
-      <text x={772} y={20} fontSize="9" fill="#8A97B4">실 적재 (현재 상태)</text>
-      <text x={772} y={206} fontSize="9" fill="#8A97B4">changelog (복구 원본)</text>
-      <text x={577} y={302} fontSize="9" fill="#8A97B4">복구 재발행 (평시 정지)</text>
+      <text x={772} y={20} fontSize="9" fill="var(--chart-dim)">실 적재 (현재 상태)</text>
+      <text x={772} y={206} fontSize="9" fill="var(--chart-dim)">changelog (복구 원본)</text>
+      <text x={577} y={302} fontSize="9" fill="var(--chart-dim)">복구 재발행 (평시 정지)</text>
     </svg>
   )
 }

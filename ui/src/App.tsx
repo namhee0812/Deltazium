@@ -20,6 +20,8 @@
  * --------------------------------------------------
  * 26. 08. 24.       | 최남희  | 헤더 우측에 전역 경고 센터(WarningCenter) 칩 추가
  * --------------------------------------------------
+ * 26. 08. 27.       | 최남희  | 헤더에 다크/라이트 테마 토글 추가, "backend"→"엔진" 용어 통일
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
@@ -33,6 +35,7 @@ import { RecoveryPanel } from '@/features/recovery/RecoveryPanel'
 import { RegistrationWizard } from '@/features/registration/RegistrationWizard'
 import { TablesPanel } from '@/features/tables/TablesPanel'
 import { TopologyPanel } from '@/features/topology/TopologyPanel'
+import { ThemeToggle } from '@/features/system/ThemeToggle'
 import { WarningCenter } from '@/features/system/WarningCenter'
 import { Button } from '@/components/ui/button'
 
@@ -96,7 +99,7 @@ function App() {
         </Button>
         <div className="flex gap-4 font-mono text-xs text-muted-foreground">
           {summary === null ? (
-            <span className="text-crit">● backend 연결 안 됨</span>
+            <span className="text-crit">● 엔진 연결 안 됨</span>
           ) : (
             <>
               <span title="Kafka Connect 커넥터 수 (테이블 수 아님)">
@@ -110,6 +113,7 @@ function App() {
             </>
           )}
         </div>
+        <ThemeToggle />
         <WarningCenter />
       </header>
 

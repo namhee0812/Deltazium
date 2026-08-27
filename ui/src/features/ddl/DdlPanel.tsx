@@ -10,6 +10,8 @@
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 08. 27.       | 최남희  | 하드코딩 hex를 CSS 변수/토큰 클래스로 교체 — 라이트 테마 대응
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -40,11 +42,11 @@ const stateColor: Record<DdlEvent['state'], string> = {
 }
 
 const dotColor: Record<DdlEvent['state'], string> = {
-  DETECTED: '#F5B453',
-  APPROVED: '#56D89C',
-  REJECTED: '#F0647A',
-  SNAPSHOT: '#8A97B4',
-  IGNORED: '#8A97B4',
+  DETECTED: 'var(--warn)',
+  APPROVED: 'var(--ok)',
+  REJECTED: 'var(--crit)',
+  SNAPSHOT: 'var(--chart-dim)',
+  IGNORED: 'var(--chart-dim)',
 }
 
 const stateLabel: Record<DdlEvent['state'], string> = {
@@ -156,7 +158,7 @@ export function DdlPanel() {
                   </div>
                   {isOpen && (
                     <div className="mt-3">
-                      <pre className="overflow-x-auto rounded-lg border border-border bg-background p-3 font-mono text-[11.5px] leading-relaxed text-[#B9C7E4]">
+                      <pre className="overflow-x-auto rounded-lg border border-border bg-background p-3 font-mono text-[11.5px] leading-relaxed text-foreground/90">
                         {e.ddlText}
                       </pre>
                       <div className="mt-2 flex flex-wrap gap-3 font-mono text-[11px] text-muted-foreground">

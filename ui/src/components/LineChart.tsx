@@ -5,7 +5,8 @@
  * 설명 : 대시보드용 경량 시계열 라인 차트 (SVG 직접 — 라이브러리 없음).
  * 2px 라인·은은한 그리드·범례+계열 끝 직접 라벨·크로스헤어 툴팁.
  * 계열 색은 다크 서피스 기준 CVD 검증을 통과한 고정 팔레트를 쓴다
- * (#2BA3C4 시안, #8B6FE8 바이올렛 — 순서 고정, 상태색(ok/warn/crit)과 분리).
+ * (--chart-series-1 시안, --chart-series-2 바이올렛 — 순서 고정, 상태색(ok/warn/crit)과 분리.
+ * 라이트 테마 값은 index.css :root 참조).
  *
  * 수정 내역
  * --------------------------------------------------
@@ -15,10 +16,12 @@
  * --------------------------------------------------
  * 26. 08. 06.       | 최남희  | timeFormat 프롭 — 시간/일 해상도의 축·툴팁 표기 지원
  * --------------------------------------------------
+ * 26. 08. 27.       | 최남희  | 하드코딩 hex를 CSS 변수로 교체 — 라이트 테마 대응
+ * --------------------------------------------------
  */
 import { useMemo, useRef, useState } from 'react'
 
-export const CHART_SERIES_COLORS = ['#2BA3C4', '#8B6FE8'] as const
+export const CHART_SERIES_COLORS = ['var(--chart-series-1)', 'var(--chart-series-2)'] as const
 
 export interface ChartSeries {
   name: string
@@ -119,14 +122,14 @@ export function LineChart({
         {gridY.map((v) => (
           <g key={v}>
             <line x1={PAD.left} x2={w - PAD.right} y1={y(v)} y2={y(v)}
-              stroke="#26334F" strokeWidth="1" />
+              stroke="var(--chart-grid)" strokeWidth="1" />
             <text x={PAD.left - 6} y={y(v) + 3} textAnchor="end"
               className="fill-muted-foreground" fontSize="10" fontFamily="monospace">
               {format(v)}
             </text>
           </g>
         ))}
-        <line x1={PAD.left} x2={w - PAD.right} y1={y(0)} y2={y(0)} stroke="#26334F" />
+        <line x1={PAD.left} x2={w - PAD.right} y1={y(0)} y2={y(0)} stroke="var(--chart-grid)" />
         {[t0, (t0 + t1) / 2, t1].map((t, i) => (
           <text key={i} x={x(t)} y={h - 6} textAnchor="middle"
             className="fill-muted-foreground" fontSize="10" fontFamily="monospace">
@@ -156,11 +159,11 @@ export function LineChart({
         {hover && (
           <g>
             <line x1={x(hover.ts)} x2={x(hover.ts)} y1={PAD.top} y2={PAD.top + ih}
-              stroke="#8A97B4" strokeWidth="1" strokeDasharray="3 3" />
+              stroke="var(--chart-dim)" strokeWidth="1" strokeDasharray="3 3" />
             {hover.values.map((v) =>
               v.value !== null ? (
                 <circle key={v.name} cx={x(hover.ts)} cy={y(v.value)} r="3.5"
-                  fill={v.color} stroke="#151F36" strokeWidth="2" />
+                  fill={v.color} stroke="var(--card)" strokeWidth="2" />
               ) : null)}
           </g>
         )}

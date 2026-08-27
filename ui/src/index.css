@@ -8,11 +8,16 @@
 @theme inline {
     --font-heading: var(--font-sans);
     --font-sans: 'Inter Variable', sans-serif;
-    /* Deltazium 상태 색 (프로토타입 토큰: ok/warn/crit) */
-    --color-ok: #56D89C;
-    --color-warn: #F5B453;
-    --color-crit: #F0647A;
-    --color-surface2: #1B2745;
+    /* Deltazium 상태·그래픽 색 — 값은 :root(라이트)/.dark에 정의, 여기선 var() 참조만 */
+    --color-ok: var(--ok);
+    --color-warn: var(--warn);
+    --color-crit: var(--crit);
+    --color-surface2: var(--surface2);
+    --color-accent-cyan: var(--accent-cyan);
+    --color-chart-grid: var(--chart-grid);
+    --color-chart-dim: var(--chart-dim);
+    --color-chart-series-1: var(--chart-series-1);
+    --color-chart-series-2: var(--chart-series-2);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -53,25 +58,29 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Deltazium 콘솔 라이트 팔레트 — 다크 팔레트와 동일한 색상(hue)을 유지하며
+   흰 배경 대비 4.5:1 이상을 확보한 값 (계산 근거: 브랜치 커밋 보고 참조).
+   1차안은 다크 파스텔을 명도만 낮춰 채도가 빠진 회갈색 톤이라 동일 명도에서
+   채도를 올린 값으로 교체(2026-08-27, 사용자 피드백). */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
+    --background: #F3F5FA;
+    --foreground: #0F1B33;
+    --card: #FFFFFF;
+    --card-foreground: #0F1B33;
+    --popover: #FFFFFF;
+    --popover-foreground: #0F1B33;
+    --primary: #0A7A9E;
+    --primary-foreground: #FFFFFF;
+    --secondary: #E9EDF5;
+    --secondary-foreground: #0F1B33;
+    --muted: #E9EDF5;
+    --muted-foreground: #56647F;
+    --accent: #E9EDF5;
+    --accent-foreground: #0F1B33;
+    --destructive: #D1293D;
+    --border: #D6DCE8;
+    --input: #D6DCE8;
+    --ring: #0A7A9E;
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
@@ -86,6 +95,18 @@
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.708 0 0);
+    /* Deltazium 상태·그래픽 색 (라이트) — 다크와 같은 hue, 흰 배경 대비 확보.
+       accent-cyan은 카드 위 4.89:1이지만 배경(--background) 위 텍스트로 쓰이는
+       곳(TablesPanel 재스냅샷 배너)이 있어 그 기준(4.5:1)에 맞춰 한 단계 낮췄다. */
+    --ok: #15803D;
+    --warn: #B45309;
+    --crit: #D1293D;
+    --surface2: #E9EDF5;
+    --accent-cyan: #09748F;
+    --chart-grid: #DDE3EE;
+    --chart-dim: #6B7891;
+    --chart-series-1: #0E86A8;
+    --chart-series-2: #6A4DD8;
 }
 
 /* Deltazium 콘솔 다크 팔레트 — ui-reference 프로토타입 디자인 토큰 기준 */
@@ -121,6 +142,16 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+    /* Deltazium 상태·그래픽 색 (다크) — 프로토타입 원안 값 */
+    --ok: #56D89C;
+    --warn: #F5B453;
+    --crit: #F0647A;
+    --surface2: #1B2745;
+    --accent-cyan: #53C8E8;
+    --chart-grid: #26334F;
+    --chart-dim: #8A97B4;
+    --chart-series-1: #2BA3C4;
+    --chart-series-2: #8B6FE8;
 }
 
 @layer base {
@@ -133,4 +164,86 @@
   html {
     @apply font-sans;
     }
+}
+
+/* 다크/라이트 테마 토글 — 해/달 스위치 (uiverse.io, andrew-demchenk0 원안을 헤더
+   높이에 맞춰 축소: 48×26, 노브 22px, 아이콘 18px, translateX 22px).
+   장식 요소라 하늘·밤·노브 색상은 원안 리터럴을 그대로 쓰고 디자인 토큰과는 별개다.
+   전역 이름 충돌 방지를 위해 .theme-switch 접두를 쓴다(범용 .switch/.slider 금지). */
+.theme-switch {
+  position: relative;
+  display: inline-flex;
+  width: 48px;
+  height: 26px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.theme-switch__input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.theme-switch__slider {
+  position: absolute;
+  inset: 0;
+  background-color: #73C0FC;
+  border-radius: 999px;
+  transition: background-color 0.4s;
+}
+.theme-switch__slider::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  bottom: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background-color: #e8e8e8;
+  transition: transform 0.4s;
+  z-index: 2;
+}
+.theme-switch__input:checked + .theme-switch__slider {
+  background-color: #183153;
+}
+.theme-switch__input:checked + .theme-switch__slider::before {
+  transform: translateX(22px);
+}
+.theme-switch__input:focus-visible + .theme-switch__slider {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+.theme-switch__sun,
+.theme-switch__moon {
+  position: absolute;
+  top: 4px;
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+.theme-switch__sun {
+  left: 26px;
+  color: #F5A623;
+  animation: theme-switch-rotate 15s linear infinite;
+}
+.theme-switch__moon {
+  left: 4px;
+  color: #73C0FC;
+  animation: theme-switch-tilt 5s linear infinite;
+}
+@keyframes theme-switch-rotate {
+  from { transform: rotate(0); }
+  to { transform: rotate(360deg); }
+}
+@keyframes theme-switch-tilt {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(-10deg); }
+  75% { transform: rotate(10deg); }
+  100% { transform: rotate(0deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .theme-switch__sun,
+  .theme-switch__moon {
+    animation: none;
+  }
 }
