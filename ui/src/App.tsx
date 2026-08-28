@@ -27,6 +27,9 @@
  * |                          | rail에 DDL 미승인 건수 배지·엔진 상태 pill, 상단 바는
  * |                          | 페이지 제목/부제 + 우측 액션(등록·테마·경고 센터)만 남김
  * --------------------------------------------------
+ * 26. 08. 28.       | 최남희  | TopologyPanel에 onNavigate 전달 — 대시보드 "주의 필요"·KPI
+ * |                          | 카드의 "보기/검토" 클릭 시 해당 탭으로 이동
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import {
@@ -175,7 +178,7 @@ function App() {
         </header>
 
         <main className="min-h-0 flex-1">
-          {view === 'topology' && <TopologyPanel />}
+          {view === 'topology' && <TopologyPanel onNavigate={setView} />}
           {view === 'tables' && <TablesPanel refreshKey={refreshKey} />}
           {view === 'ddl' && <DdlPanel />}
           {view === 'events' && <EventsPanel />}
