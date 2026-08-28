@@ -2,8 +2,8 @@
  * 파일명 : TopologyPanel.tsx
  * 작성일자 : 26. 07. 25.
  * 작성자 : 최남희
- * 설명 : 대시보드 — 토폴로지(자체 SVG) + 처리량·lag 시계열(테이블 선택·주기 선택) +
- * 컴포넌트 자원(/proc 실측) + 최근 운영 이벤트.
+ * 설명 : 대시보드 — KPI 카드(커넥터/처리량/최대 lag/미승인 DDL) + 토폴로지(자체 SVG) +
+ * 주의 필요 목록 + 처리량·lag 시계열(테이블·기간 선택) + 최근 이벤트 + 컴포넌트 자원.
  *
  * 수정 내역
  * --------------------------------------------------
@@ -21,13 +21,24 @@
  * 26. 08. 06.       | 최남희  | 주기 버튼을 기간 중심(최근 6시간/7일/90일)으로, 해상도는 툴팁 —
  * |                          | 보존·롤업 내부 설명 텍스트는 UI에서 제거 (문서 몫)
  * --------------------------------------------------
+ * 26. 08. 28.       | 최남희  | 리디자인 — KPI 카드 4개(커넥터·처리량·최대 lag·미승인 DDL) +
+ * |                          | "주의 필요" 카드(lag 초과·DDL 대기, 탭 이동) 추가. 카드 프리미티브로
+ * |                          | 전면 재구성, 신규 backend API 없이 기존 /api/metrics/tables·
+ * |                          | /api/ddl-events를 이 화면에서도 폴링해 KPI를 구성한다.
+ * --------------------------------------------------
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowRight } from 'lucide-react'
 import { api } from '@/lib/api'
 import { effectiveState } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
 import type { DbConnection } from '@/features/connections/types'
 import { CHART_SERIES_COLORS, LineChart } from '@/components/LineChart'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { GhostButton } from '@/components/ui/ghost-button'
+import { Segmented } from '@/components/ui/segmented'
+import { StatusPill } from '@/components/ui/status-pill'
+import type { StatusPillVariant } from '@/components/ui/status-pill'
 import { TopologySvg } from './TopologySvg'
 import type { NodeStatus, TopoData } from './TopologySvg'
 
@@ -49,12 +60,45 @@ interface RegisteredTable {
   tableName: string
 }
 
+interface TableMetrics {
+  schemaName: string
+  tableName: string
+  jdbcLag: number
+}
+
+interface DdlEvent {
+  eventTsMs: number
+  schemaName: string | null
+  tableName: string | null
+  ddlText: string
+  state: 'SNAPSHOT' | 'DETECTED' | 'APPROVED' | 'REJECTED' | 'IGNORED'
+}
+
+/** JDBC lag 경고 임계(레코드 건수) — 테이블 모니터링 화면과 동일 기준 */
+const LAG_WARN = 100
+
 /** 주기 선택 — 해상도와 조회 폭을 묶는다 (Grafana식 기간별 자동 해상도) */
 const PERIODS = [
-  { key: 'MIN', label: '최근 6시간', unit: '1분 단위', hours: 6 },
-  { key: 'HOUR', label: '최근 7일', unit: '1시간 단위', hours: 168 },
-  { key: 'DAY', label: '최근 90일', unit: '1일 단위', hours: 2160 },
+  { key: 'MIN', label: '최근 6시간', title: '1분 단위', hours: 6 },
+  { key: 'HOUR', label: '최근 7일', title: '1시간 단위', hours: 168 },
+  { key: 'DAY', label: '최근 90일', title: '1일 단위', hours: 2160 },
 ] as const
+
+const STATUS_TO_PILL: Record<NodeStatus, StatusPillVariant> = {
+  ok: 'ok',
+  warn: 'warn',
+  crit: 'crit',
+  none: 'stop',
+}
+
+function relativeTime(ms: number): string {
+  const diffMin = Math.floor((Date.now() - ms) / 60000)
+  if (diffMin < 1) return '방금 전'
+  if (diffMin < 60) return `${diffMin}분 전`
+  const diffHour = Math.floor(diffMin / 60)
+  if (diffHour < 24) return `${diffHour}시간 전`
+  return `${Math.floor(diffHour / 24)}일 전`
+}
 
 function connectorStatus(states: ConnectorStates | null, name: string): NodeStatus {
   if (!states || !(name in states)) return 'none'
@@ -75,12 +119,19 @@ function jdbcSinkAggregate(states: ConnectorStates | null): { status: NodeStatus
   return { status, count: sinks.length }
 }
 
-export function TopologyPanel() {
+export function TopologyPanel({
+  onNavigate,
+}: {
+  /** "보기/검토" 액션 · KPI 링크 클릭 시 해당 탭으로 이동 (App이 소유한 탭 상태를 바꾼다) */
+  onNavigate?: (view: 'tables' | 'ddl') => void
+}) {
   const [connectors, setConnectors] = useState<ConnectorStates | null>(null)
   const [connections, setConnections] = useState<DbConnection[]>([])
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
   const [events, setEvents] = useState<Ev[]>([])
   const [tables, setTables] = useState<RegisteredTable[]>([])
+  const [tableMetrics, setTableMetrics] = useState<TableMetrics[] | null>(null)
+  const [ddlEvents, setDdlEvents] = useState<DdlEvent[] | null>(null)
   const [period, setPeriod] = useState<(typeof PERIODS)[number]>(PERIODS[0])
   const [table, setTable] = useState<string>('all') // 'all' 또는 topic
   const [tableQuery, setTableQuery] = useState('')
@@ -91,6 +142,8 @@ export function TopologyPanel() {
     const load = () => {
       api<ConnectorStates>('/api/connectors').then(setConnectors).catch(() => setConnectors(null))
       api<DbConnection[]>('/api/connections').then(setConnections).catch(() => setConnections([]))
+      api<TableMetrics[]>('/api/metrics/tables').then(setTableMetrics).catch(() => setTableMetrics(null))
+      api<DdlEvent[]>('/api/ddl-events').then(setDdlEvents).catch(() => setDdlEvents(null))
     }
     load()
     const id = setInterval(load, 5000)
@@ -189,93 +242,193 @@ export function TopologyPanel() {
   const filteredTables = tables.filter((t) =>
     `${t.schemaName}.${t.tableName}`.toLowerCase().includes(tableQuery.toLowerCase()))
 
+  // --- KPI 계산 (전부 이미 폴링 중인 API에서 파생 — 새 backend 엔드포인트 없음) ---
+  const running = connectors ? Object.values(connectors).filter((c) => effectiveState(c) === 'RUNNING').length : 0
+  const total = connectors ? Object.keys(connectors).length : 0
+
+  const throughputLast = dashboard && dashboard.throughput.length > 0
+    ? dashboard.throughput[dashboard.throughput.length - 1].publish
+    : null
+  const throughputAvg = dashboard && dashboard.throughput.length > 0
+    ? dashboard.throughput.reduce((s, r) => s + r.publish, 0) / dashboard.throughput.length
+    : null
+  const throughputPeak = dashboard && dashboard.throughput.length > 0
+    ? Math.max(...dashboard.throughput.map((r) => r.publish))
+    : null
+
+  const lagRows = (tableMetrics ?? [])
+    .map((m) => ({ name: `${m.schemaName}.${m.tableName}`, lag: m.jdbcLag }))
+    .sort((a, b) => b.lag - a.lag)
+  const maxLag = lagRows[0] ?? null
+  const overLagCount = lagRows.filter((r) => r.lag > LAG_WARN).length
+
+  const pendingDdlList = (ddlEvents ?? []).filter((e) => e.state === 'DETECTED')
+  const oldestDdlMs = pendingDdlList.length > 0
+    ? Math.min(...pendingDdlList.map((e) => e.eventTsMs))
+    : null
+
+  // 주의 필요: lag 초과 테이블 + DDL 승인 대기
+  const attention = [
+    ...lagRows.filter((r) => r.lag > LAG_WARN).map((r) => ({
+      kind: 'lag' as const,
+      name: r.name,
+      detail: `${r.lag.toLocaleString()}건 · 임계 ${LAG_WARN}건 초과`,
+    })),
+    ...pendingDdlList.map((e) => ({
+      kind: 'ddl' as const,
+      name: e.schemaName && e.tableName ? `${e.schemaName}.${e.tableName}` : '(테이블 미상)',
+      detail: `${e.ddlText.split('\n')[0].slice(0, 40)} · 승인 대기`,
+    })),
+  ]
+
   return (
     <div className="h-full overflow-y-auto">
       {connectors === null && (
         <div className="border-b border-border bg-card px-4 py-2 text-xs text-warn">
-          backend(8090)에 연결할 수 없습니다 — 상태는 표시용 기본값입니다.
+          엔진에 연결할 수 없습니다 — 상태는 표시용 기본값입니다.
         </div>
       )}
-      <div className="grid gap-3 p-3" style={{ gridTemplateColumns: 'minmax(0,1fr) 300px' }}>
-        {/* 토폴로지 (자체 SVG) */}
-        <div className="h-[340px] rounded-lg border border-border bg-card p-2">
-          <TopologySvg data={topo} />
+      <div className="flex flex-col gap-4 p-5">
+        {/* KPI 4 */}
+        <div className="grid grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="flex flex-col gap-1.5 py-3.5">
+              <div className="text-xs text-ink-2">커넥터</div>
+              <div className="text-2xl font-semibold leading-tight tracking-tight text-foreground">
+                {connectors === null ? '—' : running}
+                <small className="ml-1 text-[13px] font-medium text-ink-3">/ {total} running</small>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <StatusPill variant={STATUS_TO_PILL[topo.source.status]}>source</StatusPill>
+                <StatusPill variant={STATUS_TO_PILL[topo.jdbcSink.status]}>jdbc</StatusPill>
+                <StatusPill variant={STATUS_TO_PILL[topo.icebergSink.status]}>iceberg</StatusPill>
+                <StatusPill variant={STATUS_TO_PILL[topo.recovery.status]}>recovery</StatusPill>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="flex flex-col gap-1.5 py-3.5">
+              <div className="text-xs text-ink-2">처리량</div>
+              <div className="text-2xl font-semibold leading-tight tracking-tight text-foreground">
+                {throughputLast === null ? '—' : throughputLast.toLocaleString()}
+                <small className="ml-1 text-[13px] font-medium text-ink-3">ev/s</small>
+              </div>
+              <div className="text-[11.5px] text-ink-3">
+                {throughputAvg === null
+                  ? '수집 대기 중'
+                  : `${period.label} 평균 ${throughputAvg.toFixed(0)} · peak ${throughputPeak!.toFixed(0)}`}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className={overLagCount > 0 ? 'shadow-[var(--shadow-card),inset_0_0_0_1px_var(--warn-soft)]' : undefined}>
+            <CardContent className="flex flex-col gap-1.5 py-3.5">
+              <div className="flex items-center gap-2 text-xs text-ink-2">
+                최대 lag
+                {maxLag && overLagCount > 0 && (
+                  <StatusPill variant="warn" className="font-mono">{maxLag.name}</StatusPill>
+                )}
+              </div>
+              <div className="text-2xl font-semibold leading-tight tracking-tight text-foreground">
+                {maxLag === null ? '—' : maxLag.lag.toLocaleString()}
+                <small className="ml-1 text-[13px] font-medium text-ink-3">건</small>
+              </div>
+              <div className="text-[11.5px] text-ink-3">
+                {tableMetrics === null
+                  ? '지표 조회 실패'
+                  : `경고 임계 ${LAG_WARN}건 · ${lagRows.length}개 테이블 중 ${overLagCount}개 초과`}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="flex flex-col gap-1.5 py-3.5">
+              <div className="text-xs text-ink-2">미승인 DDL</div>
+              <div className="text-2xl font-semibold leading-tight tracking-tight text-foreground">
+                {ddlEvents === null ? '—' : pendingDdlList.length}
+                <small className="ml-1 text-[13px] font-medium text-ink-3">건 대기</small>
+              </div>
+              <div className="text-[11.5px] text-ink-3">
+                {oldestDdlMs === null ? (
+                  '대기 중인 DDL 없음'
+                ) : (
+                  <>
+                    가장 오래된 것 {relativeTime(oldestDdlMs)} ·{' '}
+                    <button
+                      className="font-semibold text-primary hover:underline"
+                      onClick={() => onNavigate?.('ddl')}
+                    >
+                      검토 →
+                    </button>
+                  </>
+                )}
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
-        {/* 우측: 컴포넌트 자원 + 최근 이벤트 */}
-        <div className="flex flex-col gap-3">
-          <div className="rounded-lg border border-border bg-card p-3">
-            <h3 className="mb-2 text-xs font-semibold text-muted-foreground">
-              컴포넌트 자원 <span className="font-normal">(/proc 실측, 1분 주기)</span>
-            </h3>
-            {(dashboard?.resources ?? []).length === 0 ? (
-              <p className="text-xs text-muted-foreground">수집 대기 중…</p>
-            ) : (
-              <table className="w-full font-mono text-[11px]">
-                <tbody>
-                  {dashboard!.resources
-                    .slice()
-                    .sort((a, b) => b.rssMb - a.rssMb)
-                    .map((r) => (
-                      <tr key={r.component}>
-                        <td className="py-0.5 text-foreground">{r.component}</td>
-                        <td className="py-0.5 text-right text-muted-foreground">
-                          CPU {r.cpuPct.toFixed(1)}%
-                        </td>
-                        <td className="py-0.5 text-right text-muted-foreground">
-                          {r.rssMb >= 1024
-                            ? (r.rssMb / 1024).toFixed(1) + ' GB'
-                            : r.rssMb + ' MB'}
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-          <div className="min-h-0 flex-1 rounded-lg border border-border bg-card p-3">
-            <h3 className="mb-2 text-xs font-semibold text-muted-foreground">최근 운영 이벤트</h3>
-            {events.length === 0 ? (
-              <p className="text-xs text-muted-foreground">이벤트 없음</p>
-            ) : (
-              <ul className="flex flex-col gap-1.5 text-[11px]">
-                {events.map((e, i) => (
-                  <li key={i} className="flex items-baseline gap-1.5">
-                    <span
-                      className={
-                        e.severity === 'ERROR'
-                          ? 'text-crit'
-                          : e.severity === 'WARN'
-                            ? 'text-warn'
-                            : 'text-ok'
-                      }
-                    >
-                      ●
-                    </span>
-                    <span className="font-mono text-muted-foreground">
-                      {e.occurredAt.slice(5, 16).replace('T', ' ')}
-                    </span>
-                    <span className="truncate text-foreground" title={e.message}>
-                      {e.eventType}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+        {/* 토폴로지 + 주의 필요 */}
+        <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0,1fr) 380px' }}>
+          <Card className="flex flex-col">
+            <CardHeader>
+              <CardTitle>토폴로지</CardTitle>
+              <span className="font-mono text-xs text-ink-3">
+                {tables.length} tables
+              </span>
+              <GhostButton className="ml-auto" onClick={() => onNavigate?.('tables')}>
+                테이블 전체
+              </GhostButton>
+            </CardHeader>
+            <div className="flex flex-1 items-center justify-center p-2" style={{ minHeight: 260 }}>
+              <TopologySvg data={topo} />
+            </div>
+          </Card>
+
+          <Card className="flex flex-col">
+            <CardHeader>
+              <CardTitle>주의 필요</CardTitle>
+              {attention.length > 0 && (
+                <StatusPill variant="warn" className="ml-auto" dot={false}>
+                  {attention.length}
+                </StatusPill>
+              )}
+            </CardHeader>
+            <div className="flex-1 overflow-auto">
+              {attention.length === 0 ? (
+                <p className="p-4 text-xs text-ink-3">주의가 필요한 항목이 없습니다.</p>
+              ) : (
+                attention.map((a, i) => (
+                  <div
+                    key={`${a.kind}-${a.name}-${i}`}
+                    className="flex items-center gap-2.5 border-t border-border px-4 py-2.5 text-[12.5px] first:border-t-0"
+                  >
+                    <StatusPill variant="warn">{a.kind === 'lag' ? 'lag' : 'DDL'}</StatusPill>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-mono text-foreground">{a.name}</div>
+                      <div className="truncate text-[11.5px] text-ink-3">{a.detail}</div>
+                    </div>
+                    <GhostButton onClick={() => onNavigate?.(a.kind === 'lag' ? 'tables' : 'ddl')}>
+                      {a.kind === 'lag' ? '보기' : '검토'}
+                    </GhostButton>
+                  </div>
+                ))
+              )}
+            </div>
+          </Card>
         </div>
 
         {/* 필터 행: 테이블 콤보박스(검색) + 주기 */}
-        <div className="col-span-2 flex items-center gap-2">
+        <div className="flex items-center gap-2">
           <div ref={comboRef} className="relative">
             <button
-              className="w-56 rounded-md border border-border bg-card px-3 py-1.5 text-left font-mono text-xs text-foreground hover:border-ring"
+              className="w-56 rounded-md border border-line-2 bg-card px-3 py-1.5 text-left font-mono text-xs text-foreground hover:border-primary"
               onClick={() => setTableOpen((o) => !o)}
             >
-              {tableLabel} <span className="float-right text-muted-foreground">▾</span>
+              {tableLabel} <span className="float-right text-ink-3">▾</span>
             </button>
             {tableOpen && (
-              <div className="absolute z-10 mt-1 w-72 rounded-md border border-border bg-card shadow-lg">
+              <div className="absolute z-10 mt-1 w-72 rounded-md border border-border bg-card shadow-[var(--shadow-card)]">
                 <input
                   autoFocus
                   value={tableQuery}
@@ -286,7 +439,7 @@ export function TopologyPanel() {
                 <ul className="max-h-56 overflow-y-auto py-1 text-xs">
                   <li>
                     <button
-                      className="w-full px-3 py-1.5 text-left hover:bg-surface2"
+                      className="w-full px-3 py-1.5 text-left hover:bg-surface-2"
                       onClick={() => { setTable('all'); setTableOpen(false); setTableQuery('') }}
                     >
                       전체 테이블 (합계)
@@ -297,7 +450,7 @@ export function TopologyPanel() {
                     return (
                       <li key={topic}>
                         <button
-                          className="w-full px-3 py-1.5 text-left font-mono hover:bg-surface2"
+                          className="w-full px-3 py-1.5 text-left font-mono hover:bg-surface-2"
                           onClick={() => { setTable(topic); setTableOpen(false); setTableQuery('') }}
                         >
                           {t.schemaName}.{t.tableName}
@@ -306,71 +459,139 @@ export function TopologyPanel() {
                     )
                   })}
                   {filteredTables.length === 0 && (
-                    <li className="px-3 py-1.5 text-muted-foreground">검색 결과 없음</li>
+                    <li className="px-3 py-1.5 text-ink-3">검색 결과 없음</li>
                   )}
                 </ul>
               </div>
             )}
           </div>
-          <div className="flex overflow-hidden rounded-md border border-border">
-            {PERIODS.map((p) => (
-              <button
-                key={p.key}
-                title={p.unit}
-                className={`px-3 py-1.5 text-xs ${
-                  period.key === p.key
-                    ? 'bg-surface2 font-semibold text-foreground'
-                    : 'bg-card text-muted-foreground hover:text-foreground'
-                }`}
-                onClick={() => setPeriod(p)}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
+          <Segmented options={PERIODS} value={period.key} onChange={(k) => setPeriod(PERIODS.find((p) => p.key === k)!)} />
         </div>
 
-        {/* 시계열 차트 */}
-        <div className="rounded-lg border border-border bg-card p-3">
-          <h3 className="mb-1 text-xs font-semibold text-muted-foreground">
-            이벤트 처리량 <span className="font-normal">({tableLabel} · {period.label})</span>
-          </h3>
-          <LineChart
-            timeFormat={timeFormat}
-            series={[
-              {
-                name: '발행 (캡처)',
-                color: CHART_SERIES_COLORS[0],
-                points: toPoints(dashboard?.throughput ?? [], (r) => r.ts, (r) => r.publish),
-              },
-              {
-                name: 'apply (타깃)',
-                color: CHART_SERIES_COLORS[1],
-                points: toPoints(dashboard?.throughput ?? [], (r) => r.ts, (r) => r.apply),
-              },
-            ]}
-          />
+        {/* 처리량 차트 + 최근 이벤트 */}
+        <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0,1fr) 380px' }}>
+          <Card>
+            <CardHeader>
+              <CardTitle>처리량 · lag</CardTitle>
+              <span className="font-mono text-xs text-ink-3">{tableLabel} · {period.label}</span>
+            </CardHeader>
+            <CardContent className="py-3">
+              <LineChart
+                timeFormat={timeFormat}
+                series={[
+                  {
+                    name: '발행 (캡처)',
+                    color: CHART_SERIES_COLORS[0],
+                    points: toPoints(dashboard?.throughput ?? [], (r) => r.ts, (r) => r.publish),
+                  },
+                  {
+                    name: 'apply (타깃)',
+                    color: CHART_SERIES_COLORS[1],
+                    points: toPoints(dashboard?.throughput ?? [], (r) => r.ts, (r) => r.apply),
+                  },
+                ]}
+              />
+            </CardContent>
+          </Card>
+
+          <Card className="flex flex-col">
+            <CardHeader>
+              <CardTitle>최근 이벤트</CardTitle>
+              <button
+                className="ml-auto flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                onClick={() => onNavigate?.('tables')}
+              >
+                전체 <ArrowRight className="size-3" />
+              </button>
+            </CardHeader>
+            <div className="flex-1 overflow-auto">
+              {events.length === 0 ? (
+                <p className="p-4 text-xs text-ink-3">이벤트 없음</p>
+              ) : (
+                events.map((e, i) => (
+                  <div key={i} className="grid grid-cols-[62px_16px_1fr] gap-x-2.5 border-t border-border px-4 py-2.5 text-[12.5px] first:border-t-0">
+                    <span className="pt-px font-mono text-[11.5px] text-ink-3">
+                      {e.occurredAt.slice(11, 19)}
+                    </span>
+                    <span
+                      className="mt-[5px] size-2 rounded-full"
+                      style={{
+                        background:
+                          e.severity === 'ERROR'
+                            ? 'var(--crit)'
+                            : e.severity === 'WARN'
+                              ? 'var(--warn)'
+                              : 'var(--ok)',
+                      }}
+                    />
+                    <div>
+                      <div className="text-foreground">{e.eventType}</div>
+                      <div className="mt-0.5 truncate font-mono text-[11px] text-ink-3" title={e.message}>
+                        {e.message}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </Card>
         </div>
-        <div className="rounded-lg border border-border bg-card p-3">
-          <h3 className="mb-1 text-xs font-semibold text-muted-foreground">
-            sink lag 추이 <span className="font-normal">({tableLabel} · {period.label}
-            {period.key !== 'MIN' && ' · 구간 최대'})</span>
-          </h3>
-          <LineChart
-            timeFormat={timeFormat}
-            series={[
-              {
-                name: 'JDBC lag',
-                color: CHART_SERIES_COLORS[0],
-                points: toPoints(dashboard?.lag ?? [], (r) => r.ts, (r) => r.jdbc),
-              },
-              {
-                name: 'Iceberg lag',
-                color: CHART_SERIES_COLORS[1],
-                points: toPoints(dashboard?.lag ?? [], (r) => r.ts, (r) => r.iceberg),
-              },
-            ]}
-          />
+
+        {/* lag 차트 + 컴포넌트 자원 */}
+        <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0,1fr) 380px' }}>
+          <Card>
+            <CardHeader>
+              <CardTitle>sink lag 추이</CardTitle>
+              <span className="font-mono text-xs text-ink-3">
+                {tableLabel} · {period.label}{period.key !== 'MIN' && ' · 구간 최대'}
+              </span>
+            </CardHeader>
+            <CardContent className="py-3">
+              <LineChart
+                timeFormat={timeFormat}
+                series={[
+                  {
+                    name: 'JDBC lag',
+                    color: CHART_SERIES_COLORS[0],
+                    points: toPoints(dashboard?.lag ?? [], (r) => r.ts, (r) => r.jdbc),
+                  },
+                  {
+                    name: 'Iceberg lag',
+                    color: CHART_SERIES_COLORS[1],
+                    points: toPoints(dashboard?.lag ?? [], (r) => r.ts, (r) => r.iceberg),
+                  },
+                ]}
+              />
+            </CardContent>
+          </Card>
+
+          <Card className="flex flex-col">
+            <CardHeader>
+              <CardTitle>컴포넌트 자원</CardTitle>
+            </CardHeader>
+            <CardContent className="flex-1 overflow-auto py-3">
+              {(dashboard?.resources ?? []).length === 0 ? (
+                <p className="text-xs text-ink-3">수집 대기 중…</p>
+              ) : (
+                <table className="w-full font-mono text-[11px]">
+                  <tbody>
+                    {dashboard!.resources
+                      .slice()
+                      .sort((a, b) => b.rssMb - a.rssMb)
+                      .map((r) => (
+                        <tr key={r.component}>
+                          <td className="py-0.5 text-foreground">{r.component}</td>
+                          <td className="py-0.5 text-right text-ink-3">CPU {r.cpuPct.toFixed(1)}%</td>
+                          <td className="py-0.5 text-right text-ink-3">
+                            {r.rssMb >= 1024 ? (r.rssMb / 1024).toFixed(1) + ' GB' : r.rssMb + ' MB'}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>

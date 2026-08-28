@@ -80,6 +80,39 @@ Kafka Connect는 connector 상태와 task 상태가 분리돼 있고, **가장 �
   분리해서 쓴다. 범례 + 선 끝 직접 라벨(충돌 자동 회피) + 크로스헤어 툴팁.
 - 주기 버튼은 기간 중심("최근 6시간/7일/90일") — 해상도·보존은 내부 사정이므로 숨긴다.
 
+## UI 디자인 토큰
+
+2026-08-28 리디자인(좌측 rail + drawer 패턴) 기준. 토큰 출처는 dswebclient(DS-3025)의
+표면 위계·반경·그림자 체계를 채용하고, 브랜드 색은 Deltazium 파랑(`#005FB8`/다크
+`#0078D4`)을 유지했다. 폰트는 Inter Variable → IBM Plex Sans(본문)/IBM Plex Mono
+(숫자·SCN·테이블명·타임스탬프)로 교체(`@fontsource/ibm-plex-sans`,
+`@fontsource/ibm-plex-mono`, 400/500/600(/700)).
+
+- **원시 토큰** (`ui/src/index.css`의 `:root`/`.dark`): `--surface`/`--surface-2`,
+  `--ink`/`--ink-2`/`--ink-3`, `--line`/`--line-2`, `--brand`/`--brand-2`/`--brand-soft`,
+  상태색 `--ok`/`--warn`/`--crit`/`--stop`(각 `-soft` 배경 짝), rail 전용
+  `--rail`/`--rail-2`/`--rail-ink`/`--rail-ink-2`, `--shadow-card`(2단 그림자).
+  값은 `Main.dc.html`/`Tables.dc.html`/`RecoveryDrawer.dc.html` 목업의 `light`/`darkT`
+  객체가 정본이다.
+- **기존 shadcn 변수와의 매핑**: `--background`/`--card`/`--popover`는 `--bg`/`--surface`에,
+  `--muted-foreground`는 `--ink-2`(기존 컴포넌트가 조회 폭넓게 쓰는 보조 텍스트라 더
+  옅은 `--ink-3`보다 가독성을 우선), `--border`/`--input`은 `--line`, `--ring`/`--primary`는
+  `--brand`에 매핑 — 이 덕분에 shadcn CLI로 새로 추가되는 컴포넌트도 별도 손질 없이
+  새 팔레트를 받는다. `--surface2`/`--chart-grid`/`--chart-dim`은 하이픈 없는 옛 이름을
+  각각 `--surface-2`/`--line`/`--ink-3`로 앨리어싱한 하위호환 유지용이다.
+- **radius**: `--radius: 12px`를 카드 기준으로 두고 `--radius-md`만 8px로 고정 override
+  (컨트롤 반경) — 나머지(`sm`/`xl`/`2xl`…)는 기존 비례식(`calc(--radius * n)`)을 유지해
+  파급 범위를 줄였다.
+- **프리미티브** (`ui/src/components/ui/`): `StatusPill`(ok/warn/crit/stop/brand, 20px,
+  점+텍스트), `FilterChip`(999px, 선택 시 brand 역전 + mono 카운트), `GhostButton`(28px,
+  hover 시 brand 테두리+soft 배경), `Segmented`(기간 선택), `Card`/`CardHeader`/`CardTitle`
+  (12px radius·1px border·`--shadow-card`, 헤더 12px/16px 패딩 + 하단 라인 — 상위
+  shadcn의 `--card-spacing` gap 모델 대신 섹션별 고정 패딩으로 재작성).
+- **레이아웃 패턴**: 좌측 rail(220px, `--rail` 배경) + 상단 바(56px) — `App.tsx`.
+  상세는 비차단(마스크 없음) 우측 drawer로 뜬다 — 테이블 모니터링 440px
+  (`TablesPanel.tsx`의 `TableDetailDrawer`), 복구 480px(`RecoveryPanel.tsx`의
+  `RecoveryDrawer`). 둘 다 진한(rail) 헤더 + 하단 고정 액션 바 anatomy를 공유한다.
+
 ## DDL 치환의 한계
 
 승인 시 타깃 이름 치환은 정규식 기반(한정/비한정·따옴표 조합, 단어 경계로 오치환 방지).
