@@ -33,6 +33,11 @@
  * 26. 08. 27.       | 최남희  | 하드코딩 hex를 CSS 변수/토큰 클래스로 교체 — 라이트 테마 대응
  * 26. 08. 27.       | 최남희  | 토큰명 accent-cyan → brand (VS Code풍 중립 팔레트 전환으로 시안 아님)
  * --------------------------------------------------
+ * 26. 08. 28.       | 최남희  | 리디자인 — 필터 칩(전체/정상/경고/정지) + 카드형 그리드(46px 행) +
+ * |                          | 우측 440px 비차단 상세 drawer. 기존 kebab 행 액션(정지/재개/재시도/
+ * |                          | 삭제)을 drawer 하단 액션 바로 이전, drawer는 changelog·events API를
+ * |                          | 재사용해 상태 kv·15분 lag 추이·최근 이벤트를 보여준다.
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -42,7 +47,9 @@ import {
   getFilteredRowModel,
   useReactTable,
 } from '@tanstack/react-table'
+import { X } from 'lucide-react'
 import { Spark } from '@/components/Spark'
+import { LineChart } from '@/components/LineChart'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -52,7 +59,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { FilterChip } from '@/components/ui/filter-chip'
+import { GhostButton } from '@/components/ui/ghost-button'
 import { Input } from '@/components/ui/input'
+import { StatusPill } from '@/components/ui/status-pill'
+import type { StatusPillVariant } from '@/components/ui/status-pill'
 import { api } from '@/lib/api'
 import { causeLine, effectiveState, traceOf } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
@@ -79,6 +90,21 @@ interface RegisteredTable {
   tableName: string
 }
 
+interface TableEvent {
+  id: number
+  occurredAt: string
+  schemaName: string
+  tableName: string
+  eventType: string
+  severity: 'INFO' | 'WARN' | 'ERROR'
+  message: string
+}
+
+interface ChangelogInfo {
+  table: string
+  lastCommitAtMs: number | null
+}
+
 /** 그리드 행 — 목록은 항상 /api/registrations(PG 조회, 항상 성공)에서 오고,
  * 지표(topic·이벤트·lag)는 /api/metrics/tables(Kafka AdminClient 조회) 성공 시에만 채워진다.
  * metrics가 null이면 지표 조회 실패/미완료 — 셀은 "—"로 표시한다. */
@@ -97,6 +123,13 @@ const COLOR = {
   dim: 'var(--chart-dim)',
 }
 
+/** JDBC lag 경고 임계(레코드 건수) — 대시보드 KPI와 동일 기준 */
+const LAG_WARN = 100
+
+type Bucket = 'all' | 'ok' | 'warn' | 'stop'
+
+const BUCKET_LABEL: Record<Bucket, string> = { all: '전체', ok: '정상', warn: '경고', stop: '정지' }
+
 const columnHelper = createColumnHelper<Row>()
 
 const suffix = (m: { schemaName: string; tableName: string }) =>
@@ -108,8 +141,12 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   const [registered, setRegistered] = useState<RegisteredTable[] | null>(null)
   const [metrics, setMetrics] = useState<TableMetrics[] | null>(null)
   const [connectors, setConnectors] = useState<ConnectorStates>({})
+  const [changelog, setChangelog] = useState<ChangelogInfo[] | null>(null)
+  const [tableEvents, setTableEvents] = useState<TableEvent[]>([])
   const [error, setError] = useState<string | null>(null)
   const [globalFilter, setGlobalFilter] = useState('')
+  const [bucket, setBucket] = useState<Bucket>('all')
+  const [selectedId, setSelectedId] = useState<number | null>(null)
   const [deleting, setDeleting] = useState<Row | null>(null)
   const [dropChangelog, setDropChangelog] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -143,6 +180,15 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     const id = setInterval(load, 5000)
     return () => clearInterval(id)
   }, [load, refreshKey])
+
+  useEffect(() => {
+    api<ChangelogInfo[]>('/api/changelog').then(setChangelog).catch(() => setChangelog(null))
+    const loadEvents = () =>
+      api<TableEvent[]>('/api/events?limit=200').then(setTableEvents).catch(() => {})
+    loadEvents()
+    const id = setInterval(loadEvents, 10000)
+    return () => clearInterval(id)
+  }, [])
 
   const rows = useMemo<Row[] | null>(() => {
     if (registered === null) return null
@@ -180,6 +226,15 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   const sinkState = (m: Row) => {
     const info = connectors[`dz-jdbc-sink-${suffix(m)}`]
     return info ? effectiveState(info) : 'N/A'
+  }
+
+  /** 필터 칩 버킷 판정 — 정지(PAUSED·미배포) / 경고(FAILED·lag 초과) / 정상 */
+  const bucketOf = (r: Row): Bucket => {
+    const st = sinkState(r)
+    if (st === 'PAUSED' || st === 'N/A') return 'stop'
+    if (st === 'FAILED') return 'warn'
+    if ((r.metrics?.jdbcLag ?? 0) > LAG_WARN) return 'warn'
+    return 'ok'
   }
 
   // 재스냅샷 — 상시 운영 액션(Qlik Reload·DMS Reload table에 해당) + 장애 복구 진입점 겸용.
@@ -240,104 +295,57 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       await api(`/api/registrations/${deleting.id}?dropChangelog=${dropChangelog}`, { method: 'DELETE' })
       setDeleting(null)
       setDropChangelog(false)
+      setSelectedId(null)
     })
   }
 
   const columns = [
     columnHelper.display({
       id: 'status',
-      header: '',
+      header: '상태',
       cell: ({ row }) => {
-        const state = sinkState(row.original)
-        const lag = row.original.metrics?.jdbcLag ?? 0
-        // 노랑은 "봐야 할 신호(lag 경고)" 전용 — 의도된 정지는 회색으로 구분
-        const color =
-          state === 'RUNNING'
-            ? lag > 100
-              ? COLOR.warn
-              : COLOR.ok
-            : state === 'PAUSED' || state === 'N/A'
-              ? COLOR.dim
-              : COLOR.crit
-        return <span title={state} style={{ color }}>●</span>
+        const b = bucketOf(row.original)
+        const variant: StatusPillVariant = b === 'ok' ? 'ok' : b === 'warn' ? 'warn' : 'stop'
+        const st = sinkState(row.original)
+        const label =
+          st === 'FAILED' ? '장애' : st === 'PAUSED' ? '정지' : st === 'N/A' ? '미배포' : 'streaming'
+        return <StatusPill variant={variant}>{label}</StatusPill>
       },
     }),
     columnHelper.accessor((m) => `${m.schemaName}.${m.tableName}`, {
       id: 'table',
-      header: 'TABLE',
-      cell: ({ row }) => {
-        const state = sinkState(row.original)
-        return (
-          <span className="font-mono">
-            {row.original.schemaName}.<b className="text-foreground">{row.original.tableName}</b>
-            {state === 'PAUSED' && (
-              <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                정지됨
-              </span>
-            )}
-            {state === 'FAILED' && (
-              <span
-                className="ml-2 cursor-help rounded bg-crit/15 px-1.5 py-0.5 font-mono text-[10px] text-crit"
-                title={causeLine(connectors[`dz-jdbc-sink-${suffix(row.original)}`]) ?? '원인: 이벤트 탭 참조'}
-              >
-                장애
-              </span>
-            )}
-          </span>
-        )
-      },
-    }),
-    columnHelper.display({
-      id: 'topic',
-      header: 'TOPIC',
+      header: '테이블',
       cell: ({ row }) => (
-        <span className="font-mono text-[11px] text-muted-foreground">
-          {row.original.metrics?.topic ?? '—'}
+        <span className="font-mono text-[12px]">
+          <span className="text-ink-3">{row.original.schemaName}.</span>
+          <b className="text-foreground">{row.original.tableName}</b>
         </span>
       ),
     }),
     columnHelper.display({
       id: 'events',
-      header: 'EVENTS',
+      header: () => <span className="block text-right">이벤트</span>,
       cell: ({ row }) => (
-        <span className="font-mono">
+        <span className="block text-right font-mono text-[12px]">
           {row.original.metrics ? row.original.metrics.totalEvents.toLocaleString() : '—'}
         </span>
       ),
     }),
     columnHelper.display({
-      id: 'rate',
-      header: 'EVENTS/s (실측)',
-      cell: ({ row }) => {
-        const m = row.original.metrics
-        if (!m) return <span className="font-mono text-[11px] text-muted-foreground">—</span>
-        const h = history.current[m.topic] ?? []
-        return (
-          <div className="flex items-center gap-2">
-            {h.length > 1 && <Spark data={h} color={COLOR.accent} />}
-            <span className="font-mono text-[11px] text-muted-foreground">
-              {m.eventsPerSec.toFixed(1)}/s
-            </span>
-          </div>
-        )
-      },
-    }),
-    columnHelper.display({
       id: 'jdbcLag',
-      header: () => <span title="타깃 DB에 아직 반영되지 않은 이벤트 수">JDBC LAG</span>,
+      header: () => (
+        <span className="block text-right" title="타깃 DB에 아직 반영되지 않은 이벤트 수">
+          LAG
+        </span>
+      ),
       cell: ({ row }) => {
         const m = row.original.metrics
-        if (!m) return <span className="font-mono text-muted-foreground">—</span>
-        // 정지 중 lag 증가는 당연한 결과 — 경고색 대신 회색 유지
+        if (!m) return <span className="block text-right font-mono text-ink-3">—</span>
         const paused = sinkState(row.original) === 'PAUSED'
         return (
           <span
-            className={`font-mono ${
-              paused
-                ? 'text-muted-foreground'
-                : m.jdbcLag > 100
-                  ? 'text-warn'
-                  : 'text-foreground'
+            className={`block text-right font-mono text-[12px] ${
+              paused ? 'text-ink-3' : m.jdbcLag > LAG_WARN ? 'font-semibold text-warn' : 'text-foreground'
             }`}
           >
             {m.jdbcLag.toLocaleString()}
@@ -346,82 +354,61 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       },
     }),
     columnHelper.display({
-      id: 'icebergLag',
-      header: () => (
-        <span title="changelog에 아직 기록되지 않은 이벤트 수 — 커밋 주기(60초)만큼의 지연은 정상">
-          ICEBERG LAG
-        </span>
-      ),
+      id: 'trend',
+      header: '추세 (15m)',
       cell: ({ row }) => {
         const m = row.original.metrics
-        if (!m) return <span className="font-mono text-muted-foreground">—</span>
-        return (
-          <span className={`font-mono ${m.icebergLag > 1000 ? 'text-warn' : 'text-foreground'}`}>
-            {m.icebergLag.toLocaleString()}
-          </span>
-        )
+        if (!m) return <span className="font-mono text-[11px] text-ink-3">—</span>
+        const h = history.current[m.topic] ?? []
+        const color = bucketOf(row.original) === 'warn' ? COLOR.warn : COLOR.accent
+        return h.length > 1 ? <Spark data={h} color={color} /> : null
       },
     }),
     columnHelper.display({
-      id: 'actions',
-      header: '',
-      cell: ({ row }) => (
-        <div className="flex justify-end gap-1">
-          {sinkState(row.original) === 'FAILED' && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy}
-              title="원인 해결 후 실패 지점(offset)부터 재시도"
-              onClick={() =>
-                act(() =>
-                  api(`/api/connectors/dz-jdbc-sink-${suffix(row.original)}/restart`, {
-                    method: 'POST',
-                  }))
-              }
-            >
-              재시도
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy || sinkState(row.original) === 'N/A'}
-            onClick={() => pauseResume(row.original)}
-          >
-            {sinkState(row.original) === 'PAUSED' ? '재개' : '정지'}
-          </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            disabled={busy}
-            onClick={() => {
-              setDropChangelog(false)
-              setDeleting(row.original)
-            }}
-          >
-            삭제
-          </Button>
-        </div>
-      ),
+      id: 'lastEvent',
+      header: '마지막 apply',
+      cell: ({ row }) => {
+        const m = row.original.metrics
+        if (!m) return <span className="font-mono text-[11.5px] text-ink-3">—</span>
+        return <span className="font-mono text-[11.5px] text-ink-2">{m.eventsPerSec.toFixed(1)}/s</span>
+      },
     }),
   ]
 
+  // 상태 버킷 필터는 react-table의 data 자체를 줄인다 — globalFilterFn 클로저에
+  // bucket을 끼워 넣으면 state 밖 값이라 필터 재계산이 안정적으로 트리거되지 않는다.
+  const bucketFiltered = useMemo(
+    () => (rows ?? []).filter((r) => bucket === 'all' || bucketOf(r) === bucket),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, bucket, connectors],
+  )
+
   const table = useReactTable({
-    data: rows ?? [],
+    data: bucketFiltered,
     columns,
     state: { globalFilter },
     onGlobalFilterChange: setGlobalFilter,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     globalFilterFn: (row, _col, value: string) =>
-      `${row.original.schemaName}.${row.original.tableName}`
-        .toLowerCase()
-        .includes(value.toLowerCase()),
+      `${row.original.schemaName}.${row.original.tableName}`.toLowerCase().includes(value.toLowerCase()),
   })
 
+  const counts = useMemo(() => {
+    const all = rows ?? []
+    return {
+      all: all.length,
+      ok: all.filter((r) => bucketOf(r) === 'ok').length,
+      warn: all.filter((r) => bucketOf(r) === 'warn').length,
+      stop: all.filter((r) => bucketOf(r) === 'stop').length,
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, connectors])
+
+  const selected = (rows ?? []).find((r) => r.id === selectedId) ?? null
+
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="relative flex h-full min-h-0 flex-col">
       {snapshotActive && (
         <button
           className="block w-full border-b border-brand/40 bg-brand/10 px-4 py-2.5 text-left text-[13px] hover:bg-brand/15"
@@ -485,7 +472,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
                   <summary className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground">
                     상세 보기 (전체 trace)
                   </summary>
-                  <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface2 p-2 text-[10px] leading-snug">
+                  <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface-2 p-2 text-[10px] leading-snug">
                     {traceOf(sourceInfo)}
                   </pre>
                 </details>
@@ -495,71 +482,114 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         </div>
       )}
       {sourceState === 'PAUSED' && (
-        <div className="border-b border-border bg-surface2 px-4 py-2 text-[13px] text-muted-foreground">
+        <div className="border-b border-border bg-surface-2 px-4 py-2 text-[13px] text-muted-foreground">
           ⏸ 캡처 일시정지 — 전 테이블 신규 변경 수집이 멈춰 있습니다 (재개 전까지 redo 보존 기간에 유의)
         </div>
       )}
-      <div className="flex items-center gap-3 px-4 py-3">
-        <Input
-          value={globalFilter}
-          onChange={(e) => setGlobalFilter(e.target.value)}
-          placeholder="스키마.테이블 검색"
-          className="w-56"
-        />
-        <button
-          className="text-xs text-muted-foreground hover:text-foreground"
-          onClick={() => {
-            forceRender((n) => n + 1)
-            load()
-          }}
-        >
-          새로고침
-        </button>
-        <button
-          className="text-xs text-muted-foreground hover:text-foreground"
-          title="전 테이블 초기 스냅샷부터 재기동 (타깃 표류·정합 불일치 복구용, PK upsert라 비파괴)"
-          disabled={busy || snapshotActive}
-          onClick={() => setResnapDialog('routine')}
-        >
-          재스냅샷
-        </button>
-        <span className="ml-auto font-mono text-[11px] text-muted-foreground">
-          {table.getRowModel().rows.length} tables
-        </span>
-      </div>
 
-      {error && <p className="px-4 pb-2 text-sm text-destructive">{error}</p>}
-      {rows !== null && rows.length === 0 && !error && (
-        <p className="px-4 pb-2 text-sm text-muted-foreground">
-          등록된 테이블이 없습니다 — 상단 [＋ CDC 등록]으로 시작하세요.
-        </p>
-      )}
+      <div className="flex flex-1 min-h-0">
+        <div className="flex min-w-0 flex-1 flex-col gap-3 p-4">
+          {/* 필터 행 */}
+          <div className="flex items-center gap-2">
+            <Input
+              value={globalFilter}
+              onChange={(e) => setGlobalFilter(e.target.value)}
+              placeholder="스키마.테이블 검색"
+              className="w-[280px]"
+            />
+            {(['all', 'ok', 'warn', 'stop'] as Bucket[]).map((b) => (
+              <FilterChip key={b} active={bucket === b} count={counts[b]} onClick={() => setBucket(b)}>
+                {BUCKET_LABEL[b]}
+              </FilterChip>
+            ))}
+            <div className="ml-auto flex items-center gap-2">
+              <GhostButton onClick={() => { forceRender((n) => n + 1); load() }}>
+                새로고침
+              </GhostButton>
+              <GhostButton
+                disabled={busy || snapshotActive}
+                title="전 테이블 초기 스냅샷부터 재기동 (타깃 표류·정합 불일치 복구용, PK upsert라 비파괴)"
+                onClick={() => setResnapDialog('routine')}
+              >
+                재스냅샷
+              </GhostButton>
+              <span className="font-mono text-[11px] text-ink-3">
+                {table.getRowModel().rows.length} tables
+              </span>
+            </div>
+          </div>
 
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
-        <table className="w-full border-collapse text-[12.5px]">
-          <thead>
-            {table.getHeaderGroups().map((hg) => (
-              <tr key={hg.id} className="text-left font-mono text-[10.5px] text-muted-foreground">
-                {hg.headers.map((h) => (
-                  <th key={h.id} className="border-b border-border px-2.5 py-2 font-medium">
-                    {flexRender(h.column.columnDef.header, h.getContext())}
-                  </th>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          {rows !== null && rows.length === 0 && !error && (
+            <p className="text-sm text-muted-foreground">
+              등록된 테이블이 없습니다 — 상단 [＋ CDC 등록]으로 시작하세요.
+            </p>
+          )}
+
+          {/* 카드 안 그리드 */}
+          <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-card shadow-[var(--shadow-card)]">
+            <table className="w-full border-collapse text-[12.5px]">
+              <thead>
+                {table.getHeaderGroups().map((hg) => (
+                  <tr key={hg.id} className="bg-surface-2">
+                    {hg.headers.map((h) => (
+                      <th
+                        key={h.id}
+                        className="sticky top-0 border-b border-border bg-surface-2 px-3.5 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-ink-3"
+                      >
+                        {flexRender(h.column.columnDef.header, h.getContext())}
+                      </th>
+                    ))}
+                  </tr>
                 ))}
-              </tr>
-            ))}
-          </thead>
-          <tbody>
-            {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className="hover:bg-secondary/60">
-                {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="px-2.5 py-2.5">
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
+              </thead>
+              <tbody>
+                {table.getRowModel().rows.map((row) => (
+                  <tr
+                    key={row.id}
+                    onClick={() => setSelectedId(row.original.id)}
+                    className={`h-[46px] cursor-pointer border-b border-border last:border-b-0 hover:bg-surface-2 ${
+                      selectedId === row.original.id
+                        ? 'bg-brand-soft shadow-[inset_3px_0_0_var(--brand)]'
+                        : ''
+                    }`}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <td key={cell.id} className="px-3.5">
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    ))}
+                  </tr>
                 ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {selected && (
+          <TableDetailDrawer
+            row={selected}
+            bucket={bucketOf(selected)}
+            sinkState={sinkState(selected)}
+            sourceCause={causeLine(connectors[`dz-jdbc-sink-${suffix(selected)}`])}
+            lastCommitAtMs={
+              changelog?.find((c) => c.table === `${selected.schemaName}.${selected.tableName}`)
+                ?.lastCommitAtMs ?? null
+            }
+            events={tableEvents
+              .filter((e) => e.schemaName === selected.schemaName && e.tableName === selected.tableName)
+              .slice(0, 8)}
+            busy={busy}
+            onClose={() => setSelectedId(null)}
+            onPauseResume={() => pauseResume(selected)}
+            onResnapshot={() => setResnapDialog('routine')}
+            onDelete={() => { setDropChangelog(false); setDeleting(selected) }}
+            onRetry={() =>
+              act(() =>
+                api(`/api/connectors/dz-jdbc-sink-${suffix(selected)}/restart`, { method: 'POST' }))
+            }
+          />
+        )}
       </div>
 
       <Dialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
@@ -604,6 +634,157 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         context={resnapDialog ?? 'routine'}
         onClose={() => setResnapDialog(null)}
       />
+    </div>
+  )
+}
+
+/* 상세 drawer — 비차단(마스크 없음), 그리드 위에 절대 위치로 겹친다 (440px 고정) */
+function TableDetailDrawer({
+  row,
+  bucket,
+  sinkState,
+  sourceCause,
+  lastCommitAtMs,
+  events,
+  busy,
+  onClose,
+  onPauseResume,
+  onResnapshot,
+  onDelete,
+  onRetry,
+}: {
+  row: Row
+  bucket: Bucket
+  sinkState: string
+  sourceCause: string | null
+  lastCommitAtMs: number | null
+  events: TableEvent[]
+  busy: boolean
+  onClose: () => void
+  onPauseResume: () => void
+  onResnapshot: () => void
+  onDelete: () => void
+  onRetry: () => void
+}) {
+  const topic = row.metrics?.topic ?? `dz.${row.schemaName}.${row.tableName}`
+  const [lagSeries, setLagSeries] = useState<{ ts: number; value: number }[] | null>(null)
+
+  useEffect(() => {
+    setLagSeries(null)
+    interface DashboardLag { lag: { ts: string; jdbc: number }[] }
+    api<DashboardLag>(`/api/metrics/dashboard?res=MIN&hours=1&table=${encodeURIComponent(topic)}`)
+      .then((d) =>
+        setLagSeries(d.lag.slice(-15).map((r) => ({ ts: Date.parse(r.ts), value: r.jdbc }))))
+      .catch(() => setLagSeries([]))
+  }, [topic])
+
+  const variant: StatusPillVariant = bucket === 'ok' ? 'ok' : bucket === 'warn' ? 'warn' : 'stop'
+  const statusLabel =
+    sinkState === 'FAILED' ? '장애' : sinkState === 'PAUSED' ? '정지' : sinkState === 'N/A' ? '미배포' : 'streaming'
+
+  return (
+    <div className="flex w-[440px] shrink-0 flex-col border-l border-border bg-background shadow-[-12px_0_32px_rgba(16,24,40,.12)]">
+      <div className="flex items-center gap-2.5 bg-rail px-5 py-3.5 text-rail-ink">
+        <div className="flex flex-col gap-0.5 leading-tight">
+          <span className="font-mono text-[15px] font-semibold">
+            {row.schemaName}.{row.tableName}
+          </span>
+          <span className="text-[11.5px] text-rail-ink-2">topic {topic}</span>
+        </div>
+        <StatusPill variant={variant} className="ml-auto">{statusLabel}</StatusPill>
+        <button className="text-rail-ink-2 hover:text-rail-ink" onClick={onClose} title="닫기">
+          <X className="size-4.5" />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-auto p-3.5">
+        {sinkState === 'FAILED' && (
+          <div className="mb-3 flex items-start gap-2 rounded-md border border-crit/40 bg-crit-soft px-3.5 py-3 text-[12.5px] text-crit">
+            <span>{sourceCause ?? '원인: 이벤트 탭 참조'}</span>
+          </div>
+        )}
+
+        <div className="mb-3 rounded-lg border border-border bg-card">
+          <div className="border-b border-border px-3.5 py-2.5">
+            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">상태</h4>
+          </div>
+          <div className="grid grid-cols-[96px_1fr] gap-x-3 gap-y-1.5 px-3.5 py-3 text-[12.5px]">
+            <span className="text-ink-3">JDBC sink</span>
+            <span className="font-mono text-[12px]">
+              {sinkState} · lag {row.metrics ? row.metrics.jdbcLag.toLocaleString() : '—'}건
+            </span>
+            <span className="text-ink-3">Iceberg</span>
+            <span className="font-mono text-[12px]">
+              lag {row.metrics ? row.metrics.icebergLag.toLocaleString() : '—'}건
+              {lastCommitAtMs !== null &&
+                ` · 마지막 커밋 ${new Date(lastCommitAtMs).toLocaleTimeString('ko-KR', { hour12: false })}`}
+            </span>
+            <span className="text-ink-3">이벤트/s</span>
+            <span className="font-mono text-[12px]">
+              {row.metrics ? row.metrics.eventsPerSec.toFixed(1) : '—'}
+            </span>
+          </div>
+        </div>
+
+        <div className="mb-3 rounded-lg border border-border bg-card">
+          <div className="border-b border-border px-3.5 py-2.5">
+            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">lag · 15분</h4>
+          </div>
+          <div className="px-2 py-2">
+            {lagSeries === null ? (
+              <p className="px-2 py-3 text-xs text-ink-3">불러오는 중…</p>
+            ) : (
+              <LineChart height={110} series={[{ name: 'JDBC lag', color: 'var(--warn)', points: lagSeries }]} />
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border bg-card">
+          <div className="border-b border-border px-3.5 py-2.5">
+            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">최근 이벤트</h4>
+          </div>
+          {events.length === 0 ? (
+            <p className="px-3.5 py-3 text-xs text-ink-3">이벤트 없음</p>
+          ) : (
+            events.map((e) => (
+              <div key={e.id} className="grid grid-cols-[56px_12px_1fr] gap-x-2 border-t border-border px-3.5 py-2 text-[12px] first:border-t-0">
+                <span className="pt-px font-mono text-[11px] text-ink-3">{e.occurredAt.slice(11, 19)}</span>
+                <span
+                  className="mt-[5px] size-1.75 rounded-full"
+                  style={{
+                    background:
+                      e.severity === 'ERROR' ? 'var(--crit)' : e.severity === 'WARN' ? 'var(--warn)' : 'var(--ok)',
+                  }}
+                />
+                <div>
+                  <div className="text-foreground">{e.eventType}</div>
+                  <div className="mt-0.5 truncate font-mono text-[10.5px] text-ink-3">{e.message}</div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 border-t border-border bg-surface-2 px-4 py-3">
+        <span className="mr-auto max-w-[20ch] text-[11.5px] text-ink-3">
+          액션은 이 테이블 토픽에만 적용
+        </span>
+        {sinkState === 'FAILED' && (
+          <GhostButton className="h-8.5 px-3.5" disabled={busy} onClick={onRetry}>
+            재시도
+          </GhostButton>
+        )}
+        <GhostButton className="h-8.5 px-3.5" disabled={busy || sinkState === 'N/A'} onClick={onPauseResume}>
+          {sinkState === 'PAUSED' ? '재개' : '정지'}
+        </GhostButton>
+        <GhostButton className="h-8.5 px-3.5" disabled={busy} onClick={onResnapshot}>
+          재스냅샷
+        </GhostButton>
+        <Button variant="destructive" size="sm" disabled={busy} onClick={onDelete}>
+          삭제
+        </Button>
+      </div>
     </div>
   )
 }
