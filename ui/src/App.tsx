@@ -2,7 +2,8 @@
  * 파일명 : App.tsx
  * 작성일자 : 26. 07. 24.
  * 작성자 : 최남희
- * 설명 : 콘솔 루트 — 상단 탭 내비게이션(토폴로지/테이블/DDL/이벤트/복구/DB 연결)과 커넥터 상태 요약, 등록 위저드 마운트.
+ * 설명 : 콘솔 루트 — 좌측 rail 내비게이션(대시보드/테이블/DDL/이벤트/복구/DB 연결) +
+ * 상단 바(페이지 제목·부제·우측 액션), 엔진 상태 요약, 등록 위저드 마운트.
  *
  * 수정 내역
  * --------------------------------------------------
@@ -22,8 +23,21 @@
  * --------------------------------------------------
  * 26. 08. 27.       | 최남희  | 헤더에 다크/라이트 테마 토글 추가, "backend"→"엔진" 용어 통일
  * --------------------------------------------------
+ * 26. 08. 28.       | 최남희  | 상단 탭 → 좌측 rail(220px) + 상단 바(56px) 리디자인.
+ * |                          | rail에 DDL 미승인 건수 배지·엔진 상태 pill, 상단 바는
+ * |                          | 페이지 제목/부제 + 우측 액션(등록·테마·경고 센터)만 남김
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
+import {
+  Clock,
+  Database,
+  History,
+  LayoutDashboard,
+  Mountain,
+  RotateCcw,
+  Table2,
+} from 'lucide-react'
 import { api } from '@/lib/api'
 import { effectiveState } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
@@ -38,21 +52,27 @@ import { TopologyPanel } from '@/features/topology/TopologyPanel'
 import { ThemeToggle } from '@/features/system/ThemeToggle'
 import { WarningCenter } from '@/features/system/WarningCenter'
 import { Button } from '@/components/ui/button'
+import { StatusPill } from '@/components/ui/status-pill'
 
 type View = 'topology' | 'tables' | 'ddl' | 'events' | 'recovery' | 'connections'
 
-const VIEWS: [View, string][] = [
-  ['topology', '대시보드'],
-  ['tables', '테이블 모니터링'],
-  ['ddl', 'DDL 이력'],
-  ['events', '이벤트'],
-  ['recovery', '복구'],
-  ['connections', 'DB 연결'],
+const VIEWS: { key: View; label: string; sub: string; icon: typeof LayoutDashboard }[] = [
+  { key: 'topology', label: '대시보드', sub: '파이프라인 전체 흐름', icon: LayoutDashboard },
+  { key: 'tables', label: '테이블 모니터링', sub: '실측 이벤트·lag 모니터링', icon: Table2 },
+  { key: 'ddl', label: 'DDL 이력', sub: '소스 DDL 승인 타임라인', icon: History },
+  { key: 'events', label: '이벤트', sub: '운영 이벤트 이력', icon: Clock },
+  { key: 'recovery', label: '복구', sub: 'changelog 재발행 · 정합 검증', icon: RotateCcw },
+  { key: 'connections', label: 'DB 연결', sub: '소스·타깃 연결 관리', icon: Database },
 ]
+
+interface DdlEventLite {
+  state: 'SNAPSHOT' | 'DETECTED' | 'APPROVED' | 'REJECTED' | 'IGNORED'
+}
 
 function App() {
   const [view, setView] = useState<View>('topology')
-  const [summary, setSummary] = useState<{ running: number; failed: number } | null>(null)
+  const [summary, setSummary] = useState<{ running: number; total: number } | null>(null)
+  const [pendingDdl, setPendingDdl] = useState(0)
   const [wizardOpen, setWizardOpen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
 
@@ -63,7 +83,7 @@ function App() {
           const states = Object.values(cs).map((c) => effectiveState(c))
           setSummary({
             running: states.filter((s) => s === 'RUNNING').length,
-            failed: states.filter((s) => s !== 'RUNNING').length,
+            total: states.length,
           })
         })
         .catch(() => setSummary(null))
@@ -72,63 +92,101 @@ function App() {
     return () => clearInterval(id)
   }, [])
 
+  useEffect(() => {
+    const load = () =>
+      api<DdlEventLite[]>('/api/ddl-events')
+        .then((evs) => setPendingDdl(evs.filter((e) => e.state === 'DETECTED').length))
+        .catch(() => {})
+    load()
+    const id = setInterval(load, 10000)
+    return () => clearInterval(id)
+  }, [])
+
+  const current = VIEWS.find((v) => v.key === view)!
+
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
-      <header className="flex items-center gap-5 border-b border-border bg-card px-5 py-2.5">
-        <div className="font-semibold tracking-tight">
-          Delta<span className="text-primary">zium</span>{' '}
-          <span className="font-normal text-muted-foreground">Console</span>
+    <div className="flex h-screen bg-background text-foreground">
+      {/* 좌측 rail */}
+      <aside className="flex w-[220px] shrink-0 flex-col gap-1 bg-rail px-3 py-4 text-rail-ink-2">
+        <div className="flex items-center gap-2.5 px-2 pb-4.5 pt-1">
+          <div className="flex size-7 items-center justify-center rounded-md bg-primary">
+            <Mountain className="size-4 text-white" strokeWidth={2.2} />
+          </div>
+          <div className="flex flex-col leading-tight">
+            <span className="text-sm font-bold tracking-tight text-rail-ink">
+              Deltazium
+            </span>
+            <span className="font-mono text-[10.5px] text-rail-ink-2">CDC console</span>
+          </div>
         </div>
-        <nav className="flex gap-4">
-          {VIEWS.map(([k, label]) => (
+
+        {VIEWS.map((v) => {
+          const Icon = v.icon
+          const active = view === v.key
+          return (
             <button
-              key={k}
-              onClick={() => setView(k)}
-              className={`border-b-2 px-0.5 py-1 text-[13px] transition-colors ${
-                view === k
-                  ? 'border-primary font-semibold text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              key={v.key}
+              onClick={() => setView(v.key)}
+              className={`flex h-9 items-center gap-2.5 rounded-md px-3 text-[13px] transition-colors ${
+                active
+                  ? 'bg-rail-2 font-semibold text-rail-ink shadow-[inset_3px_0_0_var(--brand-2)]'
+                  : 'text-rail-ink-2 hover:bg-rail-2 hover:text-rail-ink'
               }`}
             >
-              {label}
-            </button>
-          ))}
-        </nav>
-        <Button size="sm" className="ml-auto" onClick={() => setWizardOpen(true)}>
-          ＋ CDC 등록
-        </Button>
-        <div className="flex gap-4 font-mono text-xs text-muted-foreground">
-          {summary === null ? (
-            <span className="text-crit">● 엔진 연결 안 됨</span>
-          ) : (
-            <>
-              <span title="Kafka Connect 커넥터 수 (테이블 수 아님)">
-                <span className="text-ok">●</span> 커넥터 {summary.running} running
-              </span>
-              {summary.failed > 0 && (
-                <span>
-                  <span className="text-crit">●</span> {summary.failed} not running
-                </span>
+              <Icon className="size-4 shrink-0" strokeWidth={1.8} />
+              {v.label}
+              {v.key === 'ddl' && pendingDdl > 0 && (
+                <StatusPill variant="warn" className="ml-auto h-[18px]">
+                  {pendingDdl}
+                </StatusPill>
               )}
-            </>
-          )}
-        </div>
-        <ThemeToggle />
-        <WarningCenter />
-      </header>
+            </button>
+          )
+        })}
 
-      <main className="min-h-0 flex-1">
-        {view === 'topology' && <TopologyPanel />}
-        {view === 'tables' && <TablesPanel refreshKey={refreshKey} />}
-        {view === 'ddl' && <DdlPanel />}
-        {view === 'events' && <EventsPanel />}
-        {view === 'recovery' && <RecoveryPanel />}
-        {view === 'connections' && (
-          <div className="mx-auto max-w-4xl p-6">
-            <ConnectionsPanel />
+        <div className="mt-auto flex flex-col gap-2 border-t border-rail-2 pt-3">
+          <div className="flex items-center gap-2 px-1 text-xs text-rail-ink-2">
+            {summary === null ? (
+              <StatusPill variant="crit">엔진</StatusPill>
+            ) : (
+              <>
+                <StatusPill variant="ok">엔진</StatusPill>
+                <span className="font-mono text-[11px]">
+                  커넥터 {summary.running}/{summary.total} running
+                </span>
+              </>
+            )}
           </div>
-        )}
-      </main>
+        </div>
+      </aside>
+
+      {/* 본문 */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-6">
+          <span className="text-[15px] font-semibold">{current.label}</span>
+          <span className="text-xs text-ink-3">{current.sub}</span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" onClick={() => setWizardOpen(true)}>
+              ＋ CDC 등록
+            </Button>
+            <ThemeToggle />
+            <WarningCenter />
+          </div>
+        </header>
+
+        <main className="min-h-0 flex-1">
+          {view === 'topology' && <TopologyPanel />}
+          {view === 'tables' && <TablesPanel refreshKey={refreshKey} />}
+          {view === 'ddl' && <DdlPanel />}
+          {view === 'events' && <EventsPanel />}
+          {view === 'recovery' && <RecoveryPanel />}
+          {view === 'connections' && (
+            <div className="mx-auto max-w-4xl p-6">
+              <ConnectionsPanel />
+            </div>
+          )}
+        </main>
+      </div>
 
       <RegistrationWizard
         open={wizardOpen}
