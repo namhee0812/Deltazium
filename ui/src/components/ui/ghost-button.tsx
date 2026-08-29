@@ -13,7 +13,7 @@ export function GhostButton({
     <button
       type="button"
       className={cn(
-        "inline-flex h-7 items-center gap-1.5 rounded-md border border-line-2 bg-card px-2.5 text-xs font-medium text-ink-2 transition-colors hover:border-primary hover:bg-brand-soft hover:text-primary disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-line-2 bg-card px-2.5 text-xs font-medium text-ink-2 transition-colors hover:border-primary hover:bg-brand-soft hover:text-primary disabled:cursor-not-allowed disabled:opacity-50",
         className
       )}
       {...props}

@@ -34,7 +34,7 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 | 모듈 | 내용 |
 |---|---|
 | `backend/` | Spring Boot 3 제어면 — DB 연결 저장소(Oracle 연결 테스트), 소스 딕셔너리 조회(와일드카드 전개), 사전 점검(PK·supplemental logging·LogMiner 권한 8종 — 누락 시 DBA GRANT 안내·배포 차단), 컬럼 매핑 검증, 커넥터 템플릿 렌더링·배포(Connect REST), changelog 테이블 사전 생성(JdbcCatalog), 스냅샷 모드 선택, CDC 정지/재개/삭제(offset 정리 포함), DDL 승인 워크플로(schema change topic 상시 소비·비전파성 DDL 자동 무시·타깃 이름 치환), 복구 트리거·정합 검증·go-live 자동 재개, 테이블별 운영 이벤트 이력(커넥터 장애 전이 trace 적재), Kafka 실측 메트릭(offset·lag), AI 진단 어시스턴트(Claude tool use — 읽기 전용 도구 2종: 파이프라인 상태 요약·로그 검색, 근거 강제, prompt caching으로 진단당 ~$0.1). 메타데이터 쿼리는 MyBatis 매퍼 XML |
-| `ui/` | React 19 + TypeScript 콘솔 — 토폴로지 캔버스(React Flow, 커넥터 상태 실시간), 6단계 등록 위저드(딕셔너리 조회→컬럼 매핑→사전 점검→배포), 테이블 모니터링 그리드(실측 lag·정지/재개/삭제), DDL 타임라인(승인/거부), 운영 이벤트 타임라인, 복구 화면(changelog 현황 브라우저 포함), AI 진단 플로팅 위젯(SSE 스트리밍·도구 진행 표시·마크다운 답변) |
+| `ui/` | React 19 + TypeScript 콘솔 — 좌측 rail 내비 + 카드 기반 화면(라이트/다크 토큰). 대시보드(KPI 카드·토폴로지 캔버스·주의 필요 목록·처리량/lag 시계열), 6단계 등록 위저드(딕셔너리 조회→컬럼 매핑→사전 점검→배포), 테이블 모니터링(필터 칩·그리드·행 클릭 시 상세 drawer에서 정지/재개/재스냅샷/복구), DDL 타임라인(승인/거부), 운영 이벤트 타임라인, 복구(changelog 현황 + 단계형 실행 drawer), DB 연결 카드(인라인 연결 테스트), AI 진단 플로팅 위젯(SSE 스트리밍·도구 진행 표시·마크다운 답변) |
 | `recovery-job/` | 플레인 Java — Iceberg scan(SCN 필터·순서 복원) → envelope 재조립 → 복구 토픽 발행. 왕복 동등성 테스트 |
 | `connectors/` | 커넥터 설정 템플릿 4종 (설정 키 전수 공식 문서 검증) |
 | `deploy/` | 베어메탈 설치·기동·smoke test 스크립트 (멱등), 로그 위치 표준화 |
@@ -78,11 +78,13 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 | | |
 |---|---|
 | ![대시보드](docs/images/dashboard.png) | ![등록 위저드](docs/images/wizard.png) |
-| 대시보드 — 토폴로지(커넥터 상태 실시간) + 처리량(발행 vs apply)·lag 시계열 + 컴포넌트 자원(/proc 실측) + 최근 운영 이벤트 | 등록 위저드 — 딕셔너리 조회, PK 없는 테이블 선택 차단, supp.log 경고 |
+| 대시보드 — KPI 카드(커넥터·처리량·최대 lag·미승인 DDL) + 토폴로지(커넥터 상태 실시간) + 주의 필요 목록 + 처리량(발행 vs apply)·lag 시계열 + 최근 운영 이벤트 | 등록 위저드 — 딕셔너리 조회, PK 없는 테이블 선택 차단, supp.log 경고 |
 | ![테이블 모니터링](docs/images/tables.png) | ![DDL 타임라인](docs/images/ddl.png) |
-| 테이블 모니터링 — 실측 이벤트·lag, 정지/재개/삭제 | DDL 이력 — 수집·승인/거부·자동 무시 |
+| 테이블 모니터링 — 상태 필터 칩·실측 이벤트·lag 추세, 행 클릭 시 우측 drawer(상태·lag 15분·이벤트·정지/재개/재스냅샷/삭제) | DDL 이력 — 수집·승인/거부·자동 무시 |
 | ![운영 이벤트](docs/images/events.png) | ![복구](docs/images/recovery.png) |
-| 운영 이벤트 타임라인 — 장애 전이 trace 포함 | 복구 — changelog(S3) 현황·SCN 재발행·go-live·정합 검증 |
+| 운영 이벤트 타임라인 — 장애 전이 trace 포함 | 복구 — changelog(S3) 현황·실행 이력 + 실행 drawer(대상 테이블·SCN 범위·go-live·정합 검증) |
+| ![DB 연결](docs/images/connections.png) | |
+| DB 연결 — 소스/타깃 카드(접속·사용 중인 테이블 수), 인라인 연결 테스트(헤더 액센트로 결과 표시), 연결 추가 카드 | |
 | ![캡처 장애 배너](docs/images/capture-banner.png) | ![재스냅샷 위저드](docs/images/resnapshot.png) |
 | 캡처 장애 경고 배너 — task FAILED 실측 화면. 감지 시각·근본 원인(Caused by)·전체 trace 펼침 + [복구 시작]. connector RUNNING/task FAILED 불일치로 나흘간 숨어 있던 실제 장애를 계기로 추가 | 재스냅샷 위저드 — 유입 차단→잔량 소진→타깃 비우기(실행 주체 승인·권한 홀드)→offset 리셋→초기 스냅샷(notification 실측 행수)→go-live. 실제 장애 복구에 사용된 run(10.5만 행, 50초) |
 | ![AI 진단](docs/images/assist.png) | |

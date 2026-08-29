@@ -25,7 +25,7 @@ export function FilterChip({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+        "inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45",
         active
           ? "border-primary bg-primary text-primary-foreground"
           : "border-line-2 bg-card text-ink-2 hover:border-primary hover:text-primary",

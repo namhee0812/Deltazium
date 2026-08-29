@@ -379,7 +379,7 @@ function ConnectionCard({
       </CardHeader>
 
       <CardContent>
-        <div className="grid grid-cols-[84px_1fr] gap-x-3 gap-y-1.5 text-[12.5px]">
+        <div className="grid grid-cols-[112px_1fr] gap-x-3 gap-y-1.5 text-[12.5px]">
           <span className="text-ink-3">접속</span>
           <span className="truncate font-mono text-[12px]">
             {c.host}:{c.port}/{c.databaseName}
