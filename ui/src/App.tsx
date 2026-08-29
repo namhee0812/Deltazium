@@ -30,6 +30,9 @@
  * 26. 08. 28.       | 최남희  | TopologyPanel에 onNavigate 전달 — 대시보드 "주의 필요"·KPI
  * |                          | 카드의 "보기/검토" 클릭 시 해당 탭으로 이동
  * --------------------------------------------------
+ * 26. 08. 29.       | 최남희  | DB 연결 탭 래퍼 폭을 max-w-4xl → max-w-6xl로 확장
+ * |                          | (ConnectionsPanel 카드 그리드가 한 줄에 여러 장 배치되도록)
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import {
@@ -184,7 +187,7 @@ function App() {
           {view === 'events' && <EventsPanel />}
           {view === 'recovery' && <RecoveryPanel />}
           {view === 'connections' && (
-            <div className="mx-auto max-w-4xl p-6">
+            <div className="mx-auto max-w-6xl p-6">
               <ConnectionsPanel />
             </div>
           )}
