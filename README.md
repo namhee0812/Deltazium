@@ -88,7 +88,7 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 | ![캡처 장애 배너](docs/images/capture-banner.png) | ![재스냅샷 위저드](docs/images/resnapshot.png) |
 | 캡처 장애 경고 배너 — task FAILED 시 표시. 감지 시각·근본 원인(Caused by)·전체 trace 펼침 + [복구 시작]. connector RUNNING/task FAILED 불일치로 나흘간 숨어 있던 실제 장애를 계기로 추가. 화면은 2026-08-19 실제 장애(LogFileNotFoundException)의 trace를 커넥터 상태 응답에 주입해 재현한 캡처 | 재스냅샷 — 시작 전 설정 화면(타깃 비우기 여부·실행 주체 선택). 시작 후 유입 차단→잔량 소진→타깃 비우기→offset 리셋→초기 스냅샷(notification 실측 행수)→go-live 단계가 같은 팝업에 순서대로 표시. 실제 장애 복구에 사용된 run(10.5만 행, 50초) |
 | ![AI 진단](docs/images/assist.png) | |
-| AI 진단 — 우하단 플로팅 위젯. 질문을 받으면 상태 조회·로그 검색 도구를 스스로 호출해 근거와 함께 답한다(사용 도구는 답변 위에 표시). 화면은 "dz-source 상태 어때? 최근 장애 있었어?"에 대해 이벤트 이력에서 FAILED 전이 8건을 뽑아 반복 패턴을 짚은 실측 대화 | |
+| AI 진단 — 우하단 플로팅 위젯. 질문을 받으면 상태 조회·로그 검색 도구를 스스로 호출해 근거와 함께 답한다(사용 도구는 답변 위에 표시). 화면은 "dz-source 상태 어때? 최근 장애 있었어?"에 대해 8월 반복 장애(총 8회)를 아카이브 로그 보존 기간 문제로 진단하고 같은 시점 테이블 lag 상관관계 확인·조치 3건을 제안한 실측 대화 | |
 
 ## 실행
 

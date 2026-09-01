@@ -176,12 +176,13 @@ Prometheus/Grafana는 의도적으로 미도입(백로그) — 무엇을 보여�
 <h2>4. 웹 콘솔 기능</h2>
 <table>
   <tr><th style="width:22%">화면</th><th>기능</th></tr>
-  <tr><td>대시보드</td><td>토폴로지(자체 SVG — 교차 없는 직교 라우팅·흐름 애니메이션) + 처리량(발행 vs apply)·lag 시계열(테이블·기간 선택) + 컴포넌트 자원(/proc 실측) + 최근 운영 이벤트</td></tr>
+  <tr><td>대시보드</td><td>KPI 카드(커넥터·처리량·최대 lag·미승인 DDL) + 토폴로지(자체 SVG — 교차 없는 직교 라우팅·흐름 애니메이션) + 주의 필요 목록(lag 초과·DDL 대기, 해당 화면 이동) + 처리량(발행 vs apply)·lag 시계열(테이블·기간 선택) + 최근 운영 이벤트</td></tr>
   <tr><td>CDC 등록 위저드</td><td>6단계: 소스 선택 → 딕셔너리 조회(와일드카드 전개, PK 없는 테이블 선택 차단) → 타깃 → 컬럼 매핑(제외·변환식·구문 검증) → 사전 점검(supp.log 승인 후 적용 · 권한 GRANT 안내) → 스냅샷 모드 선택·배포</td></tr>
-  <tr><td>테이블 모니터링</td><td>실측 지표(총 이벤트·이벤트/s·sink별 lag), 정지/재개/재시도/삭제, 캡처 장애 배너(원인·trace·복구 진입), 재스냅샷</td></tr>
+  <tr><td>테이블 모니터링</td><td>상태 필터 칩 + 그리드(실측 이벤트·lag·15분 추세), 행 선택 시 상세 drawer(상태·lag 차트·이벤트 이력·정지/재개/재시도/재스냅샷/삭제), 캡처 장애 배너(원인·trace·복구 진입)</td></tr>
   <tr><td>DDL 이력</td><td>schema change topic 상시 수집(retention 만료 대비 DB 적재), 승인(타깃 이름 치환 실행)/거부(테이블 단위 apply 정지), 비전파성 DDL 자동 무시</td></tr>
   <tr><td>이벤트</td><td>테이블별 운영 이력 — 등록·정지·DDL·복구·커넥터 장애 전이(원인 trace 포함) 타임라인</td></tr>
-  <tr><td>복구</td><td>changelog(S3) 현황(용량·보존 구간·파티션별) · SCN 지정 재발행 · go-live 자동 재개 · SRC/TGT 정합 검증(행수+체크섬)</td></tr>
+  <tr><td>복구</td><td>changelog(S3) 현황(용량·보존 구간·파티션별)·실행 이력 + 단계형 실행 drawer(대상 테이블 → SCN 범위 → 정합 검증) · go-live 자동 재개 · SRC/TGT 정합 검증(행수+체크섬)</td></tr>
+  <tr><td>DB 연결</td><td>소스/타깃 연결 카드 — 접속 정보·사용 중인 테이블 수, 인라인 연결 테스트(카드 액센트로 결과 표시)</td></tr>
   <tr><td>AI 진단 위젯</td><td>전 화면 공통 플로팅 채팅 — 상태 요약·로그 검색 도구 자율 호출, 로그 라인 근거와 함께 원인 제시(SSE 스트리밍·사용 도구 표시), 조치는 제안만</td></tr>
 </table>
 
@@ -218,8 +219,8 @@ WARN의 운영 이벤트 승격)
 <h2 style="page-break-before: always;">부록 A. 콘솔 화면</h2>
 <p class="small">개발 환경 화면 캡처이며, 내부 주소 등 일부 정보는 가림 처리했다.</p>
 
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/masked/dashboard.png">
-<p class="cap">그림 1. 대시보드 — 토폴로지(자체 SVG)·처리량(발행 vs apply)·lag 시계열·컴포넌트 자원·최근 이벤트 (분당 2,262건 버스트 실측)</p></div>
+<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/dashboard.png">
+<p class="cap">그림 1. 대시보드 — KPI 카드(커넥터·처리량·최대 lag·미승인 DDL)·토폴로지(자체 SVG)·주의 필요·처리량(발행 vs apply)·lag 시계열 (약 1,600 ev/s 버스트 실측)</p></div>
 
 <div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/wizard.png">
 <p class="cap">그림 2. 등록 위저드 — 소스 딕셔너리 조회: PK 없는 테이블 선택 차단·supplemental logging 경고·행수</p></div>
@@ -230,17 +231,17 @@ WARN의 운영 이벤트 승격)
 <div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/recovery.png">
 <p class="cap">그림 4. 복구 — changelog(S3) 현황(보존 구간·파티션)·SCN 지정 재발행·go-live 자동 재개·정합 검증</p></div>
 
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/masked/events.png">
+<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/events.png">
 <p class="cap">그림 5. 운영 이벤트 타임라인 — 등록·정지·DDL·복구·커넥터 장애 전이(원인 trace 펼침)</p></div>
 
 <div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/capture-banner.png">
 <p class="cap">그림 6. 캡처 장애 경고 배너(실장애 실측) — connector RUNNING/task FAILED 불일치, 감지 시각·원인·전체 trace·복구 진입</p></div>
 
 <div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/resnapshot.png">
-<p class="cap">그림 7. 단계형 재스냅샷 완료(실장애 복구에 사용된 run) — 유입 차단→잔량 소진→타깃 비우기→재기동→스냅샷(10.5만 행)→go-live</p></div>
+<p class="cap">그림 7. 단계형 재스냅샷 — 시작 전 설정(타깃 비우기 여부·실행 주체). 시작 후 유입 차단→잔량 소진→타깃 비우기→재기동→스냅샷→go-live 단계가 같은 팝업에 순서대로 표시(실장애 복구 run: 10.5만 행·50초)</p></div>
 
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/masked/assist.png">
-<p class="cap">그림 8. AI 진단 위젯(실장애 실측) — dz-source 장애를 도구 자율 호출로 진단: 사용 도구 표시·connect.log 라인 근거 인용·조치 제안</p></div>
+<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/assist.png">
+<p class="cap">그림 8. AI 진단 위젯 — "dz-source 상태 어때? 최근 장애 있었어?"에 도구 자율 호출로 응답: 8월 반복 장애(8회)를 아카이브 로그 보존 기간 &lt; offset 커밋 지연으로 진단, 같은 시점 테이블 lag 상관관계 확인·조치 3건 제안(실측 대화)</p></div>
 
 </body>
 </html>

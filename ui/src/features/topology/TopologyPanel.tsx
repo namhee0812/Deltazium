@@ -246,14 +246,19 @@ export function TopologyPanel({
   const running = connectors ? Object.values(connectors).filter((c) => effectiveState(c) === 'RUNNING').length : 0
   const total = connectors ? Object.keys(connectors).length : 0
 
-  const throughputLast = dashboard && dashboard.throughput.length > 0
-    ? dashboard.throughput[dashboard.throughput.length - 1].publish
+  // 버킷 값은 해상도 구간의 합 — ev/s로 환산해 표기. 마지막 버킷은 미완결이라 제외
+  const bucketSec = { MIN: 60, HOUR: 3600, DAY: 86400 }[period.key]
+  const completeBuckets = dashboard && dashboard.throughput.length > 1
+    ? dashboard.throughput.slice(0, -1)
+    : dashboard?.throughput ?? []
+  const throughputLast = completeBuckets.length > 0
+    ? completeBuckets[completeBuckets.length - 1].publish / bucketSec
     : null
-  const throughputAvg = dashboard && dashboard.throughput.length > 0
-    ? dashboard.throughput.reduce((s, r) => s + r.publish, 0) / dashboard.throughput.length
+  const throughputAvg = completeBuckets.length > 0
+    ? completeBuckets.reduce((s, r) => s + r.publish, 0) / completeBuckets.length / bucketSec
     : null
-  const throughputPeak = dashboard && dashboard.throughput.length > 0
-    ? Math.max(...dashboard.throughput.map((r) => r.publish))
+  const throughputPeak = completeBuckets.length > 0
+    ? Math.max(...completeBuckets.map((r) => r.publish)) / bucketSec
     : null
 
   const lagRows = (tableMetrics ?? [])
@@ -311,7 +316,7 @@ export function TopologyPanel({
             <CardContent className="flex flex-col gap-1.5 py-3.5">
               <div className="text-xs text-ink-2">처리량</div>
               <div className="text-2xl font-semibold leading-tight tracking-tight text-foreground">
-                {throughputLast === null ? '—' : throughputLast.toLocaleString()}
+                {throughputLast === null ? '—' : Math.round(throughputLast).toLocaleString()}
                 <small className="ml-1 text-[13px] font-medium text-ink-3">ev/s</small>
               </div>
               <div className="text-[11.5px] text-ink-3">
