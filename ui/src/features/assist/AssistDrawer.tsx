@@ -195,7 +195,9 @@ export function AssistDrawer({ open, onClose }: AssistDrawerProps) {
             맥락을 함께 적어주세요.
           </p>
         )}
-        <div className="grid gap-3">
+        {/* [&>*]:min-w-0 — grid item의 min-width:auto가 code block 폭만큼 버블을 밀어내
+            drawer 밖으로 넘치는 것 방지 (pre의 overflow-x-auto가 동작하려면 필수) */}
+        <div className="grid gap-3 [&>*]:min-w-0">
           {messages.map((m, i) => (
             <MessageBubble key={i} msg={m} />
           ))}

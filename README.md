@@ -34,7 +34,7 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 | 모듈 | 내용 |
 |---|---|
 | `backend/` | Spring Boot 3 제어면 — DB 연결 저장소(Oracle 연결 테스트), 소스 딕셔너리 조회(와일드카드 전개), 사전 점검(PK·supplemental logging·LogMiner 권한 8종 — 누락 시 DBA GRANT 안내·배포 차단), 컬럼 매핑 검증, 커넥터 템플릿 렌더링·배포(Connect REST), changelog 테이블 사전 생성(JdbcCatalog), 스냅샷 모드 선택, CDC 정지/재개/삭제(offset 정리 포함), DDL 승인 워크플로(schema change topic 상시 소비·비전파성 DDL 자동 무시·타깃 이름 치환), 복구 트리거·정합 검증·go-live 자동 재개, 테이블별 운영 이벤트 이력(커넥터 장애 전이 trace 적재), Kafka 실측 메트릭(offset·lag), AI 진단 어시스턴트(Claude tool use — 읽기 전용 도구 2종: 파이프라인 상태 요약·로그 검색, 근거 강제, prompt caching으로 진단당 ~$0.1). 메타데이터 쿼리는 MyBatis 매퍼 XML |
-| `ui/` | React 19 + TypeScript 콘솔 — 좌측 rail 내비 + 카드 기반 화면(라이트/다크 토큰). 대시보드(KPI 카드·토폴로지 캔버스·주의 필요 목록·처리량/lag 시계열), 6단계 등록 위저드(딕셔너리 조회→컬럼 매핑→사전 점검→배포), 테이블 모니터링(필터 칩·그리드·행 클릭 시 상세 drawer에서 정지/재개/재스냅샷/복구), DDL 타임라인(승인/거부), 운영 이벤트 타임라인, 복구(changelog 현황 + 단계형 실행 drawer), DB 연결 카드(인라인 연결 테스트), AI 진단 플로팅 위젯(SSE 스트리밍·도구 진행 표시·마크다운 답변) |
+| `ui/` | React 19 + TypeScript 콘솔 — 좌측 rail 내비 + 카드 기반 화면(라이트/다크 토큰). 대시보드(KPI 카드·토폴로지 캔버스·주의 필요 목록·처리량/lag 시계열), 6단계 등록 위저드(딕셔너리 조회→컬럼 매핑→사전 점검→배포), 테이블 모니터링(필터 칩·그리드·행 클릭 시 상세 drawer에서 정지/재개/재스냅샷/복구), DDL 타임라인(승인/거부), 운영 이벤트 타임라인, 복구(changelog 현황 + 단계형 실행 drawer), DB 연결 카드(인라인 연결 테스트), AI 진단 drawer(상단 바 아이콘, SSE 스트리밍·도구 진행 표시·마크다운 답변) |
 | `recovery-job/` | 플레인 Java — Iceberg scan(SCN 필터·순서 복원) → envelope 재조립 → 복구 토픽 발행. 왕복 동등성 테스트 |
 | `connectors/` | 커넥터 설정 템플릿 4종 (설정 키 전수 공식 문서 검증) |
 | `deploy/` | 베어메탈 설치·기동·smoke test 스크립트 (멱등), 로그 위치 표준화 |
@@ -88,7 +88,7 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 | ![캡처 장애 배너](docs/images/capture-banner.png) | ![재스냅샷 위저드](docs/images/resnapshot.png) |
 | 캡처 장애 경고 배너 — task FAILED 시 표시. 감지 시각·근본 원인(Caused by)·전체 trace 펼침 + [복구 시작]. connector RUNNING/task FAILED 불일치로 나흘간 숨어 있던 실제 장애를 계기로 추가. 화면은 2026-08-19 실제 장애(LogFileNotFoundException)의 trace를 커넥터 상태 응답에 주입해 재현한 캡처 | 재스냅샷 — 시작 전 설정 화면(타깃 비우기 여부·실행 주체 선택). 시작 후 유입 차단→잔량 소진→타깃 비우기→offset 리셋→초기 스냅샷(notification 실측 행수)→go-live 단계가 같은 팝업에 순서대로 표시. 실제 장애 복구에 사용된 run(10.5만 행, 50초) |
 | ![AI 진단](docs/images/assist.png) | |
-| AI 진단 — 우하단 플로팅 위젯. 질문을 받으면 상태 조회·로그 검색 도구를 스스로 호출해 근거와 함께 답한다(사용 도구는 답변 위에 표시). 화면은 "dz-source 상태 어때? 최근 장애 있었어?"에 대해 8월 반복 장애(총 8회)를 아카이브 로그 보존 기간 문제로 진단하고 같은 시점 테이블 lag 상관관계 확인·조치 3건을 제안한 실측 대화 | |
+| AI 진단 — 상단 바 아이콘으로 여는 우측 drawer. 질문을 받으면 상태 조회·로그 검색 도구를 스스로 호출해 근거와 함께 답한다(사용 도구는 답변 위에 표시). 화면은 "dz-source 상태 어때? 최근 장애 있었어?"에 대해 8월 반복 장애(총 8회)를 아카이브 로그 보존 기간 문제로 진단하고 같은 시점 테이블 lag 상관관계 확인·조치 3건을 제안한 실측 대화 | |
 
 ## 실행
 
