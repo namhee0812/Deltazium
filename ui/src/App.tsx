@@ -33,6 +33,12 @@
  * 26. 08. 29.       | 최남희  | DB 연결 탭 래퍼 폭을 max-w-4xl → max-w-6xl로 확장
  * |                          | (ConnectionsPanel 카드 그리드가 한 줄에 여러 장 배치되도록)
  * --------------------------------------------------
+ * 26. 09. 02.       | 최남희  | AI 진단을 우하단 플로팅 위젯 → 상단 바 아이콘 + 우측 고정
+ * |                          | drawer(AssistDrawer)로 전환. 열림 상태를 이 컴포넌트가 소유해
+ * |                          | prop으로 내려준다(플로팅이 테이블/복구 drawer 하단 액션 바를
+ * |                          | 가리던 문제 해결). 본문 컬럼에 relative 추가 — drawer가 그 안에서
+ * |                          | absolute right-0 top-0 bottom-0으로 겹친다.
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import {
@@ -40,6 +46,7 @@ import {
   Database,
   History,
   LayoutDashboard,
+  MessageCircle,
   Mountain,
   RotateCcw,
   Table2,
@@ -47,7 +54,7 @@ import {
 import { api } from '@/lib/api'
 import { effectiveState } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
-import { AssistWidget } from '@/features/assist/AssistWidget'
+import { AssistDrawer } from '@/features/assist/AssistDrawer'
 import { ConnectionsPanel } from '@/features/connections/ConnectionsPanel'
 import { DdlPanel } from '@/features/ddl/DdlPanel'
 import { EventsPanel } from '@/features/events/EventsPanel'
@@ -81,6 +88,7 @@ function App() {
   const [pendingDdl, setPendingDdl] = useState(0)
   const [wizardOpen, setWizardOpen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [assistOpen, setAssistOpen] = useState(false)
 
   useEffect(() => {
     const load = () =>
@@ -166,14 +174,23 @@ function App() {
         </div>
       </aside>
 
-      {/* 본문 */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      {/* 본문 — relative: AssistDrawer가 이 컬럼 안에서 absolute로 겹친다 */}
+      <div className="relative flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-6">
           <span className="text-[15px] font-semibold">{current.label}</span>
           <span className="text-xs text-ink-3">{current.sub}</span>
           <div className="ml-auto flex items-center gap-2">
             <Button size="sm" onClick={() => setWizardOpen(true)}>
               ＋ CDC 등록
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setAssistOpen((v) => !v)}
+              aria-label="AI 진단"
+              title="AI 진단"
+            >
+              <MessageCircle className="size-4" />
             </Button>
             <ThemeToggle />
             <WarningCenter />
@@ -192,6 +209,8 @@ function App() {
             </div>
           )}
         </main>
+
+        <AssistDrawer open={assistOpen} onClose={() => setAssistOpen(false)} />
       </div>
 
       <RegistrationWizard
@@ -202,8 +221,6 @@ function App() {
           setView('tables')
         }}
       />
-
-      <AssistWidget />
     </div>
   )
 }

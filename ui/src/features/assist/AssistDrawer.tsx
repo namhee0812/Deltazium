@@ -1,12 +1,13 @@
 /**
- * 파일명 : AssistWidget.tsx
+ * 파일명 : AssistDrawer.tsx
  * 작성일자 : 26. 08. 14.
  * 작성자 : 최남희
- * 설명 : AI 진단 채팅 — 우하단 플로팅 위젯(FAB + 패널). 질문을 /api/chat(SSE)로 보내고
- * 도구 진행 상황·최종 답변을 표시한다. 대화 히스토리는 화면 표시용일 뿐 서버에는 매번
- * 단일 질문만 보낸다(서버는 턴마다 독립 — ChatService 참고). App.tsx 최상위에 탭 조건부
- * 밖에서 항상 마운트되므로, 열림/닫힘·확장은 표시 토글일 뿐 대화 상태(및 진행 중인
- * 스트리밍)는 패널을 닫아도 유지된다.
+ * 설명 : AI 진단 채팅 — 우측 고정 drawer(440/720px, 마스크 없음·비차단). 질문을
+ * /api/chat(SSE)로 보내고 도구 진행 상황·최종 답변을 표시한다. 대화 히스토리는 화면
+ * 표시용일 뿐 서버에는 매번 단일 질문만 보낸다(서버는 턴마다 독립 — ChatService 참고).
+ * App.tsx 최상위에 탭 조건부 밖에서 항상 마운트되므로(열림 상태는 App이 소유해 prop으로
+ * 내려받고, 닫힘 시에도 이 컴포넌트 자체는 계속 마운트돼 있다), 열림/닫힘·폭 확장은
+ * 표시 토글일 뿐 대화 상태(및 진행 중인 스트리밍)는 drawer를 닫아도 유지된다.
  *
  * 수정 내역
  * --------------------------------------------------
@@ -14,9 +15,14 @@
  * --------------------------------------------------
  * 26. 08. 14.       | 최남희  | 최초 생성 (구 AssistPanel.tsx의 상단 탭 채팅을 흡수해 플로팅 위젯으로 전환)
  * --------------------------------------------------
+ * 26. 09. 02.       | 최남희  | 우하단 플로팅 FAB+패널 → 상단 바 아이콘 트리거 + 우측 고정
+ * |                          | drawer(절대 위치, 440/720px)로 전환. 열림 상태를 App.tsx로
+ * |                          | 옮겨 open/onClose prop으로 제어(FAB가 상단 바 버튼으로 이동했으므로).
+ * |                          | 플로팅 상태의 테이블/복구 drawer 하단 액션 바 가림 문제 해결.
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Maximize2, MessageCircle, Minimize2, X } from 'lucide-react'
+import { Loader2, Maximize2, Minimize2, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
@@ -110,8 +116,12 @@ function MessageBubble({ msg }: { msg: Message }) {
   )
 }
 
-export function AssistWidget() {
-  const [open, setOpen] = useState(false)
+interface AssistDrawerProps {
+  open: boolean
+  onClose: () => void
+}
+
+export function AssistDrawer({ open, onClose }: AssistDrawerProps) {
   const [expanded, setExpanded] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -154,39 +164,27 @@ export function AssistWidget() {
     })
   }, [input, busy])
 
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        aria-label="AI 진단 열기"
-        className="fixed right-6 bottom-6 z-50 flex size-14 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-lg transition-transform hover:scale-105"
-      >
-        <MessageCircle className="size-6" />
-      </button>
-    )
-  }
+  if (!open) return null
 
   return (
     <div
-      className={`fixed right-6 bottom-6 z-50 flex flex-col rounded-xl border border-border bg-card shadow-2xl transition-[width] ${
-        expanded ? 'w-[720px]' : 'w-[420px]'
+      className={`absolute top-0 right-0 bottom-0 z-40 flex flex-col border-l border-border bg-background shadow-[-12px_0_32px_rgba(16,24,40,.12)] transition-[width] ${
+        expanded ? 'w-[720px]' : 'w-[440px]'
       }`}
-      style={{ height: 'min(70vh, 640px)' }}
     >
-      <div className="flex items-center gap-1 border-b border-border px-4 py-2.5">
-        <span className="text-sm font-semibold">AI 진단</span>
+      <div className="flex items-center gap-1 bg-rail px-5 py-3.5 text-rail-ink">
+        <span className="text-[15px] font-semibold">AI 진단</span>
         <div className="ml-auto flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          <button
+            className="text-rail-ink-2 hover:text-rail-ink"
             onClick={() => setExpanded((v) => !v)}
-            aria-label={expanded ? '축소' : '확장'}
+            title={expanded ? '축소' : '확장'}
           >
             {expanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-          </Button>
-          <Button variant="ghost" size="icon-sm" onClick={() => setOpen(false)} aria-label="닫기">
-            <X className="size-4" />
-          </Button>
+          </button>
+          <button className="text-rail-ink-2 hover:text-rail-ink" onClick={onClose} title="닫기">
+            <X className="size-4.5" />
+          </button>
         </div>
       </div>
 
@@ -211,7 +209,7 @@ export function AssistWidget() {
         <div ref={endRef} />
       </div>
 
-      <div className="flex gap-2 border-t border-border p-3">
+      <div className="flex gap-2 border-t border-border bg-surface-2 p-3">
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
