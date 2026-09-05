@@ -7,7 +7,7 @@
 |---|---|---|
 | source.json.tmpl | Debezium Oracle source | SRC 캡처. `table.include.list` = 등록 테이블 목록 |
 | jdbc-sink.json.tmpl | Debezium JDBC sink | 실 적재 (PK upsert 멱등 + delete) |
-| iceberg-sink.json.tmpl | Apache Iceberg sink | changelog append 적재 |
+| iceberg-sink.json.tmpl | Apache Iceberg sink | changelog append 적재 (소스별 인스턴스 1개 — 4절) |
 | recovery-sink.json.tmpl | Debezium JDBC sink | jdbc-sink와 동일 설정, 구독 토픽만 복구 토픽. 평시 정지 |
 
 ## 확정 선택의 근거
@@ -28,14 +28,23 @@
 - `iceberg.tables.auto-create-enabled=false`: changelog 테이블 스키마는 5절에 고정 —
   테이블은 backend가 명시 스키마로 생성하고 sink는 append만 한다.
 - `iceberg.control.commit.interval-ms=60000`: 기본 5분은 토이 검증 피드백에 너무 길다.
+- `transforms.pos`(`org.apache.iceberg.connect.transforms.KafkaMetadataTransform`, **2026-09-05
+  추가** — 다중 소스·다중 타깃 ① changelog 중립 계약, architecture.md 5.1절): `field_name=_pos`,
+  `nested=true`로 레코드 최상위에 `_pos {topic, partition, offset, timestamp}` struct를 부착.
+  클래스명·설정 키(`field_name`/`nested`)는 커넥터 플러그인 jar(iceberg-kafka-connect-transforms)를
+  `unzip -l`·`javap`로 직접 확인한 것(공식 문서에 설정 키가 명확히 나열돼 있지 않음).
+- `iceberg.tables.route-field=_pos.topic` (**2026-09-05 변경, 종전 `source.table`**): 토픽 이름
+  기준 라우팅으로 전환 — 동명 테이블이 다른 스키마에 있어도(=다른 토픽) 충돌하지 않는다.
+  라우팅과 위치 컬럼 부착을 같은 SMT(`transforms.pos`)가 제공한다.
 
 ## 미결 (마일스톤 2·3에서 실배선으로 확정)
 
 1. ~~envelope → changelog 스키마 변환~~ **해소(2026-07-26)**: 5.1절을 envelope-as-is로 개정.
    changelog 테이블은 backend가 사전 생성(기본 골격 + `truncate(source.ts_ms, 1일)` 파티션),
    sink는 `evolve-schema-enabled=true`로 before/after를 첫 레코드에서 채운다.
-   라우팅: 단일 iceberg-sink + `route-field=source.table` + 테이블별 route-regex
-   (동명 테이블의 스키마 간 동시 등록은 등록 시점 거부).
+   라우팅: **2026-09-05 개정** — 소스별 iceberg-sink 인스턴스(`dz-iceberg-<prefix>`) +
+   `route-field=_pos.topic` + 테이블별 route-regex(토픽 이름 정확 일치,
+   `^<prefix>\.<SCHEMA>\.<TABLE>$`). 종전 `route-field=source.table`의 동명 테이블 제약 해소.
    **주의: JdbcCatalog는 catalog_name으로 스코핑 — backend와 sink 모두 "iceberg" 이름 사용.**
 2. ~~jdbc-sink 토픽→타깃 테이블 매핑~~ **확정(2026-07-25)**: RegexRouter로 토픽명에서
    `<prefix>.<schema>.` 접두를 제거해 테이블명만 남기고, apply는 **TARGET 연결 계정의
