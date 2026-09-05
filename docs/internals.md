@@ -119,6 +119,66 @@ Kafka Connect는 connector 상태와 task 상태가 분리돼 있고, **가장 �
 **문자열 리터럴 안의 테이블명은 구분하지 못한다** — 정확한 해법은 파서(ANTLR,
 Debezium ddl-parser)이고 현재 범위 밖으로 선언.
 
+## changelog `_pos` 위치 컬럼 도입 (다중 소스·다중 타깃 ①, 2026-09-05)
+
+architecture.md 5.1·6.2절 확정 사항의 구현 판단 기록. 설계 자체(왜 `_pos`가 필요한가,
+장기 트랜잭션에서 scn 정렬이 왜 틀리는가)는 architecture.md에 있으므로 여기는 "어떻게
+구현했는가"만 남긴다.
+
+**SMT 구조를 그대로 채택한 이유.** `_pos` struct(`topic`/`partition`/`offset`/`timestamp`)는
+Iceberg Kafka Connect의 `KafkaMetadataTransform`(`field_name=_pos`, `nested=true`)이 부착하는
+구조 그대로다. 커스텀 SMT를 만들지 않은 이유: ① 데이터 경로는 기성 커넥터·SMT만 쓴다는
+절대 규칙, ② 이 SMT가 이미 topic/partition/offset/timestamp 네 필드를 구조체 하나로 묶어
+주고, 그중 `topic`이 라우팅 키로도 재사용 가능해 "위치 부착"과 "라우팅"을 SMT 하나로
+해결한다. 클래스명(`org.apache.iceberg.connect.transforms.KafkaMetadataTransform`)과 설정
+키(`field_name`, `nested`)는 공식 문서에 나열돼 있지 않아 커넥터 플러그인 jar를
+`unzip -l`·`javap -p -c`로 직접 확인했다 (문자열 상수 `field_name`/`nested`/`external_field`,
+`Transformation<SinkRecord>` 구현 확인 — 표준 Kafka Connect SMT 설정 규약을 그대로 따른다).
+
+**라우팅을 `source.table`에서 `_pos.topic`으로 바꾼 이유.** 종전 `route-field=source.table`은
+테이블명만 보고 라우팅해 같은 이름의 테이블이 다른 스키마에 있으면 충돌했다(등록 시점에
+`existsTableNameInOtherSchema`로 거부하던 이유). `_pos.topic`은 `<prefix>.<schema>.<table>`
+전체를 담고 있어 스키마까지 구분되므로, 이 제약을 등록 검증에서 완전히 제거했다
+(`RegistrationService.validateTable`에서 해당 체크·리포지토리 메서드·매퍼 쿼리를 삭제).
+route-regex는 테이블명 정규식(`^T1$`) 대신 토픽 이름 정확 일치(`^\Q<prefix>.<schema>.<table>\E$`,
+`Pattern.quote`로 이스케이프)로 바뀐다.
+
+**namespace를 설정값에서 계산값으로 바꾼 이유.** `IcebergProperties.namespace`(고정 설정)를
+없애고 `ChangelogTableService`가 `deltazium.topic-prefix`에서 `changelog_<prefix>`(소문자)를
+계산하도록 옮겼다. 소스가 하나뿐인 지금은 결과가 같지만(`changelog_dz`), 다중 소스(②
+마일스톤)에서 소스별 namespace가 정말 갈릴 때 설정 파일에 소스 수만큼 항목을 늘리지
+않고도 자연히 분리되게 하기 위함 — topic.prefix가 이미 소스 식별자다(2.2절).
+
+**복구 스캔의 "한 파티션 앞" lookback을 정밀 절단 없이 구현한 이유.** recovery-job은 진입
+시각을 `truncate(ts_ms, 86400000)` 파티션 경계로 스냅한 뒤 한 파티션 앞(`lookbackBoundary`)부터
+`Expressions.greaterThanOrEqual("source.ts_ms", scanFromTsMs)`로 스캔하고, 그 이후 나오는
+모든 행을 재생 대상으로 삼는다 — 진입 시각 이후만 골라내는 정밀 필터를 추가로 두지 않았다.
+이유: ① 정밀 절단은 "장기 트랜잭션에서 커밋 순서와 어긋난다"는 근본 문제를 근처에서 다시
+만든다(어느 컬럼으로 절단해도 결국 소스 전용 위치나 근사치에 의존하게 됨). ② PK upsert
+멱등이 전제라 여분의 재생은 안전하고(6.2절), 파티션 폭(1일)만큼의 과다 재생은 토이 볼륨
+전제에서 비용이 크지 않다. 파티션 폭 상수(`PARTITION_WIDTH_MS`)는 backend의
+`ChangelogTableService`와 recovery-job에 각각 정의돼 있다 — recovery-job은 backend에
+의존하지 않는 플레인 Java 모듈이라는 절대 규칙 때문에 상수를 공유할 수 없어 중복
+정의했다(두 값이 어긋나면 파티션 프루닝이 깨지므로 상수 옆에 상호 참조 주석을 남겼다).
+
+**재조립에서 `_pos`를 제외하는 방식.** `ConnectJsonAssembler`의 `structSchema`/`structPayload`가
+struct를 순회할 때 필드명이 `_pos`면 건너뛴다 — 원본 Debezium envelope에는 없던,
+파이프라인이 나중에 붙인 필드라서다. 이 필터는 이름 기준이라 재귀적으로 적용되지만, `_pos`가
+envelope의 다른 위치(before/after/source 내부)에 나타날 일이 없어 문제가 없다.
+
+**rule-check.sh의 소스 전용 위치 필드 차단.** `source.scn`·`txId`·`commit_scn`·`lsn`을
+`getField(...)`/`get(...)`/`path(...)`로 "읽는" 호출 형태만 grep으로 잡는다 — envelope
+스키마 선언(`NestedField.optional(id, "scn", ...)`, 패스스루 보존용, 5.1절 설계 불변식 2가
+명시적으로 허용)과 실제 값 참조를 텍스트만으로 구분하기 위한 최소한의 장치다. 값 참조와
+스키마 선언은 코드상 호출 형태가 다르므로(`.getField("scn")` vs `NestedField.optional(N,
+"scn", ...)`) 이 구분이 grep 수준에서도 안정적으로 성립한다. 검사 범위는
+`recovery-job/src/main` 전체와 `backend`의 `recovery`·`iceberg` 패키지 — DDL 워크플로
+(`backend/src/main/java/io/deltazium/backend/ddl`)는 스키마 변경 이벤트의 SCN을 사용자에게
+참고 표시하는 별개 용도(7절)라 검사 범위 밖이다. UI 참고 텍스트용으로 changelog·복구
+경로 안에서 소스 위치를 뽑아야 할 일이 생기면, 그 줄에
+`// rule-check-allow: source-position-reference` 주석과 사유를 남기고 예외로 둔다 — 2026-09-05
+시점에는 그런 코드가 없어 화이트리스트가 비어 있다.
+
 ## AI 진단 어시스턴트 로그 검색 (assist 패키지)
 
 `GET /api/assist/logs` 하나. **UI용 API와 같은 컨트롤러에 얹지 않고 `io.deltazium.backend.assist`
