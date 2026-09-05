@@ -10,6 +10,10 @@
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | 스냅샷 모드 설명 문구에서 "SCN" 표현 제거 — 복구 진입점이
+ * |                          | SCN에서 시각으로 전환됨(architecture.md 6.2절). 배포 요약의
+ * |                          | dz-iceberg-sink 표기도 dz-iceberg-dz(소스별 인스턴스명)로 갱신
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
@@ -676,7 +680,7 @@ export function RegistrationWizard({
                         <b className="text-[13px]">초기적재 포함 (initial)</b>
                         <span className="block text-xs text-muted-foreground">
                           현재 데이터 전체를 스냅샷으로 적재한 뒤 실시간 CDC로 전환합니다.
-                          changelog에 초기 상태(op='r')까지 남아 SCN 0부터 전체 복원이 가능합니다.
+                          changelog에 초기 상태(op='r')까지 남아 처음부터 전체 복원이 가능합니다.
                         </span>
                       </span>
                     </label>
@@ -694,7 +698,7 @@ export function RegistrationWizard({
                           일괄적재로 맞추는 경우에 사용하세요.
                         </span>
                         <span className="block text-xs text-warn">
-                          ⚠ changelog에 초기 상태가 없으므로 SCN 재발행 복구 범위가 CDC 시작
+                          ⚠ changelog에 초기 상태가 없으므로 재발행 복구 범위가 CDC 시작
                           시점 이후로 제한됩니다.
                         </span>
                       </span>
@@ -718,7 +722,7 @@ export function RegistrationWizard({
                   {connections.find((c) => c.id === targetId)?.name}
                 </div>
                 <div className="text-muted-foreground">
-                  커넥터: dz-source · 테이블별 dz-jdbc-sink-* · dz-iceberg-sink(changelog)
+                  커넥터: dz-source · 테이블별 dz-jdbc-sink-* · dz-iceberg-dz(changelog)
                 </div>
               </div>
               {renameCount > 0 && (

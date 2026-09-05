@@ -38,6 +38,9 @@
  * |                          | 삭제)을 drawer 하단 액션 바로 이전, drawer는 changelog·events API를
  * |                          | 재사용해 상태 kv·15분 lag 추이·최근 이벤트를 보여준다.
  * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | changelog 삭제 경고 문구의 "SCN 재발행 복구" → "시각 재발행
+ * |                          | 복구" — 복구 진입점이 SCN에서 시각으로 전환됨(architecture.md 6.2절)
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -613,7 +616,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
             <span>
               changelog(S3/Iceberg) 데이터까지 삭제
               <span className="block text-xs text-crit">
-                복구 원본이 사라집니다 — 이 테이블은 더 이상 SCN 재발행 복구를 할 수 없습니다.
+                복구 원본이 사라집니다 — 이 테이블은 더 이상 시각 재발행 복구를 할 수 없습니다.
                 해제하면 changelog는 보존됩니다(기본).
               </span>
             </span>

@@ -26,6 +26,10 @@
  * |                          | 전면 재구성, 신규 backend API 없이 기존 /api/metrics/tables·
  * |                          | /api/ddl-events를 이 화면에서도 폴링해 KPI를 구성한다.
  * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | iceberg-sink 커넥터명을 dz-iceberg-sink에서 dz-iceberg-dz로 —
+ * |                          | 소스별 인스턴스 전환(dz-iceberg-<prefix>)에 따름. dz-source와
+ * |                          | 마찬가지로 topic-prefix=dz를 그대로 가정한다(단일 소스 전제)
+ * --------------------------------------------------
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
@@ -208,9 +212,9 @@ export function TopologyPanel({
         status: target ? 'ok' : 'none',
       },
       icebergSink: {
-        label: 'dz-iceberg-sink',
+        label: 'dz-iceberg-dz',
         sub: 'append-only changelog',
-        status: connectorStatus(connectors, 'dz-iceberg-sink'),
+        status: connectorStatus(connectors, 'dz-iceberg-dz'),
       },
       iceberg: {
         label: 'Iceberg / MinIO',
