@@ -2,7 +2,7 @@
  * 파일명 : RecoveryPanel.tsx
  * 작성일자 : 26. 07. 29.
  * 작성자 : 최남희
- * 설명 : 복구 화면 — changelog(S3) 현황, SCN 재발행 트리거, go-live 자동 재개, 정합 검증.
+ * 설명 : 복구 화면 — changelog(S3) 현황, 시각 지정 재발행 트리거, go-live 자동 재개, 정합 검증.
  *
  * 수정 내역
  * --------------------------------------------------
@@ -17,6 +17,11 @@
  * |                          | SCN 모드만 활성화하고 시점/전체 changelog 모드는 "준비 중"으로
  * |                          | 비활성 표시(신규 API 없이는 구현할 수 없어 임의 추가하지 않음).
  * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | 다중 소스·다중 타깃 ① changelog 중립 계약: 복구 진입점을
+ * |                          | SCN 입력에서 시각(datetime-local) 입력으로 전환 — backend API
+ * |                          | 필드가 fromScn(long)에서 fromTimeMs(epoch millis)로 바뀜에 따름
+ * |                          | (architecture.md 6.2절). SCN은 더 이상 UI에서 쓰지 않는다.
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useState } from 'react'
 import { X } from 'lucide-react'
@@ -27,7 +32,7 @@ import { Input } from '@/components/ui/input'
 import { StatusPill } from '@/components/ui/status-pill'
 import type { StatusPillVariant } from '@/components/ui/status-pill'
 
-/* 복구 (architecture.md 6절) — SCN 지정 재발행 트리거 + 정합 검증(행수·체크섬).
+/* 복구 (architecture.md 6절) — 시각 지정 재발행 트리거 + 정합 검증(행수·체크섬).
    recovery-job은 재발행까지만, apply는 recovery-sink(live와 동일 설정)가 담당 */
 
 interface RegisteredTable {
@@ -39,13 +44,15 @@ interface RegisteredTable {
 interface RecoveryRun {
   id: number
   table: string
-  fromScn: number
+  fromTimeMs: number
   status: 'RUNNING' | 'DONE' | 'APPLIED' | 'LIVE' | 'FAILED'
   published: number
   skipped: number
   logPath: string
   startedAt: string
 }
+
+const fmtTime = (ms: number) => new Date(ms).toLocaleString('sv-SE').slice(0, 16)
 
 interface VerifyResult {
   sourceCount: number
@@ -98,7 +105,7 @@ const statusLabel: Record<RecoveryRun['status'], string> = {
 export function RecoveryPanel() {
   const [tables, setTables] = useState<RegisteredTable[]>([])
   const [selected, setSelected] = useState<string>('')
-  const [fromScn, setFromScn] = useState('')
+  const [fromTime, setFromTime] = useState('')
   const [autoResume, setAutoResume] = useState(true)
   const [runs, setRuns] = useState<RecoveryRun[]>([])
   const [verify, setVerify] = useState<VerifyResult | null>(null)
@@ -143,11 +150,12 @@ export function RecoveryPanel() {
 
   const trigger = () =>
     run(async () => {
+      const fromTimeMs = new Date(fromTime).getTime()
       await api('/api/recovery', {
         method: 'POST',
         body: JSON.stringify({
           registeredTableId: Number(selected),
-          fromScn: Number(fromScn),
+          fromTimeMs,
           autoResume,
         }),
       })
@@ -259,7 +267,7 @@ export function RecoveryPanel() {
               {runs.map((r) => (
                 <div key={r.id} className="flex flex-wrap items-center gap-3 rounded-md border border-border px-3.5 py-2.5">
                   <span className="font-mono text-[12.5px] font-semibold">{r.table}</span>
-                  <span className="font-mono text-[11px] text-ink-3">from SCN {r.fromScn}</span>
+                  <span className="font-mono text-[11px] text-ink-3">from {fmtTime(r.fromTimeMs)}</span>
                   <StatusPill variant={STATUS_VARIANT[r.status]}>{statusLabel[r.status] ?? r.status}</StatusPill>
                   {r.status !== 'RUNNING' && (
                     <span className="font-mono text-[11px] text-ink-3">
@@ -281,8 +289,8 @@ export function RecoveryPanel() {
           tables={tables}
           selected={selected}
           setSelected={setSelected}
-          fromScn={fromScn}
-          setFromScn={setFromScn}
+          fromTime={fromTime}
+          setFromTime={setFromTime}
           autoResume={autoResume}
           setAutoResume={setAutoResume}
           selectedTable={selectedTable}
@@ -299,14 +307,14 @@ export function RecoveryPanel() {
 }
 
 /* 복구 실행 drawer — RecoveryDrawer.dc.html 구조(진한 헤더·단계 카드 3개·실행 요약·
-   하단 실행 바)를 그대로 이식. 재발행 범위는 backend가 지원하는 SCN 모드만 활성화한다 —
-   시점(timestamp)·전체 changelog 모드는 SCN 환산 API가 없어 "준비 중"으로 비활성 표시. */
+   하단 실행 바)를 그대로 이식. 재발행 범위는 backend가 지원하는 진입 시각 모드만
+   활성화한다 — 전체 changelog 모드는 API가 없어 "준비 중"으로 비활성 표시. */
 function RecoveryDrawer({
   tables,
   selected,
   setSelected,
-  fromScn,
-  setFromScn,
+  fromTime,
+  setFromTime,
   autoResume,
   setAutoResume,
   selectedTable,
@@ -320,8 +328,8 @@ function RecoveryDrawer({
   tables: RegisteredTable[]
   selected: string
   setSelected: (v: string) => void
-  fromScn: string
-  setFromScn: (v: string) => void
+  fromTime: string
+  setFromTime: (v: string) => void
   autoResume: boolean
   setAutoResume: (v: boolean) => void
   selectedTable: RegisteredTable | undefined
@@ -332,7 +340,7 @@ function RecoveryDrawer({
   verify: VerifyResult | null
   onClose: () => void
 }) {
-  const canTrigger = !!selected && !!fromScn && !busy
+  const canTrigger = !!selected && !!fromTime && !busy
 
   return (
     <div className="flex w-[480px] shrink-0 flex-col border-l border-border bg-background shadow-[-12px_0_32px_rgba(16,24,40,.12)]">
@@ -381,14 +389,11 @@ function RecoveryDrawer({
         <div className="mb-3 rounded-lg border border-border bg-card shadow-[var(--shadow-card)]">
           <div className="flex items-center gap-2 border-l-4 border-l-primary bg-surface-2 px-3.5 py-2.5">
             <span className="text-[13.5px] font-bold">2 · 재발행 범위</span>
-            <span className="ml-auto text-[11px] font-semibold text-ink-3">SCN 범위</span>
+            <span className="ml-auto text-[11px] font-semibold text-ink-3">진입 시각</span>
           </div>
           <div className="flex flex-wrap items-center gap-1.5 px-3.5 pt-2.5">
             <span className="inline-flex items-center rounded-full border border-primary bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground">
-              SCN 범위
-            </span>
-            <span className="inline-flex cursor-not-allowed items-center rounded-full border border-line-2 px-3 py-1 text-xs font-semibold text-ink-3 opacity-45" title="아직 지원하지 않음">
-              시점 (timestamp)
+              진입 시각
             </span>
             <span className="inline-flex cursor-not-allowed items-center rounded-full border border-line-2 px-3 py-1 text-xs font-semibold text-ink-3 opacity-45" title="아직 지원하지 않음">
               전체 changelog
@@ -398,12 +403,12 @@ function RecoveryDrawer({
             <div className="flex items-center gap-2 text-xs">
               <span className="w-9 text-ink-3">from</span>
               <Input
-                value={fromScn}
-                onChange={(e) => setFromScn(e.target.value.replace(/[^0-9]/g, ''))}
-                placeholder="시작 SCN"
-                className="w-40 font-mono"
+                type="datetime-local"
+                value={fromTime}
+                onChange={(e) => setFromTime(e.target.value)}
+                className="w-56 font-mono"
               />
-              <span className="text-ink-3">이 값부터 재발행</span>
+              <span className="text-ink-3">이 시각부터 재발행</span>
             </div>
             <label className="flex cursor-pointer items-start gap-2 pt-1 text-xs">
               <input
@@ -453,18 +458,20 @@ function RecoveryDrawer({
       {/* 실행 요약 */}
       <div className="max-h-[150px] overflow-auto border-t border-border bg-card px-4 py-2.5">
         <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-3">실행 요약</div>
-        {selectedTable && fromScn ? (
+        {selectedTable && fromTime ? (
           <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[12.5px]">
             <span className="whitespace-nowrap text-foreground">
               <span className="font-mono text-[11px] text-ink-3">{selectedTable.schemaName}</span>{' '}
               {selectedTable.tableName}
             </span>
-            <span className="text-ink-2">SCN {fromScn} → 현재{autoResume ? ' · go-live 자동 재개' : ''}</span>
+            <span className="text-ink-2">
+              {fromTime.replace('T', ' ')} → 현재{autoResume ? ' · go-live 자동 재개' : ''}
+            </span>
             <span className="text-ink-3">복구 토픽</span>
             <span className="font-mono text-[12px] text-ink-2">recovery-sink (동일 JDBC 설정)</span>
           </div>
         ) : (
-          <p className="text-xs text-ink-3">대상 테이블과 시작 SCN을 지정하세요.</p>
+          <p className="text-xs text-ink-3">대상 테이블과 시작 시각을 지정하세요.</p>
         )}
       </div>
 

@@ -18,6 +18,9 @@ import org.apache.ibatis.annotations.Param;
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | countTableNameInOtherSchema 제거 — route-field가 토픽 이름
+ * |                          | 기준(_pos.topic)으로 바뀌어 동명 테이블 제약이 해소됨(5.1절)
+ * --------------------------------------------------
  */
 @Mapper
 public interface RegisteredTableRepository {
@@ -28,13 +31,6 @@ public interface RegisteredTableRepository {
 
     default boolean exists(String schema, String table) {
         return countBySchemaAndTable(schema, table) > 0;
-    }
-
-    /** 다른 스키마에 같은 이름의 테이블이 있는지 — iceberg route-field(source.table) 충돌 검사용 */
-    int countTableNameInOtherSchema(@Param("schema") String schema, @Param("table") String table);
-
-    default boolean existsTableNameInOtherSchema(String schema, String table) {
-        return countTableNameInOtherSchema(schema, table) > 0;
     }
 
     class InsertRow {

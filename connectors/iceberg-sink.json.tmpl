@@ -6,6 +6,11 @@
 
     "topics": "{{topics}}",
 
+    "transforms": "pos",
+    "transforms.pos.type": "org.apache.iceberg.connect.transforms.KafkaMetadataTransform",
+    "transforms.pos.field_name": "_pos",
+    "transforms.pos.nested": "true",
+
     "iceberg.catalog.catalog-impl": "org.apache.iceberg.jdbc.JdbcCatalog",
     "iceberg.catalog.uri": "{{catalog_jdbc_url}}",
     "iceberg.catalog.jdbc.user": "{{catalog_jdbc_user}}",
@@ -20,7 +25,7 @@
     "iceberg.catalog.client.region": "us-east-1",
 
     "iceberg.tables": "{{iceberg_tables}}",
-    "iceberg.tables.route-field": "source.table",
+    "iceberg.tables.route-field": "_pos.topic",
     "iceberg.tables.auto-create-enabled": "false",
     "iceberg.tables.evolve-schema-enabled": "true",
 

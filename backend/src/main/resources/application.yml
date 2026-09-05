@@ -35,7 +35,8 @@ deltazium:
     s3-endpoint: http://localhost:9010
     s3-access-key: deltazium
     s3-secret-key: deltazium123
-    namespace: changelog
+    # namespace는 설정하지 않는다 — ChangelogTableService가 topic-prefix에서
+    # changelog_<prefix>로 계산한다 (다중 소스 대응, architecture.md 5.1절)
   assist:
     # AI 진단 어시스턴트 로그 검색 루트 — 인프라 전 컴포넌트 로그를 읽는다.
     # recovery.log-dir(복구 잡 출력 경로)과 용도가 다르므로 분리한다.

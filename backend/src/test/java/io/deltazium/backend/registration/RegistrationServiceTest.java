@@ -56,6 +56,10 @@ import static org.mockito.Mockito.when;
  * --------------------------------------------------
  * 26. 08. 05.       | 최남희  | resnapshot 테스트를 ResnapshotOrchestratorTest로 이관
  * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | 다중 소스·다중 타깃 ①: iceberg-sink 커넥터명·route-regex를
+ * |                          | 소스별 인스턴스·토픽 이름 정확 일치 기준으로 갱신, 동명 테이블
+ * |                          | 거부 테스트를 성공 케이스로 전환 (5.1절 제약 해소)
+ * --------------------------------------------------
  */
 @EnableConfigurationProperties(IcebergProperties.class)
 class RegistrationServiceTest {
@@ -233,14 +237,16 @@ class RegistrationServiceTest {
     }
 
     @Test
-    void 다른_스키마의_동명_테이블은_라우팅_충돌로_거부() {
+    void 다른_스키마의_동명_테이블도_등록된다() {
+        // route-field가 토픽 이름 기준(_pos.topic)으로 바뀌며 동명 테이블 제약이 해소됨 (5.1절)
         mockTable("CDC.T1", true, true);
         service.register(srcId, tgtId, List.of(spec("CDC.T1")));
 
         mockTable("HR.T1", true, true);
-        assertThatThrownBy(() -> service.register(srcId, tgtId, List.of(spec("HR.T1"))))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("라우팅");
+        List<RegisteredTable> result = service.register(srcId, tgtId, List.of(spec("HR.T1")));
+
+        assertThat(result).extracting(RegisteredTable::qualified)
+                .contains("CDC.T1", "HR.T1");
     }
 
     @Test
@@ -313,7 +319,7 @@ class RegistrationServiceTest {
 
         assertThat(remaining).isEmpty();
         verify(deploy).deleteConnector("dz-source");
-        verify(deploy).deleteConnector("dz-iceberg-sink");
+        verify(deploy).deleteConnector("dz-iceberg-dz");
         verify(changelog).dropChangelogTable("CDC", "T1", true);
     }
 
@@ -327,9 +333,12 @@ class RegistrationServiceTest {
         ArgumentCaptor<Map<String, String>> vars = ArgumentCaptor.forClass(Map.class);
         ArgumentCaptor<Map<String, String>> extra = ArgumentCaptor.forClass(Map.class);
         verify(deploy).deploy(eq("iceberg-sink"), vars.capture(), extra.capture());
-        assertThat(vars.getValue()).containsEntry("iceberg_tables", "changelog.cdc_t1");
+        assertThat(vars.getValue())
+                .containsEntry("connector_name", "dz-iceberg-dz")
+                .containsEntry("iceberg_tables", "changelog.cdc_t1");
+        // route-regex는 토픽 이름 정확 일치 (5.1절) — 테이블명만 보던 종전 방식에서 전환
         assertThat(extra.getValue())
-                .containsEntry("iceberg.table.changelog.cdc_t1.route-regex", "^T1$");
+                .containsEntry("iceberg.table.changelog.cdc_t1.route-regex", "^\\Qdz.CDC.T1\\E$");
     }
 
 }
