@@ -20,6 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | 복구 커맨드 인자를 from-scn에서 from-ts-ms로 전환 (6.2절)
+ * --------------------------------------------------
  */
 class RecoveryServiceTest {
 
@@ -36,19 +38,19 @@ class RecoveryServiceTest {
     void 복구_커맨드에_카탈로그와_재생_인자가_전부_들어간다() {
         var iceberg = new io.deltazium.backend.iceberg.IcebergProperties(
                 "jdbc:postgresql://localhost:5433/iceberg_catalog", "u", "p",
-                "s3://wh/warehouse", "http://localhost:9010", "ak", "sk", "changelog");
-        var changelog = new io.deltazium.backend.iceberg.ChangelogTableService(iceberg);
+                "s3://wh/warehouse", "http://localhost:9010", "ak", "sk");
+        var changelog = new io.deltazium.backend.iceberg.ChangelogTableService(iceberg, "dz");
         RecoveryService service = new RecoveryService(null, null, null, null, null,
                 changelog, iceberg, null, null, "localhost:9092", "/opt/recovery-job/bin/recovery-job", "/tmp");
 
         RegisteredTable table = new RegisteredTable(1L, "CDC", "AUTO_100", 1, 2, null, null);
-        List<String> cmd = service.buildCommand(table, 31066101955L,
+        List<String> cmd = service.buildCommand(table, 1753300000000L,
                 List.of("ID"), "dz-recovery.cdc_auto_100", "/tmp/x.log");
 
         assertThat(cmd.get(0)).isEqualTo("/opt/recovery-job/bin/recovery-job");
         assertThat(cmd).contains(
-                "table=changelog.cdc_auto_100",
-                "from-scn=31066101955",
+                "table=changelog_dz.cdc_auto_100",
+                "from-ts-ms=1753300000000",
                 "key-columns=ID",
                 "topic=dz-recovery.cdc_auto_100",
                 "bootstrap=localhost:9092",

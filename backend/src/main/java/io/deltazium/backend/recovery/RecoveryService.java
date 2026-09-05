@@ -5,6 +5,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -49,11 +50,15 @@ import org.springframework.stereotype.Service;
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | 복구 진입점을 SCN에서 시각(epoch millis)으로 전환 — recovery-job은
+ * |                          | ts_ms 파티션 한 칸 앞부터 스캔해 `_pos` 순서로 재생한다 (5.2·6.2절)
+ * --------------------------------------------------
  */
 @Service
 public class RecoveryService {
 
-    public record RecoveryRun(long id, String table, long fromScn, String status,
+    /** @param fromTimeMs 복구 진입 시각 (epoch millis) */
+    public record RecoveryRun(long id, String table, long fromTimeMs, String status,
                               long published, long skipped, String logPath,
                               LocalDateTime startedAt, boolean autoResume) {
     }
@@ -112,12 +117,17 @@ public class RecoveryService {
                 .sorted((a, b) -> Long.compare(b.id(), a.id())).toList();
     }
 
-    public RecoveryRun trigger(long registeredTableId, long fromScn) {
-        return trigger(registeredTableId, fromScn, false);
+    public RecoveryRun trigger(long registeredTableId, long fromTimeMs) {
+        return trigger(registeredTableId, fromTimeMs, false);
     }
 
-    /** @param autoResume true면 복구 apply 완료 감지 후 해당 테이블 jdbc-sink를 자동 재개 (go-live) */
-    public RecoveryRun trigger(long registeredTableId, long fromScn, boolean autoResume) {
+    /**
+     * @param fromTimeMs 복구 진입 시각 (epoch millis) — recovery-job이 ts_ms 파티션 한 칸
+     *                   앞부터 스캔해 `_pos` 순서로 재생한다(5.2·6.2절). 정밀 절단은 하지 않는다 —
+     *                   경계 중복은 PK upsert 멱등으로 흡수.
+     * @param autoResume true면 복구 apply 완료 감지 후 해당 테이블 jdbc-sink를 자동 재개 (go-live)
+     */
+    public RecoveryRun trigger(long registeredTableId, long fromTimeMs, boolean autoResume) {
         RegisteredTable table = find(registeredTableId);
         DbConnection target = connections.get(table.targetConnectionId());
 
@@ -135,18 +145,18 @@ public class RecoveryService {
 
         long id = runSeq.incrementAndGet();
         String logPath = logDir + "/recovery-" + table.suffix() + "-" + id + ".log";
-        List<String> command = buildCommand(table, fromScn, keyColumns, recoveryTopic, logPath);
+        List<String> command = buildCommand(table, fromTimeMs, keyColumns, recoveryTopic, logPath);
 
-        RecoveryRun run = new RecoveryRun(id, table.qualified(), fromScn, "RUNNING",
+        RecoveryRun run = new RecoveryRun(id, table.qualified(), fromTimeMs, "RUNNING",
                 0, 0, logPath, LocalDateTime.now(), autoResume);
         runs.put(id, run);
         events.record(table.schemaName(), table.tableName(), "RECOVERY_STARTED", "WARN",
-                "SCN " + fromScn + "부터 재발행 시작" + (autoResume ? " (완료 후 자동 재개)" : ""), null);
+                Instant.ofEpochMilli(fromTimeMs) + "부터 재발행 시작" + (autoResume ? " (완료 후 자동 재개)" : ""), null);
         launchProcess(id, command, logPath, table, autoResume);
         return run;
     }
 
-    List<String> buildCommand(RegisteredTable table, long fromScn,
+    List<String> buildCommand(RegisteredTable table, long fromTimeMs,
                               List<String> keyColumns, String recoveryTopic, String logPath) {
         List<String> cmd = new ArrayList<>();
         cmd.add(launcher);
@@ -158,7 +168,7 @@ public class RecoveryService {
         cmd.add("s3-access-key=" + iceberg.s3AccessKey());
         cmd.add("s3-secret-key=" + iceberg.s3SecretKey());
         cmd.add("table=" + changelog.changelogTableName(table.schemaName(), table.tableName()));
-        cmd.add("from-scn=" + fromScn);
+        cmd.add("from-ts-ms=" + fromTimeMs);
         cmd.add("key-columns=" + String.join(",", keyColumns));
         cmd.add("bootstrap=" + kafkaBootstrap);
         cmd.add("topic=" + recoveryTopic);
@@ -262,7 +272,7 @@ public class RecoveryService {
 
     private void update(long id, String status, long published, long skipped) {
         runs.computeIfPresent(id, (k, r) -> new RecoveryRun(
-                r.id(), r.table(), r.fromScn(), status, published, skipped,
+                r.id(), r.table(), r.fromTimeMs(), status, published, skipped,
                 r.logPath(), r.startedAt(), r.autoResume()));
     }
 

@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import io.deltazium.backend.connect.ConnectorDeployService;
@@ -29,7 +30,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 설명 : CDC 테이블 등록 (architecture.md 8절).
  * 흐름: 딕셔너리 조회 → 사전 점검(PK 필수, supp.log ALL, 권한) → 컬럼 매핑 검증 →
  * 메타데이터 저장 → 커넥터 배포.
- * 커넥터 구성: source·iceberg-sink는 전역 1개, jdbc-sink는 **테이블별 1개**
+ * 커넥터 구성: source는 전역 1개, iceberg-sink는 **소스별 1개**(dz-iceberg-<prefix> —
+ * 현재는 소스가 하나라 결과적으로 1개, 4절), jdbc-sink는 **테이블별 1개**
  * (dz-jdbc-sink-<suffix>) — 타깃 테이블명 매핑과 테이블 단위 정지(7절)를 위해.
  *
  * <p>
@@ -44,6 +46,12 @@ import org.springframework.transaction.annotation.Transactional;
  * --------------------------------------------------
  * 26. 08. 05.       | 최남희  | resnapshot 오케스트레이션을 ResnapshotOrchestrator로 이관 —
  * |                          | 여기는 redeployWithSnapshotMode(재배포)만 남김
+ * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | 다중 소스·다중 타깃 ① changelog 중립 계약: iceberg-sink
+ * |                          | 인스턴스 이름을 소스별(dz-iceberg-<prefix>)로, route-regex를
+ * |                          | 토픽 이름 정확 일치로 전환 (architecture.md 4·5.1절). 라우팅이
+ * |                          | 토픽 기준으로 바뀌며 해소된 동명 테이블 제약(다른 스키마의
+ * |                          | 동일 테이블명 거부)도 제거
  * --------------------------------------------------
  */
 @Service
@@ -192,11 +200,8 @@ public class RegistrationService {
         if (repository.exists(info.schema(), info.table())) {
             throw new IllegalArgumentException("이미 등록된 테이블: " + qualified);
         }
-        if (repository.existsTableNameInOtherSchema(info.schema(), info.table())) {
-            throw new IllegalArgumentException(
-                    "다른 스키마에 같은 이름의 테이블이 이미 등록됨: " + info.table()
-                    + " — iceberg 라우팅(route-field=source.table) 충돌로 동시 등록 불가 (5.1절)");
-        }
+        // 종전엔 다른 스키마의 동명 테이블을 라우팅 충돌로 거부했다 — route-field가
+        // 토픽 이름 기준(_pos.topic)으로 바뀌며 그 제약은 해소됐다 (2026-09-05, 5.1절).
         return info;
     }
 
@@ -264,7 +269,7 @@ public class RegistrationService {
         deployConnectors(source, target, snapshotMode);
     }
 
-    /** 등록 전체 목록 기준으로 source·iceberg-sink(전역)·jdbc-sink(테이블별) 갱신 배포. */
+    /** 등록 전체 목록 기준으로 source·iceberg-sink(소스별)·jdbc-sink(테이블별) 갱신 배포. */
     private void deployConnectors(DbConnection source, DbConnection target) {
         deployConnectors(source, target, null);
     }
@@ -322,7 +327,8 @@ public class RegistrationService {
         }
 
         Map<String, String> icebergVars = new HashMap<>();
-        icebergVars.put("connector_name", "dz-iceberg-sink");
+        // 소스별 인스턴스 — 소스가 늘면(② 마일스톤) 소스마다 별도 커넥터 (4절)
+        icebergVars.put("connector_name", icebergSinkName());
         icebergVars.put("topics", topics);
         icebergVars.put("catalog_jdbc_url", iceberg.catalogUri());
         icebergVars.put("catalog_jdbc_user", iceberg.catalogUser());
@@ -336,11 +342,19 @@ public class RegistrationService {
                 .collect(Collectors.joining(",")));
         Map<String, String> routeRegex = new HashMap<>();
         for (RegisteredTable t : all) {
+            // route-field=_pos.topic(템플릿) — 라우팅은 토픽 이름 정확 일치로,
+            // 테이블명만 보던 종전 방식의 동명 테이블 제약을 해소 (5.1절)
+            String topic = topicPrefix + "." + t.qualified();
             routeRegex.put("iceberg.table."
                     + changelog.changelogTableName(t.schemaName(), t.tableName()) + ".route-regex",
-                    "^" + t.tableName() + "$");
+                    "^" + Pattern.quote(topic) + "$");
         }
         deploy.deploy("iceberg-sink", icebergVars, routeRegex);
+    }
+
+    /** 소스별 iceberg-sink 인스턴스 이름 — 현재는 소스가 하나뿐이라 topicPrefix 하나로 결정된다. */
+    private String icebergSinkName() {
+        return "dz-iceberg-" + topicPrefix;
     }
 
     /**
@@ -402,7 +416,7 @@ public class RegistrationService {
             // 같은 이름 재등록 시 스냅샷 SKIP 방지 (실측: NH_MIX_TABLE_01 재등록 시 SKIPPED)
             resetConnectorOffsets("dz-source");
             quietDelete("dz-source");
-            quietDelete("dz-iceberg-sink");
+            quietDelete(icebergSinkName());
         } else {
             // 남은 테이블 기준으로 source include list·iceberg 라우팅 재배포
             RegisteredTable any = remaining.get(0);

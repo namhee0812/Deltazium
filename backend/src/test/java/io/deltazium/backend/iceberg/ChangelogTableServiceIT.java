@@ -25,6 +25,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * --------------------------------------------------
  * 26. 07. 26.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | 다중 소스·다중 타깃 ①: namespace를 topic-prefix 계산값
+ * |                          | (changelog_probe)으로, _pos 필드 검증 추가 (5.1절)
+ * --------------------------------------------------
  */
 @EnabledIfSystemProperty(named = "integration", matches = "true")
 class ChangelogTableServiceIT {
@@ -32,11 +35,11 @@ class ChangelogTableServiceIT {
     private final IcebergProperties props = new IcebergProperties(
             "jdbc:postgresql://localhost:5433/iceberg_catalog", "deltazium", "deltazium",
             "s3://deltazium-warehouse/warehouse", "http://localhost:9010",
-            "deltazium", "deltazium123", "changelog");
+            "deltazium", "deltazium123");
 
     @Test
     void 실제_카탈로그에_사전_생성되고_멱등이다() {
-        ChangelogTableService service = new ChangelogTableService(props);
+        ChangelogTableService service = new ChangelogTableService(props, "probe");
         service.ensureChangelogTable("ITPROBE", "T1");
         service.ensureChangelogTable("ITPROBE", "T1"); // 멱등
 
@@ -53,11 +56,12 @@ class ChangelogTableServiceIT {
                 "s3.access-key-id", props.s3AccessKey(),
                 "s3.secret-access-key", props.s3SecretKey(),
                 "client.region", "us-east-1"));
-        TableIdentifier id = TableIdentifier.of("changelog", "itprobe_t1");
+        TableIdentifier id = TableIdentifier.of("changelog_probe", "itprobe_t1");
         assertThat(catalog.tableExists(id)).isTrue();
         Table table = catalog.loadTable(id);
         assertThat(table.spec().fields().get(0).transform().toString()).isEqualTo("truncate[86400000]");
         assertThat(table.schema().findField("source.ts_ms")).isNotNull();
+        assertThat(table.schema().findField("_pos.offset")).isNotNull();
 
         // 테스트가 방금 만든 probe 테이블 정리 (사용자 데이터 아님)
         catalog.dropTable(id, true);

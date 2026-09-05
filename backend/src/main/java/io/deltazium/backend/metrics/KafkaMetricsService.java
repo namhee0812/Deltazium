@@ -40,6 +40,10 @@ import org.springframework.stereotype.Service;
  * 26. 08. 24.       | 최남희  | reachable() 추가 — 경고 센터(SystemWarningService)의
  * |                          | kafka-unreachable 판정용
  * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | ICEBERG_GROUP을 고정 문자열에서 topic-prefix 기반 계산값으로 —
+ * |                          | iceberg-sink 커넥터명이 소스별(dz-iceberg-<prefix>)로 바뀌며
+ * |                          | consumer group 이름도 함께 바뀜(Connect 기본 규칙: connect-<커넥터명>)
+ * --------------------------------------------------
  */
 @Service
 public class KafkaMetricsService {
@@ -62,11 +66,10 @@ public class KafkaMetricsService {
         return "connect-dz-jdbc-sink-" + t.suffix();
     }
 
-    static final String ICEBERG_GROUP = "connect-dz-iceberg-sink";
-
     private final RegisteredTableRepository registrations;
     private final String bootstrap;
     private final String topicPrefix;
+    private final String icebergGroup;
     private final Map<String, Sample> lastSamples = new ConcurrentHashMap<>();
     private volatile AdminClient admin;
 
@@ -76,6 +79,9 @@ public class KafkaMetricsService {
         this.registrations = registrations;
         this.bootstrap = bootstrap;
         this.topicPrefix = topicPrefix;
+        // iceberg-sink는 소스별 인스턴스(dz-iceberg-<prefix>) — consumer group은 Connect 기본
+        // 규칙(connect-<커넥터명>)을 따른다 (architecture.md 4절)
+        this.icebergGroup = "connect-dz-iceberg-" + topicPrefix;
     }
 
     public List<TableMetrics> tableMetrics() {
@@ -97,7 +103,7 @@ public class KafkaMetricsService {
             Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> ends =
                     latest.isEmpty() ? Map.of() : client.listOffsets(latest).all().get();
             Map<TopicPartition, OffsetAndMetadata> iceberg =
-                    client.listConsumerGroupOffsets(ICEBERG_GROUP).partitionsToOffsetAndMetadata().get();
+                    client.listConsumerGroupOffsets(icebergGroup).partitionsToOffsetAndMetadata().get();
             Map<String, Map<TopicPartition, OffsetAndMetadata>> jdbcByTable = new HashMap<>();
             for (RegisteredTable t : tables) {
                 jdbcByTable.put(t.suffix(), client.listConsumerGroupOffsets(jdbcGroup(t))

@@ -25,11 +25,6 @@
          WHERE schema_name = #{schema} AND table_name = #{table}
     </select>
 
-    <select id="countTableNameInOtherSchema" resultType="_int">
-        SELECT COUNT(*) FROM registered_tables
-         WHERE table_name = #{table} AND schema_name &lt;&gt; #{schema}
-    </select>
-
     <insert id="insertRow" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
         INSERT INTO registered_tables
           (schema_name, table_name, source_connection_id, target_connection_id,

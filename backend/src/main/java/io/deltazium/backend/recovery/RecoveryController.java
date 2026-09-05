@@ -25,12 +25,16 @@ import org.springframework.web.bind.annotation.RestController;
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | 복구 진입점을 SCN에서 시각(epoch millis)으로 전환 —
+ * |                          | 다중 소스·다중 타깃 ① changelog 중립 계약(architecture.md 6.2절)
+ * --------------------------------------------------
  */
 @RestController
 @RequestMapping("/api/recovery")
 public class RecoveryController {
 
-    public record TriggerRequest(long registeredTableId, long fromScn, Boolean autoResume) {
+    /** @param fromTimeMs 복구 진입 시각 (epoch millis) — ts_ms 파티션 한 칸 앞부터 재생(5.2·6.2절) */
+    public record TriggerRequest(long registeredTableId, long fromTimeMs, Boolean autoResume) {
     }
 
     public record VerifyRequest(long registeredTableId) {
@@ -49,7 +53,10 @@ public class RecoveryController {
 
     @PostMapping
     public RecoveryService.RecoveryRun trigger(@RequestBody TriggerRequest req) {
-        return service.trigger(req.registeredTableId(), req.fromScn(),
+        if (req.fromTimeMs() <= 0) {
+            throw new IllegalArgumentException("fromTimeMs는 양수 epoch millis여야 한다: " + req.fromTimeMs());
+        }
+        return service.trigger(req.registeredTableId(), req.fromTimeMs(),
                 Boolean.TRUE.equals(req.autoResume()));
     }
 
