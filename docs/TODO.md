@@ -31,6 +31,10 @@
     `changelog_<prefix>` / 기존 changelog는 이전 없이 재등록(재스냅샷, **삭제 전 사용자 확인**) /
     UI는 시각·`_pos` 기본, SCN·LSN은 참고 텍스트 / rule-check.sh에 `source` 내부 필드 참조 차단 추가
   - [ ] **① changelog 중립 계약** — DW 없이 단독 가치(scn 정렬은 장기 트랜잭션에서 커밋 순서와 어긋남, 5.1)
+    - **진행 상태 (2026-09-05)**: 코드 병합 완료(e0164e0, 테스트 140건 통과·통합 테스트 통과). 남은 것:
+      실 배선 스모크(Oracle 테스트 테이블 DDL·DML 필요 — 사용자 실행), 기존 등록 테이블 4개
+      해제·재등록(기존 changelog 삭제 수반 — 사용자 확인 후), 구 `dz-iceberg-sink` 커넥터 정리
+      (backend 재기동 후 등록/해제 액션 1회로 `dz-iceberg-dz` 전환). 절차: operations.md
     - Iceberg sink: `KafkaMetadataTransform`(`field_name=_pos`, `nested=true` → topic/partition/offset/timestamp,
       공식 문서 확인 2026-09-05)로 `_pos` 부착 + `route-field=_pos.topic` 라우팅, 소스별 인스턴스로 전환,
       복구 토픽 구독 제외
