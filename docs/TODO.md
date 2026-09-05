@@ -24,6 +24,24 @@
 
 ## 기능
 
+- [ ] **DW 타깃(Snowflake·Databricks) 적재** (2026-09-02~05 설계 논의 — 방향 합의, 세부 결정 대기)
+  - 설계 문서(합의 근거·다이어그램·개정안 전체): https://claude.ai/code/artifact/581e7a1e-b7ca-4e0b-b6d6-556d8464c3cc (v2)
+  - **주 안 — changelog 겸용**: 기존 Iceberg changelog를 DW 랜딩으로 겸용.
+    Snowflake/Databricks가 외부 Iceberg 카탈로그로 changelog를 직접 읽어
+    **1분 주기 집합 MERGE**(PK별 최신 1건 선별)로 최종 테이블 수렴. 커넥터 추가 0개.
+  - 합의된 것: 행 단위 upsert 배제(Debezium JDBC sink는 dialect도 없음) ·
+    append+집합 MERGE · 신선도 1분 · 증분 기준 SCN 워터마크(ts_ms 파티션 프루닝 + scn 캐스팅) ·
+    내부 MinIO 비노출 → changelog를 클라우드로 이전 · 파일 포맷은 parquet(Iceberg 유지, raw 파일 격하 안 함)
+  - 선행 과제 2건: ① changelog 스토리지 이전 — Cloudflare R2 제안(10GB·egress 무료)
+    ② 카탈로그 JDBC(PG) → Iceberg REST 전환(R2 Data Catalog) — DW가 JDBC 카탈로그에 못 붙음.
+    sink·recovery-job·backend는 catalog 설정만 변경. HMS는 미사용·미도입.
+  - 남은 결정: 기존 changelog 데이터 이전 여부 / MERGE 오브젝트 배포 주체(backend vs 수동) /
+    보존 정책 통합 / DW DDL 전파(별도 설계)
+  - 검증 순서: R2 Data Catalog·Snowflake catalog integration·Databricks federation 현황 확인(미확인)
+    → 카탈로그 전환 스모크 + recovery-job 왕복 테스트 → DW 읽기 배선 → MERGE 멱등 증명
+    → 복구 리허설 DW판 → backend·UI
+  - 확정 시 architecture.md 개정 필요: "apply 단일 경로" → 타깃 계열별(OLTP upsert / DW MERGE),
+    Iceberg 역할에 "DW 랜딩 겸용" 추가, 3·5절 카탈로그·스토리지 서술
 - [ ] 테이블별 incremental snapshot (Kafka signal) — 기동 중 테이블 추가 시 초기적재,
       테이블 단위 reload(Qlik per-table reload에 해당). architecture.md 10절 미결
 - [ ] 컬럼 리네임의 적재 반영 방침 결정 — 스톡 sink 한계로 현재 저장만
