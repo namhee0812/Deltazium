@@ -13,6 +13,7 @@ import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.data.IcebergGenerics;
 import org.apache.iceberg.data.Record;
+import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.jdbc.JdbcCatalog;
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -26,13 +27,13 @@ import org.slf4j.LoggerFactory;
  * 파일명 : RecoveryJob.java
  * 작성일자 : 26. 07. 29.
  * 작성자 : 최남희
- * 설명 : 복구 재발행 (architecture.md 6절): Iceberg changelog scan(SCN 범위) →
- * envelope 재조립 → 복구 토픽 발행. **타깃 apply는 하지 않는다** — recovery-sink
- * (live와 동일한 JDBC sink 설정)가 담당한다. 여기가 이 잡의 경계다.
+ * 설명 : 복구 재발행 (architecture.md 6절): Iceberg changelog scan(시각 진입점 → ts_ms 파티션
+ * 프루닝) → `_pos` 순서로 정렬 → envelope 재조립 → 복구 토픽 발행. **타깃 apply는 하지 않는다**
+ * — recovery-sink(live와 동일한 JDBC sink 설정)가 담당한다. 여기가 이 잡의 경계다.
  * 인자(키=값):
  * catalog-uri, catalog-user, catalog-password, warehouse,
  * s3-endpoint, s3-access-key, s3-secret-key,
- * table=changelog.cdc_auto_100, from-scn=31066101955,
+ * table=changelog_dz.cdc_auto_100, from-ts-ms=1753300000000,
  * key-columns=ID[,COL2], bootstrap=localhost:9092, topic=dz-recovery.cdc_auto_100
  *
  * <p>
@@ -42,14 +43,37 @@ import org.slf4j.LoggerFactory;
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | 다중 소스·다중 타깃 ① changelog 중립 계약(architecture.md 5.1·5.2·
+ * |                          | 6.2절): 진입점을 SCN에서 시각으로, 정렬 기준을 source.scn·txId에서
+ * |                          | `_pos`(partition, offset)로 전환 — 장기 트랜잭션에서 scn 순서와
+ * |                          | 방출 순서가 어긋나는 문제 회피. scan은 ts_ms 파티션 한 칸 앞부터
+ * |                          | 전부 읽고 정밀 절단은 하지 않는다(PK upsert 멱등이 흡수).
+ * |                          | 재조립에서 `_pos`는 제외(envelope 무손실 불변식 유지).
+ * --------------------------------------------------
  */
 public final class RecoveryJob {
 
     private static final Logger log = LoggerFactory.getLogger(RecoveryJob.class);
 
+    /**
+     * 파티션 폭(ms) — backend의 ChangelogTableService.PARTITION_WIDTH_MS와 반드시 같아야
+     * 한다(5.2절). recovery-job은 backend에 의존하지 않는 플레인 Java 모듈이라 상수를
+     * 중복 정의한다.
+     */
+    static final long PARTITION_WIDTH_MS = 86_400_000L;
+
+    /**
+     * 재생 순서 (6.2절): `_pos.partition`별로 `_pos.offset` 오름차순. 파티션 간 인터리빙은
+     * 임의 — 같은 PK는 항상 같은 파티션이라 upsert 정합에 영향 없다. source.scn·txId 등
+     * 소스 전용 위치로 정렬하지 않는다(장기 트랜잭션에서 커밋 순서와 어긋나는 사고, 5.1절).
+     */
+    static final Comparator<Record> REPLAY_ORDER = Comparator
+            .comparing(RecoveryJob::posPartition, Comparator.nullsLast(Comparator.naturalOrder()))
+            .thenComparing(RecoveryJob::posOffset, Comparator.nullsLast(Comparator.naturalOrder()));
+
     public static void main(String[] rawArgs) {
         Map<String, String> args = parseArgs(rawArgs);
-        long fromScn = Long.parseLong(require(args, "from-scn"));
+        long fromTsMs = Long.parseLong(require(args, "from-ts-ms"));
         String tableName = require(args, "table");
         List<String> keyColumns = List.of(require(args, "key-columns").split(","));
         String topic = require(args, "topic");
@@ -60,27 +84,21 @@ public final class RecoveryJob {
             Table table = catalog.loadTable(TableIdentifier.of(
                     tableName.substring(0, dot), tableName.substring(dot + 1)));
 
-            // 6.2절: scn은 string이라 Iceberg 필터로 수치 비교 불가 — 스캔 후 캐스팅 필터,
-            // 전역 순서(scn, txId)는 여기서 복원한다. (토이 볼륨 전제의 인메모리 정렬)
+            // 5.2절: 진입 시각의 한 파티션 앞부터 스캔 — 정밀 절단은 하지 않는다.
+            long scanFromTsMs = lookbackBoundary(fromTsMs, PARTITION_WIDTH_MS);
             List<Record> replay = new ArrayList<>();
-            try (CloseableIterable<Record> rows = IcebergGenerics.read(table).build()) {
+            try (CloseableIterable<Record> rows = IcebergGenerics.read(table)
+                    .where(Expressions.greaterThanOrEqual("source.ts_ms", scanFromTsMs))
+                    .build()) {
                 for (Record row : rows) {
-                    Long scn = scnOf(row);
-                    if (scn != null && scn >= fromScn) {
-                        replay.add(row);
-                    }
+                    replay.add(row);
                 }
             } catch (Exception e) {
                 throw new IllegalStateException("Iceberg scan 실패: " + e.getMessage(), e);
             }
-            replay.sort(Comparator
-                    .comparing(RecoveryJob::scnOf, Comparator.nullsLast(Comparator.naturalOrder()))
-                    .thenComparing(r -> {
-                        Record source = (Record) r.getField("source");
-                        Object tx = source == null ? null : source.getField("txId");
-                        return tx == null ? "" : tx.toString();
-                    }));
-            log.info("재발행 대상 {}건 (from-scn={}, table={})", replay.size(), fromScn, tableName);
+            replay.sort(REPLAY_ORDER);
+            log.info("재발행 대상 {}건 (from-ts-ms={}, scan-from-ts-ms={}, table={})",
+                    replay.size(), fromTsMs, scanFromTsMs, tableName);
 
             ConnectJsonAssembler assembler = new ConnectJsonAssembler();
             Properties props = new Properties();
@@ -117,14 +135,23 @@ public final class RecoveryJob {
         }
     }
 
-    private static Long scnOf(Record row) {
-        Record source = (Record) row.getField("source");
-        Object scn = source == null ? null : source.getField("scn");
-        try {
-            return scn == null ? null : Long.parseLong(scn.toString());
-        } catch (NumberFormatException e) {
-            return null;
-        }
+    /**
+     * 진입 시각이 속한 ts_ms 파티션의 한 칸 앞 경계 — Iceberg의 truncate(ts_ms, width) 파티션과
+     * 정렬되는 값이라 파티션 프루닝이 그대로 적용된다(5.2절).
+     */
+    static long lookbackBoundary(long fromTsMs, long partitionWidthMs) {
+        long entryPartitionStart = Math.floorDiv(fromTsMs, partitionWidthMs) * partitionWidthMs;
+        return entryPartitionStart - partitionWidthMs;
+    }
+
+    private static Integer posPartition(Record row) {
+        Record pos = (Record) row.getField("_pos");
+        return pos == null ? null : (Integer) pos.getField("partition");
+    }
+
+    private static Long posOffset(Record row) {
+        Record pos = (Record) row.getField("_pos");
+        return pos == null ? null : (Long) pos.getField("offset");
     }
 
     private static JdbcCatalog openCatalog(Map<String, String> args) {

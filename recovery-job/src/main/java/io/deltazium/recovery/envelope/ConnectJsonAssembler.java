@@ -35,8 +35,14 @@ import org.apache.iceberg.types.Types;
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | `_pos`(파이프라인 부여 위치, 5.1절)를 재조립 envelope에서 제외 —
+ * |                          | 파이프라인 전용 컬럼이라 원본 Debezium envelope에는 없던 필드다
+ * --------------------------------------------------
  */
 public final class ConnectJsonAssembler {
+
+    /** 파이프라인이 부여한 위치 컬럼 — 원본 envelope에는 없던 필드라 재조립에서 제외한다 (5.1절). */
+    private static final String POSITION_FIELD = "_pos";
 
     private final ObjectMapper json = new ObjectMapper();
 
@@ -99,6 +105,9 @@ public final class ConnectJsonAssembler {
         node.put("optional", true);
         ArrayNode fields = node.putArray("fields");
         for (Types.NestedField f : struct.fields()) {
+            if (POSITION_FIELD.equals(f.name())) {
+                continue;
+            }
             ObjectNode fs = fieldSchema(f.type(), true);
             fs.put("field", f.name());
             fields.add(fs);
@@ -148,6 +157,9 @@ public final class ConnectJsonAssembler {
     private ObjectNode structPayload(Types.StructType struct, Record row) {
         ObjectNode node = json.createObjectNode();
         for (Types.NestedField f : struct.fields()) {
+            if (POSITION_FIELD.equals(f.name())) {
+                continue;
+            }
             node.set(f.name(), valueNode(f.type(), row == null ? null : row.getField(f.name())));
         }
         return node;

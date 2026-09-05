@@ -31,6 +31,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * --------------------------------------------------
  * 26. 07. 24.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 05.       | 최남희  | changelog 스키마에 `_pos`(파이프라인 부여 위치, 5.1절) 추가 —
+ * |                          | 왕복 테스트 대상 행에 채워 넣되, 재조립 envelope에는
+ * |                          | 나오지 않아야 함을 검증(원본 Debezium envelope에는 없던 필드)
+ * --------------------------------------------------
  */
 class EnvelopeRoundTripTest {
 
@@ -55,11 +59,20 @@ class EnvelopeRoundTripTest {
                         Types.NestedField.optional(6, "ts_ms", Types.LongType.get()),
                         Types.NestedField.optional(7, "schema", Types.StringType.get()),
                         Types.NestedField.optional(8, "table", Types.StringType.get()))),
+                Types.NestedField.optional(9, "_pos", Types.StructType.of(
+                        Types.NestedField.optional(10, "topic", Types.StringType.get()),
+                        Types.NestedField.optional(11, "partition", Types.IntegerType.get()),
+                        Types.NestedField.optional(12, "offset", Types.LongType.get()),
+                        Types.NestedField.optional(13, "timestamp", Types.LongType.get()))),
                 Types.NestedField.optional(20, "before", rowType(21)),
                 Types.NestedField.optional(30, "after", rowType(31)));
     }
 
-    /** 원본 envelope payload(JSON) → sink가 적재했을 changelog 행 재현 */
+    /**
+     * 원본 envelope payload(JSON) → sink가 적재했을 changelog 행 재현.
+     * `_pos`는 원본 envelope에 없는 파이프라인 전용 필드라 sink가 부착했다고 가정하고
+     * 고정값으로 채운다(offset은 왕복 동등성과 무관 — 재조립에서 제외되는지만 확인).
+     */
     private static GenericRecord toChangelogRow(JsonNode payload, Schema schema) {
         GenericRecord row = GenericRecord.create(schema.asStruct());
         row.setField("op", payload.get("op").asText());
@@ -74,6 +87,14 @@ class EnvelopeRoundTripTest {
         source.setField("schema", src.get("schema").asText());
         source.setField("table", src.get("table").asText());
         row.setField("source", source);
+
+        GenericRecord pos = GenericRecord.create(
+                schema.findField("_pos").type().asStructType());
+        pos.setField("topic", "dz.CDC.AUTO_100");
+        pos.setField("partition", 0);
+        pos.setField("offset", 42L);
+        pos.setField("timestamp", src.get("ts_ms").asLong());
+        row.setField("_pos", pos);
 
         for (String side : new String[] {"before", "after"}) {
             JsonNode image = payload.get(side);
@@ -118,6 +139,10 @@ class EnvelopeRoundTripTest {
         assertJsonEquals(original.get("source"), payload.get("source"));
         // 스키마도 envelope 구조여야 recovery-sink가 파싱한다
         assertEquals("struct", rebuilt.get("schema").get("type").asText());
+        // _pos는 파이프라인 전용 컬럼 — 원본 envelope에 없던 필드라 재조립에서 제외한다
+        assertTrue(payload.path("_pos").isMissingNode());
+        assertTrue(rebuilt.get("schema").path("fields").findValues("field").stream()
+                .noneMatch(f -> f.asText().equals("_pos")));
     }
 
     private static String envelope(String op, String before, String after, long scn) {
