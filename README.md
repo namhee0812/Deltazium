@@ -104,22 +104,32 @@ cd ui && npm install && cd ..
 Oracle은 별도 준비 필요 — ARCHIVELOG 모드, 캡처 계정 권한은 위저드 사전 점검이 안내한다.
 통합 테스트(실 인프라 대상): `./gradlew :backend:test -Dintegration=true`
 
-## 검증된 것 / 진행 중인 것
+## 다음 작업 — 다중 소스 · 다중 타깃
 
-- ✅ 실 Oracle 대상 end-to-end: 초기 스냅샷(3만+ 행) → LogMiner 실시간 스트리밍 →
-  타깃 Oracle apply(lag 0) + Iceberg changelog 커밋(evolve-schema로 before/after 자동
-  생성)까지 실트래픽으로 확인. 캡처 장애(ORA-1371) 재현 → 전환 → 밀린 구간 유실 0 회수 포함
-- ✅ envelope 왕복(재조립 동등성) 테스트, changelog 사전 생성 통합 테스트,
-  changelog 73건 재발행 스모크(복구 경로)
-- ✅ 모니터링 실측화: 토픽 offset·sink별 consumer lag(AdminClient), DDL 이벤트 수집,
-  커넥터 장애 전이 이벤트(trace 포함)
-- ✅ 캡처 장애 실전 복구: 공유 dev Oracle의 archive log 삭제로 재개 지점이 소실된
-  실제 장애(task FAILED, 나흘 경과)를 재스냅샷 위저드로 복구 — 타깃 truncate 재구축
-  포함 50초 만에 go-live, 진행률은 Debezium notification 실측. 이 장애를 계기로
-  task 상태 집계(UI가 connector 상태만 보던 착시)·장애 배너·단계형 복구 절차가 추가됨
-- ⏳ 복구 리허설 풀 사이클(타깃 훼손 → SCN 재발행 → 정합 검증 일치) — 기능은 갖춰짐, 실행 검증 대기
-- ⏳ 테이블별 incremental snapshot(기동 중 테이블 추가 시 초기적재 — Kafka signal),
-  컬럼 리네임의 적재 반영(스톡 sink 한계로 저장만 — 방침 결정 대기)
+현재는 Oracle 1개 → Oracle 1개 + changelog 구조다. 다음 목표는 소스 N개(종류·인스턴스 모두)와
+타깃 M개(OLTP + DW)를 한 changelog 위에서 다루는 것이다. 설계 축은 **changelog를 소스·타깃
+중립 계약으로 세우고, 소스별 분기는 캡처 층에, 타깃별 분기는 수렴 층에 가둔다**
+(2026-09-05 방향 합의, 세부는 docs/TODO.md). 순서대로:
+
+1. **changelog 중립 계약** — 순서 복원 기준을 `source.scn`(Oracle 전용)에서 파이프라인이
+   부여하는 위치 컬럼(Kafka partition·offset, no-kafka 모드는 자체 writer 시퀀스)으로 전환.
+   테이블 이름·라우팅에 소스 식별자(topic.prefix) 반영, 복구 진입점을 SCN → 시각으로 통일.
+   architecture.md 5·6절 개정, recovery-job 재생 정렬·왕복 테스트 갱신. DW 없이도 단독 가치
+   (Debezium은 커밋 순서로 방출하므로 변경 SCN 정렬은 장기 트랜잭션에서 순서가 어긋남).
+2. **두 번째 소스·타깃: PostgreSQL** — 캡처 층 분기(커넥터 템플릿·사전 점검·스냅샷)와
+   등록 키 (source_id, schema, table) 전환을 가장 싸게 증명. Iceberg sink는 소스별 1개
+   (장애 격리·설정 변경 범위), 카탈로그는 하나.
+3. **changelog 스토리지·카탈로그 이전** — 내부 MinIO + JDBC 카탈로그는 SaaS DW가 읽을 수
+   없다. 클라우드 오브젝트 스토리지(Cloudflare R2 후보) + Iceberg REST 카탈로그로 전환.
+   sink·recovery-job·backend는 catalog 설정 변경만.
+4. **DW 타깃: Snowflake · Databricks** — 별도 랜딩 경로 없이 changelog를 랜딩으로 겸용.
+   DW가 외부 Iceberg 카탈로그로 changelog를 읽어 1분 주기 집합 MERGE(PK별 최신 1건)로
+   수렴. 복구는 재발행이 아니라 MERGE 워터마크 되감기. 검증 순서: 벤더 지원 현황 확인
+   → DW 읽기 배선 → MERGE 멱등 증명 → 복구 리허설 DW판 → backend 등록 분기·lag 화면.
+
+범위 밖으로 둔 것: 여러 소스를 타깃 테이블 하나로 합치는 fan-in(소스 간 PK 충돌 규칙 필요),
+DW 스키마 전파(DDL 워크플로 확장 — 별도 설계). 그 외 백로그(incremental snapshot, 컬럼 리네임
+반영 방침, Prometheus/Grafana)는 docs/TODO.md.
 
 ## 문서
 
@@ -130,7 +140,7 @@ Oracle은 별도 준비 필요 — ARCHIVELOG 모드, 캡처 계정 권한은 �
 | [docs/internals.md](docs/internals.md) | 구현 내부 노트 — 상태 판정·재스냅샷 상태 기계·모니터링 파이프라인·밟은 함정들 |
 | [docs/incidents/](docs/incidents/2026-08-04-archive-log-loss.md) | 실장애 기록 — archive log 소실 장애의 타임라인·진단·파생 개선 |
 | [docs/experiments/](docs/experiments/2026-07-24-iceberg-sink-schema.md) | 실측 실험 기록 — 설계 개정의 근거 |
-| [docs/TODO.md](docs/TODO.md) | 백로그 (Prometheus/Grafana, incremental snapshot 등) |
+| [docs/TODO.md](docs/TODO.md) | 백로그 — 다중 소스·DW 타깃 설계 논의 결과, incremental snapshot, Prometheus/Grafana 등 |
 
 ## 스택
 
