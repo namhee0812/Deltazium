@@ -24,24 +24,39 @@
 
 ## 기능
 
-- [ ] **DW 타깃(Snowflake·Databricks) 적재** (2026-09-02~05 설계 논의 — 방향 합의, 세부 결정 대기)
-  - 설계 문서(합의 근거·다이어그램·개정안 전체): https://claude.ai/code/artifact/581e7a1e-b7ca-4e0b-b6d6-556d8464c3cc (v2)
-  - **주 안 — changelog 겸용**: 기존 Iceberg changelog를 DW 랜딩으로 겸용.
-    Snowflake/Databricks가 외부 Iceberg 카탈로그로 changelog를 직접 읽어
-    **1분 주기 집합 MERGE**(PK별 최신 1건 선별)로 최종 테이블 수렴. 커넥터 추가 0개.
-  - 합의된 것: 행 단위 upsert 배제(Debezium JDBC sink는 dialect도 없음) ·
-    append+집합 MERGE · 신선도 1분 · 증분 기준 SCN 워터마크(ts_ms 파티션 프루닝 + scn 캐스팅) ·
-    내부 MinIO 비노출 → changelog를 클라우드로 이전 · 파일 포맷은 parquet(Iceberg 유지, raw 파일 격하 안 함)
-  - 선행 과제 2건: ① changelog 스토리지 이전 — Cloudflare R2 제안(10GB·egress 무료)
-    ② 카탈로그 JDBC(PG) → Iceberg REST 전환(R2 Data Catalog) — DW가 JDBC 카탈로그에 못 붙음.
-    sink·recovery-job·backend는 catalog 설정만 변경. HMS는 미사용·미도입.
-  - 남은 결정: 기존 changelog 데이터 이전 여부 / MERGE 오브젝트 배포 주체(backend vs 수동) /
-    보존 정책 통합 / DW DDL 전파(별도 설계)
-  - 검증 순서: R2 Data Catalog·Snowflake catalog integration·Databricks federation 현황 확인(미확인)
-    → 카탈로그 전환 스모크 + recovery-job 왕복 테스트 → DW 읽기 배선 → MERGE 멱등 증명
-    → 복구 리허설 DW판 → backend·UI
-  - 확정 시 architecture.md 개정 필요: "apply 단일 경로" → 타깃 계열별(OLTP upsert / DW MERGE),
-    Iceberg 역할에 "DW 랜딩 겸용" 추가, 3·5절 카탈로그·스토리지 서술
+- [ ] **다중 소스·다중 타깃** (2026-09-05 방향 확정 — architecture.md 2.2·5·6.5·8절에 반영 완료.
+      순서대로 진행, 각 항목이 독립 마일스톤)
+  - 기준: changelog = 소스·타깃 중립 계약. 소스 분기는 캡처 층(8절), 타깃 분기는 수렴 층(6절).
+    2026-09-05 확정 결정: `_pos` struct {partition, offset} 1개 / namespace 단일 레벨
+    `changelog_<prefix>` / 기존 changelog는 이전 없이 재등록(재스냅샷, **삭제 전 사용자 확인**) /
+    UI는 시각·`_pos` 기본, SCN·LSN은 참고 텍스트 / rule-check.sh에 `source` 내부 필드 참조 차단 추가
+  - [ ] **① changelog 중립 계약** — DW 없이 단독 가치(scn 정렬은 장기 트랜잭션에서 커밋 순서와 어긋남, 5.1)
+    - Iceberg sink: Kafka 메타데이터 SMT로 `_pos` 부착 + 토픽 이름 라우팅 (SMT 설정 키는 Iceberg
+      커넥터 문서 확인), 소스별 인스턴스로 전환, 복구 토픽 구독 제외
+    - backend: changelog 사전 생성 스키마에 `_pos`, namespace `changelog_<prefix>`, 복구 진입점
+      SCN → 시각(한 파티션 앞부터), 복구 drawer·changelog 현황의 SCN 표시를 시각·`_pos`로 교체
+    - recovery-job: 재생 정렬 `_pos` 파티션별 offset 순, 왕복 테스트에서 `_pos` 제외 처리
+    - rule-check.sh: recovery-job·backend 수렴/복구 코드의 `source.scn` 등 참조 차단 (코드 전환과 동시에)
+    - 기존 등록 테이블 해제·재등록 절차 (operations.md에 기록)
+    - 확인: 소스 토픽 파티션 수(브로커 기본값) — 1이면 `_pos.partition`은 항상 0, 컬럼은 유지
+  - [ ] **② 두 번째 소스·타깃: PostgreSQL** — 캡처 층 분기 증명
+    - 등록 키 (source_id, schema, table) 전환, connections의 db_type별 사전 점검 목록(8절)
+    - Debezium PostgreSQL source 템플릿, JDBC sink PostgreSQL 타깃
+  - [ ] **③ 저장소 프로파일: MinIO / R2** — R2 프로파일 = Cloudflare R2(10GB·egress 무료) +
+        R2 Data Catalog(Iceberg REST)
+    - `deploy/env.sh`·backend 설정을 프로파일화, R2 프로파일에서 MinIO·iceberg_catalog DB 미기동
+    - 연결 화면에 읽기 전용 "changelog 저장소" 카드(프로파일·버킷·카탈로그·외부 접근 가능 여부·연결 테스트)
+    - 검증: 카탈로그 전환 스모크 + recovery-job 왕복 테스트, 인터넷 너머 커밋 시간 실측
+    - 프로파일 전환은 changelog 이전이 따르는 설치 작업 — 절차를 operations.md에
+  - [ ] **④ DW 계열: Snowflake · Databricks** (설계 문서 v2:
+        https://claude.ai/code/artifact/581e7a1e-b7ca-4e0b-b6d6-556d8464c3cc — 단, 증분 기준
+        "SCN 워터마크"와 복구 "재발행 → 중복 append"는 2026-09-05 논의로 `_pos` 워터마크·되감기로 대체됨)
+    - 사전 확인(미확인): R2 Data Catalog 상태·한도, Snowflake catalog integration 외부 REST 지원·인증,
+      Databricks(serverless 포함) Iceberg REST federation, 외부 Iceberg 테이블 증분 읽기(stream) 지원
+    - 남은 결정: MERGE 오브젝트 배포 주체(backend 렌더링·배포 vs SQL 제공 후 수동), DW용 읽기 전용
+      카탈로그 토큰 분리, "1분"의 정의(MERGE 주기 vs end-to-end)
+    - 순서: DW 읽기 배선 → MERGE 멱등 증명 → 복구 리허설 DW판(6.4) → backend 등록 분기(DW 자격만)·lag 통합
+    - 범위 밖: fan-in, DW 스키마 전파, 초 단위 스트리밍 ingest (10절·6.5)
 - [ ] 테이블별 incremental snapshot (Kafka signal) — 기동 중 테이블 추가 시 초기적재,
       테이블 단위 reload(Qlik per-table reload에 해당). architecture.md 10절 미결
 - [ ] 컬럼 리네임의 적재 반영 방침 결정 — 스톡 sink 한계로 현재 저장만

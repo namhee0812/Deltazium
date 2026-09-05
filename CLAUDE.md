@@ -11,7 +11,8 @@ Oracle → Kafka → (실 적재: Oracle) + (changelog 보관: Iceberg/MinIO) �
 
 - **데이터 경로는 기성 커넥터만 사용한다.** Debezium Oracle source, Debezium JDBC sink, Apache Iceberg sink. 커스텀 Kafka Connect 커넥터를 작성하지 말 것. 자체 코드는 backend(제어면), recovery-job, ui 세 곳뿐이다.
 - **Iceberg changelog 테이블 스키마·파티셔닝은 architecture.md 5절에 고정돼 있다. 임의 변경 금지.** 나중에 자체 writer가 같은 테이블에 이어 쓸 수 있어야 한다 (no-kafka 모드 수렴 전략).
-- **복구는 재발행 방식만.** recovery-job은 Iceberg에서 읽어 Debezium envelope으로 재조립 → 복구 토픽 발행까지만 한다. **타깃 DB에 직접 apply하는 코드를 recovery-job에 만들지 말 것** — apply 시맨틱은 JDBC sink 단일 경로다. (architecture.md 6절)
+- **복구 원본은 changelog 하나, 되돌리는 방식은 타깃 계열별 하나.** OLTP 계열은 재발행 — recovery-job은 Iceberg에서 읽어 Debezium envelope으로 재조립 → 복구 토픽 발행까지만 한다. **타깃 DB에 직접 apply하는 코드를 recovery-job에 만들지 말 것.** DW 계열은 MERGE 워터마크 되감기이며 재발행을 쓰지 않는다. 계열 안에서 라이브와 복구는 같은 경로다. (architecture.md 6절)
+- **changelog 하류는 소스 중립.** recovery-job·backend 수렴/복구 로직은 `source` 블록 내부 필드(scn·lsn 등)를 읽지 않고 `_pos`로 순서를 복원한다. (architecture.md 5.1 불변식 2)
 - **Spark/Trino 도입 금지.** Iceberg 읽기는 iceberg-data(Java API) 단일 프로세스로 한다. (architecture.md 5.3절)
 - **exactly-once를 가정하지 말 것.** JDBC sink는 at-least-once다. 모든 apply는 PK upsert 멱등이 전제이며, **PK 없는 테이블은 등록 단계에서 거부**한다. (architecture.md 8절)
 - `ui-reference/`는 UI 프로토타입 v1~v4 — **읽기 전용 디자인 기준.** 수정 금지, 디자인 토큰·화면 구성 참조용.
