@@ -107,7 +107,7 @@ MySQL   ─Debezium MySQL─┘        (topic.prefix = 소스 식별자)   (5절
 | `after` | struct (소스 테이블 스키마) | envelope after (nullable) |
 | `source` | struct | envelope source 전체. **재조립·포렌식용 — 하류 로직은 이 안의 필드(scn·lsn·pos 등 소스 전용 위치)를 읽지 않는다** |
 | `ts_ms` | long | envelope ts_ms (커넥터 처리 시각) |
-| `_pos` | struct `{partition: int, offset: long}` | **파이프라인 부여 위치.** Kafka 모드: 이벤트가 온 토픽 파티션·offset (Iceberg sink의 Kafka 메타데이터 SMT로 부착). no-kafka 모드(10절): 자체 writer가 partition 0에 단조 시퀀스 부여 |
+| `_pos` | struct `{topic: string, partition: int, offset: long, timestamp: long?}` | **파이프라인 부여 위치.** Kafka 모드: Iceberg sink의 `KafkaMetadataTransform`(`field_name=_pos`, `nested=true`)이 부착하는 구조 그대로 — 순서 의미는 partition·offset, topic은 라우팅 키 겸용, timestamp는 브로커 수신 시각. no-kafka 모드(10절): 자체 writer가 topic=소스 테이블 식별자, partition 0, offset=단조 시퀀스, timestamp=기록 시각을 채운다 |
 
 - `_pos`의 의미: **Debezium이 방출한 순서**를 보존한다. Debezium은 트랜잭션을 커밋 순서로
   방출하고 Kafka는 파티션 안에서 그 순서를 지키며, 키가 PK라 같은 PK는 같은 파티션에 들어간다.

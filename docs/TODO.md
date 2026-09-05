@@ -31,8 +31,9 @@
     `changelog_<prefix>` / 기존 changelog는 이전 없이 재등록(재스냅샷, **삭제 전 사용자 확인**) /
     UI는 시각·`_pos` 기본, SCN·LSN은 참고 텍스트 / rule-check.sh에 `source` 내부 필드 참조 차단 추가
   - [ ] **① changelog 중립 계약** — DW 없이 단독 가치(scn 정렬은 장기 트랜잭션에서 커밋 순서와 어긋남, 5.1)
-    - Iceberg sink: Kafka 메타데이터 SMT로 `_pos` 부착 + 토픽 이름 라우팅 (SMT 설정 키는 Iceberg
-      커넥터 문서 확인), 소스별 인스턴스로 전환, 복구 토픽 구독 제외
+    - Iceberg sink: `KafkaMetadataTransform`(`field_name=_pos`, `nested=true` → topic/partition/offset/timestamp,
+      공식 문서 확인 2026-09-05)로 `_pos` 부착 + `route-field=_pos.topic` 라우팅, 소스별 인스턴스로 전환,
+      복구 토픽 구독 제외
     - backend: changelog 사전 생성 스키마에 `_pos`, namespace `changelog_<prefix>`, 복구 진입점
       SCN → 시각(한 파티션 앞부터), 복구 drawer·changelog 현황의 SCN 표시를 시각·`_pos`로 교체
     - recovery-job: 재생 정렬 `_pos` 파티션별 offset 순, 왕복 테스트에서 `_pos` 제외 처리
