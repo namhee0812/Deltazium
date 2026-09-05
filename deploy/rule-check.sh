@@ -59,6 +59,23 @@ if [[ -n "$hits" ]]; then
         "자체 코드는 backend·recovery-job·ui 세 곳뿐 (CLAUDE.md 절대 규칙)"
 fi
 
+# ── 규칙 3.5: changelog 하류(recovery-job·backend 복구/iceberg 패키지)는 소스 전용 위치
+# 필드(scn·txId·lsn·commit_scn)를 읽지 않는다 (architecture.md 5.1절 설계 불변식 2, 6.2절) ──
+# NestedField.optional(id, "scn", ...) 같은 envelope 스키마 선언(패스스루 보존, 허용)과
+# 구분하기 위해 실제 "값 읽기" 호출 형태(getField/get/path)만 본다.
+# UI 참고 텍스트용으로 딱 한 곳 소스 위치를 뽑아야 한다면, 그 줄에
+# "rule-check-allow: source-position-reference" 주석과 함께 이유를 남기고 예외로 둔다.
+hits=$(grep -rnE \
+    '\.(getField|get|path)\("(scn|txId|commit_scn|lsn)"\)|"source\.(scn|txId|commit_scn|lsn)"' \
+    recovery-job/src/main \
+    backend/src/main/java/io/deltazium/backend/recovery \
+    backend/src/main/java/io/deltazium/backend/iceberg \
+    --include='*.java' 2>/dev/null | grep -v 'rule-check-allow: source-position-reference')
+if [[ -n "$hits" ]]; then
+    violation "changelog 하류가 소스 전용 위치 필드를 읽는다" "$hits" \
+        "재생·필터·정렬은 _pos(partition/offset)만 쓴다 — source.scn은 장기 트랜잭션에서 커밋 순서와 어긋남 (architecture.md 5.1절 설계 불변식 2, 6.2절). 필요하면 그 줄에 'rule-check-allow: source-position-reference' 주석과 사유를 남길 것"
+fi
+
 # ── 규칙 3: Spark/Trino 도입 금지 (architecture.md 5.3절) ──
 # 주석(//, #)은 제외하고 실제 의존성 선언 줄만 본다.
 hits=$(grep -rniE '^[[:space:]]*(implementation|api|runtimeOnly|compileOnly|testImplementation|testRuntimeOnly)[^/#]*(spark|trino)' \
