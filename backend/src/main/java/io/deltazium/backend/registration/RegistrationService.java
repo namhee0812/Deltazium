@@ -108,6 +108,13 @@ public class RegistrationService {
         return repository.findAll();
     }
 
+    /** GET /api/registrations 전용 — 소스 topicPrefix를 얹은 뷰(UI 커넥터 이름 조립용). */
+    public List<RegisteredTableView> listView() {
+        return repository.findAll().stream()
+                .map(t -> RegisteredTableView.of(t, connections.get(t.sourceConnectionId()).topicPrefix()))
+                .toList();
+    }
+
     public List<ColumnMapping> mappings(long registeredTableId) {
         return columnRepository.findByTable(registeredTableId);
     }

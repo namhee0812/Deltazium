@@ -51,8 +51,8 @@ public class RegistrationController {
     }
 
     @GetMapping
-    public List<RegisteredTable> list() {
-        return service.list();
+    public List<RegisteredTableView> list() {
+        return service.listView();
     }
 
     /** 소스 딕셔너리 조회 — pattern 예: CDC.* / CDC.TEST_% / CDC.T1 */
