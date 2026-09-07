@@ -25,6 +25,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: buildCommand에 topicPrefix 인자 추가
  * |                          | (changelog 테이블명이 소스별 namespace를 타므로)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ③ 저장소 프로파일: catalog-uri= 단일 인자 대신
+ * |                          | catalog.uri= 형태(카탈로그 속성 반복 인자)로 검증
+ * --------------------------------------------------
  */
 class RecoveryServiceTest {
 
@@ -39,7 +42,7 @@ class RecoveryServiceTest {
 
     @Test
     void 복구_커맨드에_카탈로그와_재생_인자가_전부_들어간다() {
-        var iceberg = new io.deltazium.backend.iceberg.IcebergProperties(
+        var iceberg = io.deltazium.backend.iceberg.IcebergProperties.minio(
                 "jdbc:postgresql://localhost:5433/iceberg_catalog", "u", "p",
                 "s3://wh/warehouse", "http://localhost:9010", "ak", "sk");
         var changelog = new io.deltazium.backend.iceberg.ChangelogTableService(iceberg);
@@ -57,6 +60,7 @@ class RecoveryServiceTest {
                 "key-columns=ID",
                 "topic=dz-recovery.dz.cdc_auto_100",
                 "bootstrap=localhost:9092",
-                "catalog-uri=jdbc:postgresql://localhost:5433/iceberg_catalog");
+                "catalog.uri=jdbc:postgresql://localhost:5433/iceberg_catalog",
+                "catalog.catalog-impl=org.apache.iceberg.jdbc.JdbcCatalog");
     }
 }

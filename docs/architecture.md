@@ -70,6 +70,12 @@ MySQL   ─Debezium MySQL─┘        (topic.prefix = 소스 식별자)   (5절
 | converter | JSON (schemas.enabled=true) | Avro/Schema Registry는 미결 (10절) — 컴포넌트 수 절약 |
 | 인프라 | docker-compose | Kafka는 KRaft 단일 노드, Connect는 단일 워커 |
 
+**프로파일 설정 위치 (2026-09-07, TODO ③)**: `deploy/env.sh`의 `DZ_STORAGE_PROFILE`(기본
+minio) + `deploy/env.local.sh`(git-ignore, R2 전환 시 오버라이드) → backend
+`deltazium.iceberg.*`(`IcebergProperties.catalogProperties()`가 단일 진원지) → iceberg-sink
+배포·recovery-job 기동 인자가 그 맵을 그대로 공유한다. 절차: docs/operations.md
+"저장소 프로파일 전환 절차".
+
 ## 4. 토픽·커넥터 구성
 
 - Debezium 기본대로 **테이블당 토픽 1개** (`<prefix>.<schema>.<table>`). 이 구성이 DDL 워크플로의 "테이블 단위 정지"(7절)를 가능하게 하는 전제다.

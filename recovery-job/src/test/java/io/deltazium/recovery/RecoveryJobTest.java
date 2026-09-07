@@ -2,6 +2,7 @@ package io.deltazium.recovery;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.GenericRecord;
@@ -11,6 +12,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertIterableEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 파일명 : RecoveryJobTest.java
@@ -27,8 +29,27 @@ import static org.junit.jupiter.api.Assertions.assertIterableEquals;
  * --------------------------------------------------
  * 26. 09. 05.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ③ 저장소 프로파일: "catalog." 접두 인자 추출
+ * |                          | (catalogProperties) 단위 테스트 추가
+ * --------------------------------------------------
  */
 class RecoveryJobTest {
+
+    @Test
+    void catalog_접두_인자만_카탈로그_속성으로_추출된다() {
+        Map<String, String> args = Map.of(
+                "catalog.uri", "jdbc:postgresql://x/iceberg_catalog",
+                "catalog.jdbc.user", "u",
+                "table", "changelog_dz.cdc_t1",
+                "from-ts-ms", "1");
+
+        Map<String, String> props = RecoveryJob.catalogProperties(args);
+
+        assertEquals(2, props.size());
+        assertEquals("jdbc:postgresql://x/iceberg_catalog", props.get("uri"));
+        assertEquals("u", props.get("jdbc.user"));
+        assertTrue(!props.containsKey("table") && !props.containsKey("from-ts-ms"));
+    }
 
     private static final Schema SCHEMA = new Schema(
             Types.NestedField.optional(1, "op", Types.StringType.get()),

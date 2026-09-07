@@ -1,10 +1,9 @@
 package io.deltazium.backend.iceberg;
 
-import java.util.Map;
-
+import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.TableIdentifier;
-import org.apache.iceberg.jdbc.JdbcCatalog;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
@@ -31,11 +30,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: topicPrefix를 생성자 인자에서 메서드
  * |                          | 인자로 전환(ChangelogTableService 시그니처 변경 반영)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ③ 저장소 프로파일: IcebergProperties.minio
+ * |                          | 팩토리로 생성, 검증용 카탈로그도 CatalogUtil.buildIcebergCatalog로
+ * |                          | 열어(props.catalogProperties() 재사용) ChangelogTableService와
+ * |                          | 같은 경로를 검증한다
+ * --------------------------------------------------
  */
 @EnabledIfSystemProperty(named = "integration", matches = "true")
 class ChangelogTableServiceIT {
 
-    private final IcebergProperties props = new IcebergProperties(
+    private final IcebergProperties props = IcebergProperties.minio(
             "jdbc:postgresql://localhost:5433/iceberg_catalog", "deltazium", "deltazium",
             "s3://deltazium-warehouse/warehouse", "http://localhost:9010",
             "deltazium", "deltazium123");
@@ -47,18 +51,7 @@ class ChangelogTableServiceIT {
         service.ensureChangelogTable("probe", "ITPROBE", "T1"); // 멱등
 
         // sink와 같은 카탈로그 이름("iceberg")으로 열어야 같은 테이블이 보인다
-        JdbcCatalog catalog = new JdbcCatalog();
-        catalog.initialize("iceberg", Map.of(
-                "uri", props.catalogUri(),
-                "jdbc.user", props.catalogUser(),
-                "jdbc.password", props.catalogPassword(),
-                "warehouse", props.warehouse(),
-                "io-impl", "org.apache.iceberg.aws.s3.S3FileIO",
-                "s3.endpoint", props.s3Endpoint(),
-                "s3.path-style-access", "true",
-                "s3.access-key-id", props.s3AccessKey(),
-                "s3.secret-access-key", props.s3SecretKey(),
-                "client.region", "us-east-1"));
+        Catalog catalog = CatalogUtil.buildIcebergCatalog("iceberg", props.catalogProperties(), null);
         TableIdentifier id = TableIdentifier.of("changelog_probe", "itprobe_t1");
         assertThat(catalog.tableExists(id)).isTrue();
         Table table = catalog.loadTable(id);

@@ -249,6 +249,39 @@ Debezium 커넥터가 배포될 때 일어난다. 그래서 순서는:
    확인 — 이게 통과해야 "두 번째 소스가 실제로 동작한다"고 말할 수 있다(TODO ② 검증 기준).
    2026-09-07 스모크에서 실제로 통과 확인(docs/internals.md "PG 소스 실 배선 스모크 결과").
 
+### 저장소 프로파일 전환 절차 (MinIO ↔ R2, 다중 소스·다중 타깃 ③, 2026-09-07)
+
+changelog 저장소는 **설치당 하나**(architecture.md 2.2·3절) — 테이블별로 나뉘지 않는다.
+프로파일을 바꾸면 카탈로그가 통째로 바뀌므로 기존 changelog와 새 changelog가 같은 카탈로그에
+섞이지 않는다(자동 이전 없음). SaaS DW 타깃(TODO ④)을 쓰려면 R2가 전제다 — 사내 MinIO에
+외부 컴퓨트가 닿지 못하기 때문.
+
+**준비 (R2로 전환하는 경우)**: `deploy/env.local.sh.example`의 안내대로 R2 버킷 생성 →
+R2 Data Catalog 활성화(카탈로그 URI·warehouse 표시값 확인) → API 토큰 발급(R2+Data Catalog,
+Admin Read & Write) → `deploy/env.local.sh`(git-ignore)에 값 채우기.
+
+**전환 절차** (사용자 확인 후 메인 세션이 수행 — 라이브 인프라 재기동·등록 전환 포함):
+1. 전체 정지: `./deploy/dzadmin all stop`.
+2. 등록된 테이블을 전부 해제한다 — **changelog 보존(기본값)을 유지**, dropChangelog는
+   체크하지 않는다. 기존 MinIO changelog는 그대로 남는다(카탈로그 전환 후에도 조회는
+   가능 — 단, backend가 한 번에 하나의 프로파일만 바라보므로 전환 후에는 다시 minio로
+   되돌리기 전까지 볼 수 없다).
+3. `deploy/env.local.sh`에 `DZ_STORAGE_PROFILE=r2`와 R2 값을 채운다(또는 되돌릴 땐 파일을
+   비우거나 지운다 — 기본값 minio로 복귀).
+4. `./deploy/dzadmin all start` — start-infra가 r2 프로파일이면 MinIO·iceberg_catalog DB를
+   건너뛴다(메타데이터 DB인 PostgreSQL 자체는 계속 필요).
+5. 같은 테이블들을 재등록(재스냅샷) — 새 프로파일의 카탈로그에 changelog 테이블이 처음부터
+   다시 생성된다(`ChangelogTableService.ensureChangelogTable`). NO_DATA로 등록하면 재스냅샷
+   부담은 피하지만 전환 이전 이력은 새 changelog에 없다 — 복구 리허설이 필요 없다면 무방.
+6. UI 연결 화면의 "changelog 저장소" 카드에서 프로파일·외부 접근 가능 여부가 바뀐 것을
+   확인하고 [연결 테스트]로 새 카탈로그 namespace 조회가 되는지 확인한다.
+7. **R2 커밋 시간 실측**: iceberg-sink의 `iceberg.control.commit.interval-ms`(60000)와
+   실제 커밋 완료 시각 차이를 changelog 브라우저(마지막 커밋 시각)로 관찰해 기록한다 —
+   REST 카탈로그·R2 오브젝트 스토리지의 지연이 MinIO(로컬)보다 큰지 확인하는 목적.
+
+**주의**: 프로파일 전환은 설치 작업이라 UI에 전환 버튼을 두지 않는다(카드는 읽기 전용) —
+`deploy/env.local.sh` 편집 + 재기동이 유일한 경로다.
+
 ### DDL 변경
 소스 DDL은 자동으로 수집돼 DDL 이력 탭에 쌓인다.
 - 승인 → 타깃 이름(스키마·테이블)이 다르면 치환해서 타깃에 실행 후 재개

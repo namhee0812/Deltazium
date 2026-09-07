@@ -461,6 +461,58 @@ connect-distributed.properties`).
 실제 컬럼 폭(100)보다 넉넉하게 잡힌다(타입 매핑이 폭까지 보존하지 않는다는 한계, 기존
 기록과 동일 — mapType은 정밀도·길이를 다루지 않는다).
 
+## 다중 소스·다중 타깃 ③ 저장소 프로파일(MinIO/R2) 구현 판단 (2026-09-07)
+
+**속성 단일 진원지.** `IcebergProperties.catalogProperties()`가 Iceberg 카탈로그 속성
+(`Map<String,String>`)의 유일한 조립처다 — 반환 키는 Iceberg 표준 속성 이름 그대로
+(`CatalogProperties`·`S3FileIOProperties` 상수와 동일 문자열: `uri`·`warehouse`·`io-impl`·
+`s3.endpoint`·`client.region` 등)라 세 소비처가 접두만 붙여 재사용한다: backend 자신은
+그대로 `CatalogUtil.buildIcebergCatalog("iceberg", map, null)`에, iceberg-sink 배포는
+`"iceberg.catalog." + key`로 extraConfig에, recovery-job 기동 인자는 `"catalog." + key + "="`
+반복 인자로. `ChangelogTableService`·`ChangelogBrowserService`는 `JdbcCatalog` 타입 참조를
+전부 제거하고 `org.apache.iceberg.catalog.Catalog`(+ namespace 조작이 필요한 곳만
+`SupportsNamespaces`로 캐스팅)로 바꿨다 — REST 카탈로그도 같은 인터페이스를 구현하므로
+프로파일 분기가 이 두 서비스 안으로 들어오지 않는다.
+
+**minio 프로파일은 회귀 고정.** 종전엔 `connectors/iceberg-sink.json.tmpl`에 `iceberg.catalog.*`
+9개 키가 하드코딩돼 있었다. 이번에 템플릿에서 빼고 backend가 `catalogProperties()` 결과를
+extraConfig로 주입하는 방식으로 옮기면서, `RegistrationServiceTest`와 신규
+`IcebergPropertiesTest`에 minio 프로파일 결과가 종전 하드코딩 값과 키·값이 완전히 같은지
+검증하는 테스트를 추가했다 — 이 리팩터로 라이브 minio 배선의 동작이 바뀌면 안 되기 때문.
+
+**R2 자격 위임.** Cloudflare 공식 문서(Spark 예시가 S3 액세스 키 없이 동작)에 근거해
+R2 프로파일은 기본적으로 S3 키를 넣지 않는다(RESTCatalog가 vended credentials로 위임).
+위임이 안 되는 클라이언트를 붙일 상황을 대비해 `r2S3Endpoint`/`r2S3AccessKey`/
+`r2S3SecretKey`가 전부 채워졌을 때만 `s3.endpoint`·`s3.access-key-id`·`s3.secret-access-key`를
+추가하는 선택적 분기를 뒀다 — 실제 R2 계정으로 위임 성공 여부를 확인한 적은 아직 없다
+(사용자 계정 준비 후 실 스모크 대기, docs/TODO.md ③).
+
+**iceberg-open-api REST 픽스처를 못 쓴 이유.** `org.apache.iceberg:iceberg-open-api:1.11.0`은
+`test-fixtures`/`tests` classifier로만 배포되고(plain jar 없음), `RESTCatalogServer`/
+`RESTServerExtension`(test-fixtures)이 로컬 REST 카탈로그를 띄운다. 그런데 이 서버 구현이
+Jetty 12 EE10 서블릿 스택(`jetty-server`+`jetty-ee10-servlet`+`jetty-compression-gzip`)과
+sqlite JDBC 백엔드 카탈로그에 의존하고, Iceberg 소스의 `iceberg-open-api` gradle 모듈은
+testFixtures 의존성으로 `iceberg-aws`·`iceberg-gcp`·`iceberg-bigquery`·`iceberg-azure`·
+`hadoop3.common`까지 끌어온다(별도로 shade한 "runtime" fat jar는 Maven Central에 게시되지
+않음 — 소스의 `shadowJar` 산출물은 로컬 빌드 전용). 이 프로젝트 테스트 스코프에 GCP/Azure/
+BigQuery SDK와 Jetty EE10 서블릿 스택을 통째로 끌어오는 비용이 토이 프로젝트의 "REST 카탈로그
+속성 맵이 맞는지" 검증 목적에 비해 과도하다고 판단해 픽스처 도입을 접었다. 대신
+`IcebergPropertiesTest`·`ChangelogStorageServiceTest`(단위, 프로파일별 속성 맵·요약 파싱)로
+대체했고, R2 프로파일에서 실제 namespace·테이블 생성이 되는지는 R2 실 계정 스모크로만
+검증한다(TODO ③ 미결).
+
+**recovery-job 비밀값 노출 미해결.** `RecoveryService.buildCommand`는 여전히 카탈로그 비밀값
+(jdbc.password·token)을 프로세스 인자로 넘긴다 — `catalog.<key>=<value>` 형태로 바뀌었을 뿐
+전달 방식(ps 노출)은 종전과 동일하다. 토이 프로젝트 범위에서 우선순위를 낮게 뒀다(환경변수나
+임시 파일로 옮기는 개선은 별도 결정 필요, docs/TODO.md).
+
+**FileIO 접근 확인의 대체 구현.** `ChangelogStorageService.test()`는 "warehouse 경로 접근
+확인"을 warehouse 루트가 아니라 임의의 changelog 테이블 하나의 `Table.io().newInputFile(...)`
+로 대신한다 — `org.apache.iceberg.catalog.Catalog` 인터페이스가 FileIO를 공개 API로 노출하지
+않고(구현체별로 `BaseMetastoreCatalog`의 protected `io()`), 카탈로그 구현에 관계없이 쓸 수 있는
+공개 경로가 테이블의 `io()`뿐이기 때문. 등록된 changelog 테이블이 하나도 없으면(설치 직후)
+이 단계는 건너뛰고 namespace 조회 성공만으로 연결성을 판정한다.
+
 ## 개발 환경 특이사항
 
 - vite dev 서버는 `usePolling` (vite.config.ts): 이 서버에서 inotify 감시가 변경을

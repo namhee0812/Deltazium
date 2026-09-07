@@ -27,7 +27,10 @@ deltazium:
   runtime-dir: ${DZ_RT:${user.home}/deltazium-runtime}
   disk-warn-pct: 85
   # changelog 저장소 (Deltazium 자체 인프라 — 사용자 등록 대상 아님, deploy/env.sh와 일치)
+  # 저장소 프로파일(MinIO/R2, architecture.md 2.2·3절, TODO ③) — DZ_STORAGE_PROFILE(deploy/env.sh)이
+  # 단일 진원지. minio 프로파일 키만 쓰면 종전과 완전히 동일하게 동작한다(IcebergProperties.minio 경로).
   iceberg:
+    profile: ${DZ_STORAGE_PROFILE:minio}
     catalog-uri: jdbc:postgresql://localhost:5433/iceberg_catalog
     catalog-user: deltazium
     catalog-password: deltazium
@@ -35,6 +38,15 @@ deltazium:
     s3-endpoint: http://localhost:9010
     s3-access-key: deltazium
     s3-secret-key: deltazium123
+    # r2 프로파일 전용 — deploy/env.local.sh.example 참고. 미설정이면 전부 빈 문자열(minio
+    # 프로파일에서는 쓰이지 않는다)
+    r2-uri: ${DZ_R2_CATALOG_URI:}
+    r2-warehouse: ${DZ_R2_WAREHOUSE:}
+    r2-bucket: ${DZ_R2_BUCKET:}
+    r2-token: ${DZ_R2_TOKEN:}
+    r2-s3-endpoint: ${DZ_R2_S3_ENDPOINT:}
+    r2-s3-access-key: ${DZ_R2_ACCESS_KEY:}
+    r2-s3-secret-key: ${DZ_R2_SECRET_KEY:}
     # namespace는 설정하지 않는다 — ChangelogTableService가 topic-prefix에서
     # changelog_<prefix>로 계산한다 (다중 소스 대응, architecture.md 5.1절)
   assist:

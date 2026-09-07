@@ -12,3 +12,4 @@ dist/
 # 로컬 상태
 *.log
 .env
+deploy/env.local.sh

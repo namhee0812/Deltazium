@@ -125,6 +125,12 @@
       시도(불가 시 사유 기록), recovery-job 왕복 테스트. **R2 실 스모크는 사용자 계정 준비 후**:
       버킷·카탈로그 활성화·토큰 → env.local.sh → 프로파일 전환 → 테이블 재등록 → 커밋 시간 실측
     - 프로파일 전환은 changelog 이전이 따르는 설치 작업 — 절차를 operations.md에
+    - **진행 상태(2026-09-07, feature/storage-profile)**: 코드 구현·단위 테스트·문서 반영
+      완료(속성 단일 진원지, sink extraConfig 주입, recovery-job `catalog.<key>` 인자,
+      deploy 분기 5종, UI changelog 저장소 카드+API). iceberg-open-api REST 픽스처는
+      의존성 비용 과다로 보류(사유 internals.md) — 대체로 단위 테스트만 존재. **미검증**:
+      minio 프로파일 라이브 무변경 재기동 확인, R2 실 계정 스모크(버킷·카탈로그 활성화·
+      토큰 준비 필요) — 메인 세션 확인 필요.
   - [ ] **④ DW 계열: Snowflake · Databricks** (설계 문서 v2:
         https://claude.ai/code/artifact/581e7a1e-b7ca-4e0b-b6d6-556d8464c3cc — 단, 증분 기준
         "SCN 워터마크"와 복구 "재발행 → 중복 append"는 2026-09-05 논의로 `_pos` 워터마크·되감기로 대체됨)

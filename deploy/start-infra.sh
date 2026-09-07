@@ -30,16 +30,22 @@ else
   "$DZ_PG_BIN/pg_ctl" -D "$DZ_PG_DATA" -l "$DZ_LOG_DIR/pg.log" \
     -o "-p $DZ_PG_PORT -k /tmp -c listen_addresses=localhost" start
   wait_port "$DZ_PG_PORT" PostgreSQL
-  # 데이터베이스 2개: 메타데이터(deltazium), Iceberg 카탈로그(iceberg_catalog)
-  for db in "$DZ_PG_DB" iceberg_catalog; do
+  # 데이터베이스: 메타데이터(deltazium)는 프로파일 불문 항상 필요.
+  # Iceberg JDBC 카탈로그(iceberg_catalog)는 minio 프로파일 전용 — r2는 R2 Data Catalog(REST)를
+  # 쓰므로 이 DB가 필요 없다 (TODO ③, architecture.md 3절).
+  dbs=("$DZ_PG_DB")
+  [ "$DZ_STORAGE_PROFILE" = "minio" ] && dbs+=("iceberg_catalog")
+  for db in "${dbs[@]}"; do
     "$DZ_PG_BIN/psql" -h localhost -p "$DZ_PG_PORT" -U "$DZ_PG_USER" -d postgres -tc \
       "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1 || \
       "$DZ_PG_BIN/createdb" -h localhost -p "$DZ_PG_PORT" -U "$DZ_PG_USER" "$db"
   done
 fi
 
-## 2. MinIO
-if is_up "$DZ_MINIO_PORT"; then
+## 2. MinIO — r2 프로파일이면 건너뛴다 (changelog 저장소가 R2, TODO ③)
+if [ "$DZ_STORAGE_PROFILE" != "minio" ]; then
+  echo "[minio] 저장소 프로파일=$DZ_STORAGE_PROFILE — 기동하지 않음"
+elif is_up "$DZ_MINIO_PORT"; then
   echo "[minio] 이미 기동됨 (port $DZ_MINIO_PORT)"
 else
   MINIO_ROOT_USER="$DZ_MINIO_ROOT_USER" MINIO_ROOT_PASSWORD="$DZ_MINIO_ROOT_PASSWORD" \
