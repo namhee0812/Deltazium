@@ -28,8 +28,9 @@ ADMIN_DB="$DZ_PG_DB"
 CAPTURE_ROLE=dz_capture
 CAPTURE_PASSWORD="${DZ_PG_CAPTURE_PASSWORD:-dz_capture_pw}"
 
-run() { # sql
-  "$PSQL" -h "$PGHOST" -p "$PGPORT" -U "$ADMIN_USER" -d "$ADMIN_DB" -v ON_ERROR_STOP=1 -c "$1"
+run() { # sql [psql 추가 옵션...] — 첫 인자가 SQL, 나머지(-tA 등)는 psql에 그대로 전달
+  local sql="$1"; shift
+  "$PSQL" -h "$PGHOST" -p "$PGPORT" -U "$ADMIN_USER" -d "$ADMIN_DB" -v ON_ERROR_STOP=1 "$@" -c "$sql"
 }
 
 echo "=== 1. wal_level 확인 ==="

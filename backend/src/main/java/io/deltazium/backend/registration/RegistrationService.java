@@ -64,6 +64,8 @@ import org.springframework.transaction.annotation.Transactional;
  * |                          | 판정을 (source_connection_id, schema, table)로 전환. jdbc-sink
  * |                          | 타깃을 테이블별 targetConnectionId에서 조회하도록 수정(종전엔
  * |                          | 첫 등록 호출의 target 하나를 전체에 썼다)
+ * |                          | iceberg-sink의 control 토픽을 소스별(control-iceberg-<prefix>)로
+ * |                          | — 공유 control 토픽의 백로그 재생으로 커밋 응답이 늦어지는 실측 반영
  * --------------------------------------------------
  */
 @Service
@@ -347,6 +349,9 @@ public class RegistrationService {
         Map<String, String> icebergVars = new HashMap<>();
         icebergVars.put("connector_name", ConnectorNames.icebergSink(prefix));
         icebergVars.put("topics", topics);
+        // control 토픽도 소스별 — 공유 시 새 인스턴스의 task가 다른 소스의 control 백로그를
+        // 처음부터 읽느라 커밋 응답이 수 분 늦어진다 (2026-09-07 실측, connectors/README.md)
+        icebergVars.put("topic_prefix", prefix);
         icebergVars.put("catalog_jdbc_url", iceberg.catalogUri());
         icebergVars.put("catalog_jdbc_user", iceberg.catalogUser());
         icebergVars.put("catalog_jdbc_password", iceberg.catalogPassword());
