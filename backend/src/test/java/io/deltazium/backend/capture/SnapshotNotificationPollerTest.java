@@ -1,6 +1,7 @@
 package io.deltazium.backend.capture;
 
 import io.deltazium.backend.events.TableEventService;
+import io.deltazium.backend.registry.DbConnectionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -25,6 +26,9 @@ import static org.mockito.Mockito.verify;
  * --------------------------------------------------
  * 26. 08. 04.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 생성자 인자를 topicPrefix(String)에서
+ * |                          | DbConnectionService로 교체(전역 topic-prefix 제거)
+ * --------------------------------------------------
  */
 class SnapshotNotificationPollerTest {
 
@@ -34,7 +38,7 @@ class SnapshotNotificationPollerTest {
     @BeforeEach
     void setUp() {
         events = mock(TableEventService.class);
-        poller = new SnapshotNotificationPoller(events, "localhost:9092", "dz");
+        poller = new SnapshotNotificationPoller(events, mock(DbConnectionService.class), "localhost:9092");
     }
 
     @Test

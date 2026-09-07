@@ -27,13 +27,17 @@ import org.springframework.stereotype.Service;
  * 26. 08. 04.       | 최남희  | stopAndAwait·deleteOffsets 분리 — truncate 재구축이
  * |                          | 정지와 offset 삭제 사이에 lag 소진·truncate를 끼울 수 있게
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: "source" 단일 템플릿을
+ * |                          | source-oracle·source-postgresql로 분리(소스 dbType별 설정 키가
+ * |                          | 달라 하나로 표현 불가, connectors/README.md)
+ * --------------------------------------------------
  */
 @Service
 public class ConnectorDeployService {
 
     /** 배포 허용 템플릿 (connectors/ 디렉터리와 1:1). */
     private static final Set<String> TEMPLATES = Set.of(
-            "source", "jdbc-sink", "iceberg-sink", "recovery-sink");
+            "source-oracle", "source-postgresql", "jdbc-sink", "iceberg-sink", "recovery-sink");
 
     private final TemplateRenderer renderer;
     private final ConnectClient connect;

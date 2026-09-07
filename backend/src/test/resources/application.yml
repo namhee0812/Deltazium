@@ -21,7 +21,6 @@ deltazium:
     template-dir: ../connectors
   kafka:
     bootstrap: localhost:9092
-  topic-prefix: dz
   runtime-dir: /tmp
   disk-warn-pct: 85
   iceberg:

@@ -5,10 +5,39 @@
 
 | 템플릿 | 커넥터 | 역할 |
 |---|---|---|
-| source.json.tmpl | Debezium Oracle source | SRC 캡처. `table.include.list` = 등록 테이블 목록 |
+| source-oracle.json.tmpl | Debezium Oracle source | Oracle 소스 캡처. `table.include.list` = 그 소스의 등록 테이블 목록 |
+| source-postgresql.json.tmpl | Debezium PostgreSQL source | PostgreSQL 소스 캡처 (**2026-09-07 추가**, 다중 소스·다중 타깃 ②) — pgoutput, publication 자동 생성 |
 | jdbc-sink.json.tmpl | Debezium JDBC sink | 실 적재 (PK upsert 멱등 + delete) |
 | iceberg-sink.json.tmpl | Apache Iceberg sink | changelog append 적재 (소스별 인스턴스 1개 — 4절) |
 | recovery-sink.json.tmpl | Debezium JDBC sink | jdbc-sink와 동일 설정, 구독 토픽만 복구 토픽. 평시 정지 |
+
+RegistrationService가 소스 커넥션의 `dbType`으로 `source-oracle`/`source-postgresql` 중 하나를
+고른다(DictionaryRouter와 같은 분기 지점, architecture.md 8절 "소스별 분기가 공식적으로 존재하는
+유일한 자리"). 인스턴스 이름·개수 규칙은 4절 참고 — source·iceberg-sink는 소스 커넥션당 1개.
+
+## source-postgresql 확정 선택의 근거 (2026-09-07, 다중 소스·다중 타깃 ②)
+
+Debezium PostgreSQL 커넥터 3.6/stable 문서 확인(WebSearch 요약 기준 — 원문 페이지가 403으로
+직접 fetch 불가했음):
+https://debezium.io/documentation/reference/stable/connectors/postgresql.html
+
+- `plugin.name=pgoutput`: PostgreSQL 10+ 네이티브 논리 복제 플러그인 — 별도 서버 확장 설치 불필요.
+- `publication.autocreate.mode=filtered`: `table.include.list`에 있는 테이블만 묶은 publication을
+  커넥터가 자동 생성한다. 연결 계정이 해당 테이블 소유자이거나 그에 준하는 권한이 있어야 한다
+  (deploy/pg-source-setup.sh가 준비하는 `dz_capture` 롤 기준으로 검증 예정 — 8절 사전 점검은
+  REPLICATION 권한까지만 확인하고 publication 생성 권한은 확인하지 않는다, 알려진 갭).
+  `slot.name`·`publication.name`은 `dz_<topic.prefix>`로 소스별로 겹치지 않게 한다.
+  `topic.prefix`가 소스 식별자이므로 슬롯·publication 충돌은 사실상 없다.
+  Debezium은 `snapshot.mode` 값(initial/no_data/initial_only/never)을 Oracle 커넥터와 공유하는
+  이름으로 지원해 backend가 두 템플릿에 같은 값("initial"/"no_data")을 넘길 수 있다.
+- **schema change topic·schema history 없음** — PostgreSQL 커넥터는 DDL을 로그에서 파싱하지
+  않고 논리 복제 프로토콜 + JDBC introspection으로 스키마를 얻는다. 그래서
+  `include.schema.changes`·`schema.history.internal.*` 설정 자체가 없다(Oracle 템플릿에서
+  그대로 가져오지 말 것). DDL 감지는 스키마 지문 비교로 대체한다(SchemaFingerprintService, 7절).
+- `notification.enabled.channels`/`provide.transaction.metadata`는 Debezium 엔진 공용 기능이라
+  Oracle과 동일하게 설정한다.
+- REPLICA IDENTITY FULL은 테이블 DDL(연결 대상 DB에서 실행)이지 커넥터 설정이 아니다 —
+  등록 사전 점검에서 미설정 시 승인 후 적용한다(Oracle supplemental logging과 같은 UX, 8절).
 
 ## 확정 선택의 근거
 
