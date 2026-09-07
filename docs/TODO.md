@@ -55,9 +55,12 @@
       생성이 실패(`Unable to create filtered publication`) — 사전 점검·준비 스크립트에
       GRANT 추가. ③ 설정 3건(use.reduction.buffer, iceberg.control 토픽 소스별,
       offset.flush.interval.ms=10000)은 f703b7d로 이미 반영, 근거는 connectors/README.md·
-      docs/internals.md "PG 소스 실 배선 스모크 결과"에 기록. 남은 것: 메인 세션이
-      feature/pg-source-fix 병합 후 재감지(기존 잘못 저장된 ddl_events 행은 다음 지문
-      변경 시 정상 형식으로 갱신됨, 별도 마이그레이션 없음) + 정합 검증(SRC/TGT).
+      docs/internals.md "PG 소스 실 배선 스모크 결과"에 기록. 수정 병합(3517375) 후 재감지
+      → 이벤트 40 승인 → 타깃 ALTER 적용 → sink 재개 → NOTE 컬럼 포함 행 적재까지 확인(2026-09-07
+      14:00). 트리클 INSERT 24건 SRC/TGT 합계 일치. 잘못 저장된 이벤트 39는 거부 처리.
+      **② 완료.** 남은 소소한 것: PG 소스의 스냅샷 notification 이벤트가 테이블명 자리에
+      `dz-source`로 표기됨(레거시 라벨, 표시만) / RecoveryService.verify() 체크섬 PG 소스 미지원
+      (PG 소스 복구 리허설 시 결정).
       결정 필요로 남은 것: RecoveryService.verify()의 체크섬(ORA_HASH)이 Oracle 전용이라
       PostgreSQL 소스의 SRC측 체크섬 검증은 아직 미지원(docs/internals.md 기록) — PG 소스
       복구 리허설에서 정합 검증을 어떻게 할지 결정 필요.
