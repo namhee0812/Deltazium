@@ -32,6 +32,10 @@ import org.springframework.stereotype.Service;
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 고정 namespace 하나 대신 카탈로그의
+ * |                          | changelog_* 네임스페이스 전부를 훑도록 전환 — 소스가 늘면
+ * |                          | namespace도 늘어난다(namespace가 소스별, 5.1절)
+ * --------------------------------------------------
  */
 @Service
 public class ChangelogBrowserService {
@@ -58,11 +62,16 @@ public class ChangelogBrowserService {
         this.tables = tables;
     }
 
-    /** changelog 네임스페이스의 모든 테이블 — 등록 해제 후 보존된 changelog도 보인다. */
+    /** changelog_* 네임스페이스 전부의 테이블 — 등록 해제 후 보존된 changelog도, 다른 소스의
+     * changelog도 보인다 (namespace가 소스별, 5.1절). */
     public List<ChangelogInfo> list() {
         List<ChangelogInfo> result = new ArrayList<>();
-        for (TableIdentifier id : tables.catalog().listTables(Namespace.of(tables.namespace()))) {
-            result.add(describe(id));
+        for (Namespace ns : tables.catalog().listNamespaces()) {
+            if (ns.length() == 1 && ns.level(0).startsWith("changelog_")) {
+                for (TableIdentifier id : tables.catalog().listTables(ns)) {
+                    result.add(describe(id));
+                }
+            }
         }
         result.sort(Comparator.comparing(ChangelogInfo::table));
         return result;

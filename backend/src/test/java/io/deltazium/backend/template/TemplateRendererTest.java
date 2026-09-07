@@ -27,6 +27,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * --------------------------------------------------
  * 26. 07. 24.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: source 템플릿 분리(source-oracle·
+ * |                          | source-postgresql) 반영해 리포 템플릿 5종 렌더링 검증
+ * --------------------------------------------------
  */
 class TemplateRendererTest {
 
@@ -65,7 +68,7 @@ class TemplateRendererTest {
     }
 
     @Test
-    void 실제_리포_템플릿_4종이_전부_렌더링된다() throws Exception {
+    void 실제_리포_템플릿_5종이_전부_렌더링된다() throws Exception {
         // repo의 connectors/를 직접 검증 — 템플릿과 렌더러의 placeholder 규칙이 어긋나면 여기서 잡힌다
         TemplateRenderer real = new TemplateRenderer(findRepoConnectors());
         Map<String, String> vars = Map.ofEntries(
@@ -87,11 +90,22 @@ class TemplateRendererTest {
                 Map.entry("s3_access_key", "ak"), Map.entry("s3_secret_key", "sk"),
                 Map.entry("iceberg_tables", "changelog.src_t1"));
         ObjectMapper json = new ObjectMapper();
-        for (String t : new String[] {"source", "jdbc-sink", "iceberg-sink", "recovery-sink"}) {
+        for (String t : new String[] {"source-oracle", "jdbc-sink", "iceberg-sink", "recovery-sink"}) {
             JsonNode node = json.readTree(real.render(t, vars));
             assertThat(node.get("name")).isNotNull();
             assertThat(node.get("config").get("connector.class").asText()).isNotEmpty();
         }
+
+        // source-postgresql은 placeholder 집합이 달라 별도 var 맵으로 검증
+        Map<String, String> pgVars = Map.ofEntries(
+                Map.entry("connector_name", "n"), Map.entry("pg_host", "h"), Map.entry("pg_port", "5432"),
+                Map.entry("pg_user", "u"), Map.entry("pg_password", "p"), Map.entry("pg_dbname", "cdc"),
+                Map.entry("topic_prefix", "pgsrc"), Map.entry("table_include_list", "cdc_src.t1"),
+                Map.entry("snapshot_mode", "initial"), Map.entry("slot_name", "dz_pgsrc"),
+                Map.entry("publication_name", "dz_pgsrc"));
+        JsonNode pgNode = json.readTree(real.render("source-postgresql", pgVars));
+        assertThat(pgNode.get("name")).isNotNull();
+        assertThat(pgNode.get("config").get("connector.class").asText()).isNotEmpty();
     }
 
     private static String findRepoConnectors() {

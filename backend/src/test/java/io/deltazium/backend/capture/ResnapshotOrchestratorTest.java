@@ -40,6 +40,10 @@ import static org.mockito.Mockito.when;
  * --------------------------------------------------
  * 26. 08. 05.       | 최남희  | 최초 생성 (RegistrationServiceTest의 resnapshot 테스트 이관)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 소스 커넥터 이름이 dz-source-<prefix>로
+ * |                          | 바뀌어 소스 커넥션 mock(topicPrefix="dz") 추가, redeployWithSnapshotMode
+ * |                          | 시그니처에 sourceConnectionId 추가
+ * --------------------------------------------------
  */
 class ResnapshotOrchestratorTest {
 
@@ -56,6 +60,8 @@ class ResnapshotOrchestratorTest {
 
     private final RegisteredTable table = new RegisteredTable(
             1L, "CDC", "T1", 10L, 20L, "TGT", "T1", "INITIAL");
+    private final DbConnection source = new DbConnection(
+            10L, "src", "ORACLE", "SOURCE", "host", 1521, "PDB", "dbz", "pw", "dz");
     private final DbConnection target = new DbConnection(
             20L, "tgt", "ORACLE", "TARGET", "host", 1521, "PDB", "apply", "pw");
 
@@ -71,6 +77,7 @@ class ResnapshotOrchestratorTest {
         TableEventService events = mock(TableEventService.class);
 
         when(registrations.list()).thenReturn(List.of(table));
+        when(connections.get(10L)).thenReturn(source);
         when(connections.get(20L)).thenReturn(target);
         when(metrics.groupLag(anyString(), anyString())).thenReturn(0L);
         when(notifications.status()).thenReturn(
@@ -80,7 +87,7 @@ class ResnapshotOrchestratorTest {
                 {"status":{"connector":{"state":"RUNNING"},"tasks":[{"id":0,"state":"RUNNING"}]}}"""));
 
         orchestrator = new ResnapshotOrchestrator(registrations, connections, deploy,
-                connect, metrics, gate, notifications, events, "dz");
+                connect, metrics, gate, notifications, events);
     }
 
     private void waitForPhase(ResnapshotOrchestrator.Phase expected) {
@@ -110,10 +117,10 @@ class ResnapshotOrchestratorTest {
         waitForPhase(ResnapshotOrchestrator.Phase.DONE);
 
         var order = inOrder(deploy, registrations);
-        order.verify(deploy).stopAndAwait("dz-source");
-        order.verify(deploy).deleteOffsets("dz-source");
-        order.verify(registrations).redeployWithSnapshotMode("initial");
-        order.verify(deploy).resumeConnector("dz-source");
+        order.verify(deploy).stopAndAwait("dz-source-dz");
+        order.verify(deploy).deleteOffsets("dz-source-dz");
+        order.verify(registrations).redeployWithSnapshotMode(10L, "initial");
+        order.verify(deploy).resumeConnector("dz-source-dz");
     }
 
     @Test
@@ -145,9 +152,9 @@ class ResnapshotOrchestratorTest {
         waitForPhase(ResnapshotOrchestrator.Phase.DONE);
 
         var order = inOrder(deploy, gate);
-        order.verify(deploy).stopAndAwait("dz-source");
+        order.verify(deploy).stopAndAwait("dz-source-dz");
         order.verify(gate).truncate(target, "TGT.T1");
-        order.verify(deploy).deleteOffsets("dz-source");
+        order.verify(deploy).deleteOffsets("dz-source-dz");
     }
 
     @Test
@@ -162,7 +169,7 @@ class ResnapshotOrchestratorTest {
         orchestrator.cancel();
         waitForPhase(ResnapshotOrchestrator.Phase.CANCELLED);
         // 원복 = source resume (offset은 안 건드림)
-        org.mockito.Mockito.verify(deploy).resumeConnector("dz-source");
+        org.mockito.Mockito.verify(deploy).resumeConnector("dz-source-dz");
         org.mockito.Mockito.verify(deploy, org.mockito.Mockito.never()).deleteOffsets(anyString());
     }
 

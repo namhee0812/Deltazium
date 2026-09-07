@@ -10,6 +10,8 @@
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: topicPrefix 추가(SOURCE 전용, 소스 식별자)
+ * --------------------------------------------------
  */
 export interface DbConnection {
   id: number | null
@@ -21,6 +23,8 @@ export interface DbConnection {
   databaseName: string
   username: string
   password?: string
+  /** SOURCE 전용 — Debezium topic.prefix(소스 식별자). TARGET은 null. */
+  topicPrefix?: string | null
 }
 
 export interface DbTypeOption {

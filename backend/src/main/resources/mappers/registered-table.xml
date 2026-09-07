@@ -13,6 +13,8 @@
             <arg column="target_schema_name" javaType="String"/>
             <arg column="target_table_name" javaType="String"/>
             <arg column="snapshot_mode" javaType="String"/>
+            <arg column="schema_fingerprint" javaType="String"/>
+            <arg column="schema_fields_json" javaType="String"/>
         </constructor>
     </resultMap>
 
@@ -20,9 +22,15 @@
         SELECT * FROM registered_tables ORDER BY schema_name, table_name
     </select>
 
-    <select id="countBySchemaAndTable" resultType="_int">
+    <select id="findBySource" resultMap="registeredTable">
+        SELECT * FROM registered_tables WHERE source_connection_id = #{sourceConnectionId}
+         ORDER BY schema_name, table_name
+    </select>
+
+    <select id="countBySourceSchemaAndTable" resultType="_int">
         SELECT COUNT(*) FROM registered_tables
-         WHERE schema_name = #{schema} AND table_name = #{table}
+         WHERE source_connection_id = #{sourceConnectionId}
+           AND schema_name = #{schema} AND table_name = #{table}
     </select>
 
     <insert id="insertRow" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
@@ -36,5 +44,11 @@
     <delete id="deleteRow">
         DELETE FROM registered_tables WHERE id = #{id}
     </delete>
+
+    <update id="updateFingerprint">
+        UPDATE registered_tables
+           SET schema_fingerprint = #{fingerprint}, schema_fields_json = #{fieldsJson}
+         WHERE id = #{id}
+    </update>
 
 </mapper>

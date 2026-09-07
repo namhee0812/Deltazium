@@ -28,6 +28,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 26. 09. 05.       | 최남희  | 다중 소스·다중 타깃 ①: namespace를 topic-prefix 계산값
  * |                          | (changelog_probe)으로, _pos 필드 검증 추가 (5.1절)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: topicPrefix를 생성자 인자에서 메서드
+ * |                          | 인자로 전환(ChangelogTableService 시그니처 변경 반영)
+ * --------------------------------------------------
  */
 @EnabledIfSystemProperty(named = "integration", matches = "true")
 class ChangelogTableServiceIT {
@@ -39,9 +42,9 @@ class ChangelogTableServiceIT {
 
     @Test
     void 실제_카탈로그에_사전_생성되고_멱등이다() {
-        ChangelogTableService service = new ChangelogTableService(props, "probe");
-        service.ensureChangelogTable("ITPROBE", "T1");
-        service.ensureChangelogTable("ITPROBE", "T1"); // 멱등
+        ChangelogTableService service = new ChangelogTableService(props);
+        service.ensureChangelogTable("probe", "ITPROBE", "T1");
+        service.ensureChangelogTable("probe", "ITPROBE", "T1"); // 멱등
 
         // sink와 같은 카탈로그 이름("iceberg")으로 열어야 같은 테이블이 보인다
         JdbcCatalog catalog = new JdbcCatalog();

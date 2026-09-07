@@ -4,7 +4,9 @@ import java.util.List;
 import java.util.Map;
 
 import io.deltazium.backend.connect.ConnectorDeployService;
+import io.deltazium.backend.dictionary.DictionaryRouter;
 import io.deltazium.backend.dictionary.OracleDictionaryService;
+import io.deltazium.backend.dictionary.PostgresDictionaryService;
 import io.deltazium.backend.dictionary.SourceTableInfo;
 import io.deltazium.backend.dictionary.TableColumn;
 import io.deltazium.backend.iceberg.ChangelogTableService;
@@ -12,6 +14,7 @@ import io.deltazium.backend.iceberg.IcebergProperties;
 import io.deltazium.backend.registry.DbConnection;
 import io.deltazium.backend.registry.DbConnectionRepository;
 import io.deltazium.backend.registry.DbConnectionService;
+import io.deltazium.backend.registry.DbType;
 import io.deltazium.backend.registry.OracleConnectionTester;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,7 +39,7 @@ import static org.mockito.Mockito.when;
 @MybatisTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ImportAutoConfiguration(SqlInitializationAutoConfiguration.class)
-@Import({RegistrationService.class, DbConnectionService.class,
+@Import({RegistrationService.class, DbConnectionService.class, DictionaryRouter.class,
         io.deltazium.backend.events.TableEventService.class})
 /**
  * 파일명 : RegistrationServiceTest.java
@@ -60,6 +63,10 @@ import static org.mockito.Mockito.when;
  * |                          | 소스별 인스턴스·토픽 이름 정확 일치 기준으로 갱신, 동명 테이블
  * |                          | 거부 테스트를 성공 케이스로 전환 (5.1절 제약 해소)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 커넥터 이름에 소스 topicPrefix 반영,
+ * |                          | source 템플릿을 source-oracle로, 다중 소스 격리(소스별 독립
+ * |                          | 배포·해제) 테스트 추가
+ * --------------------------------------------------
  */
 @EnableConfigurationProperties(IcebergProperties.class)
 class RegistrationServiceTest {
@@ -72,6 +79,10 @@ class RegistrationServiceTest {
 
     @MockitoBean
     OracleDictionaryService dictionary;
+
+    /** DictionaryRouter가 List<SourceDictionary>를 주입받으므로 두 구현 모두 빈이어야 한다. */
+    @MockitoBean
+    PostgresDictionaryService pgDictionary;
 
     @MockitoBean
     ConnectorDeployService deploy;
@@ -87,12 +98,17 @@ class RegistrationServiceTest {
 
     @BeforeEach
     void setUp() {
+        when(dictionary.dbType()).thenReturn(DbType.ORACLE);
+        when(dictionary.captureSetupLabel()).thenReturn("supplemental logging (ALL) COLUMNS");
+        when(pgDictionary.dbType()).thenReturn(DbType.POSTGRESQL);
+        // 소스 커넥션의 topicPrefix가 커넥터 이름(dz-*-<prefix>-*)에 그대로 들어간다 — "dz"로 고정해
+        // 기존(단일 소스 시절) 커넥터명 기댓값과의 diff를 prefix 삽입만으로 좁힌다.
         srcId = connections.create(new DbConnection(null, "src", "ORACLE", "SOURCE",
-                "srchost", 1521, "SRCPDB", "dbz", "pw")).id();
+                "srchost", 1521, "SRCPDB", "dbz", "pw", "dz")).id();
         tgtId = connections.create(new DbConnection(null, "tgt", "ORACLE", "TARGET",
                 "tgthost", 1521, "TGTPDB", "apply", "pw")).id();
-        when(changelog.changelogTableName(anyString(), anyString())).thenAnswer(inv ->
-                "changelog." + (inv.getArgument(0) + "_" + inv.getArgument(1)).toString().toLowerCase());
+        when(changelog.changelogTableName(anyString(), anyString(), anyString())).thenAnswer(inv ->
+                "changelog." + (inv.getArgument(1) + "_" + inv.getArgument(2)).toString().toLowerCase());
     }
 
     private void mockTable(String qualified, boolean pk, boolean supp) {
@@ -105,6 +121,17 @@ class RegistrationServiceTest {
                 new TableColumn("ID", "NUMBER", true),
                 new TableColumn("AMOUNT", "NUMBER", false),
                 new TableColumn("STATUS", "VARCHAR2", false)));
+    }
+
+    private void mockPgTable(String qualified, boolean pk, boolean ready) {
+        int dot = qualified.indexOf('.');
+        String schema = qualified.substring(0, dot);
+        String table = qualified.substring(dot + 1);
+        when(pgDictionary.listTables(any(), eq(qualified))).thenReturn(List.of(
+                new SourceTableInfo(schema, table, pk, ready, 100L)));
+        when(pgDictionary.listColumns(any(), eq(schema), eq(table))).thenReturn(List.of(
+                new TableColumn("id", "int4", true),
+                new TableColumn("status", "text", false)));
     }
 
     private static RegistrationService.TableSpec spec(String source) {
@@ -127,7 +154,7 @@ class RegistrationServiceTest {
                 .containsExactly("ID", "AMOUNT", "STATUS");
 
         ArgumentCaptor<Map<String, String>> vars = ArgumentCaptor.forClass(Map.class);
-        verify(deploy).deploy(eq("source"), vars.capture());
+        verify(deploy).deploy(eq("source-oracle"), vars.capture());
         assertThat(vars.getValue()).containsEntry("table_include_list", "CDC.T1,CDC.T2");
 
         ArgumentCaptor<Map<String, String>> jdbcVars = ArgumentCaptor.forClass(Map.class);
@@ -135,7 +162,7 @@ class RegistrationServiceTest {
         verify(deploy, org.mockito.Mockito.times(2))
                 .deploy(eq("jdbc-sink"), jdbcVars.capture(), jdbcExtra.capture());
         assertThat(jdbcVars.getAllValues().get(0))
-                .containsEntry("connector_name", "dz-jdbc-sink-cdc_t1")
+                .containsEntry("connector_name", "dz-jdbc-sink-dz-cdc_t1")
                 .containsEntry("topics", "dz.CDC.T1")
                 .containsEntry("collection_name", "CDC.T1");
         // 전 컬럼 동일명 활성 → include 필터 생략
@@ -256,7 +283,7 @@ class RegistrationServiceTest {
         service.register(srcId, tgtId, List.of(spec("CDC.T1")), "NO_DATA");
 
         ArgumentCaptor<Map<String, String>> vars = ArgumentCaptor.forClass(Map.class);
-        verify(deploy).deploy(eq("source"), vars.capture());
+        verify(deploy).deploy(eq("source-oracle"), vars.capture());
         assertThat(vars.getValue()).containsEntry("snapshot_mode", "no_data");
     }
 
@@ -269,7 +296,7 @@ class RegistrationServiceTest {
         service.register(srcId, tgtId, List.of(spec("CDC.T2")), "NO_DATA");
 
         ArgumentCaptor<Map<String, String>> vars = ArgumentCaptor.forClass(Map.class);
-        verify(deploy, org.mockito.Mockito.times(2)).deploy(eq("source"), vars.capture());
+        verify(deploy, org.mockito.Mockito.times(2)).deploy(eq("source-oracle"), vars.capture());
         // 두 번째 배포도 첫 등록(INITIAL) 기준
         assertThat(vars.getAllValues().get(1)).containsEntry("snapshot_mode", "initial");
     }
@@ -288,9 +315,9 @@ class RegistrationServiceTest {
         long id = service.register(srcId, tgtId, List.of(spec("CDC.T1"))).get(0).id();
 
         service.pause(id);
-        verify(deploy).pauseConnector("dz-jdbc-sink-cdc_t1");
+        verify(deploy).pauseConnector("dz-jdbc-sink-dz-cdc_t1");
         service.resume(id);
-        verify(deploy).resumeConnector("dz-jdbc-sink-cdc_t1");
+        verify(deploy).resumeConnector("dz-jdbc-sink-dz-cdc_t1");
     }
 
     @Test
@@ -304,10 +331,10 @@ class RegistrationServiceTest {
 
         assertThat(remaining).extracting(RegisteredTable::tableName).containsExactly("T2");
         assertThat(service.mappings(t1)).isEmpty();
-        verify(deploy).deleteConnector("dz-jdbc-sink-cdc_t1");
+        verify(deploy).deleteConnector("dz-jdbc-sink-dz-cdc_t1");
         // 기본은 changelog 보존
         verify(changelog, org.mockito.Mockito.never())
-                .dropChangelogTable(anyString(), anyString(), org.mockito.ArgumentMatchers.anyBoolean());
+                .dropChangelogTable(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     @Test
@@ -318,9 +345,9 @@ class RegistrationServiceTest {
         var remaining = service.unregister(id, true);
 
         assertThat(remaining).isEmpty();
-        verify(deploy).deleteConnector("dz-source");
+        verify(deploy).deleteConnector("dz-source-dz");
         verify(deploy).deleteConnector("dz-iceberg-dz");
-        verify(changelog).dropChangelogTable("CDC", "T1", true);
+        verify(changelog).dropChangelogTable("dz", "CDC", "T1", true);
     }
 
     @Test
@@ -329,7 +356,7 @@ class RegistrationServiceTest {
         mockTable("CDC.T1", true, true);
         service.register(srcId, tgtId, List.of(spec("CDC.T1")));
 
-        verify(changelog).ensureChangelogTable("CDC", "T1");
+        verify(changelog).ensureChangelogTable("dz", "CDC", "T1");
         ArgumentCaptor<Map<String, String>> vars = ArgumentCaptor.forClass(Map.class);
         ArgumentCaptor<Map<String, String>> extra = ArgumentCaptor.forClass(Map.class);
         verify(deploy).deploy(eq("iceberg-sink"), vars.capture(), extra.capture());
@@ -339,6 +366,58 @@ class RegistrationServiceTest {
         // route-regex는 토픽 이름 정확 일치 (5.1절) — 테이블명만 보던 종전 방식에서 전환
         assertThat(extra.getValue())
                 .containsEntry("iceberg.table.changelog.cdc_t1.route-regex", "^\\Qdz.CDC.T1\\E$");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 소스별로_독립_배포된다_다른_소스는_영향받지_않는다() {
+        long pgSrcId = connections.create(new DbConnection(null, "pgsrc", "POSTGRESQL", "SOURCE",
+                "pghost", 5432, "cdc", "dz_capture", "pw", "pgsrc")).id();
+
+        mockTable("CDC.T1", true, true);
+        mockPgTable("cdc_src.orders", true, true);
+
+        service.register(srcId, tgtId, List.of(spec("CDC.T1")));
+        service.register(pgSrcId, tgtId, List.of(spec("cdc_src.orders")));
+
+        // deployConnectors()는 등록마다 등록된 소스 전부를 재배포한다(기존 단일 소스 시절 패턴과
+        // 동일 — Connect REST upsert라 안전) — source-oracle은 두 번째 register()에서도 다시
+        // 배포되고, source-postgresql은 그때 처음 배포된다.
+        ArgumentCaptor<Map<String, String>> oracleVars = ArgumentCaptor.forClass(Map.class);
+        verify(deploy, org.mockito.Mockito.times(2)).deploy(eq("source-oracle"), oracleVars.capture());
+        assertThat(oracleVars.getValue()).containsEntry("connector_name", "dz-source-dz");
+
+        ArgumentCaptor<Map<String, String>> pgVars = ArgumentCaptor.forClass(Map.class);
+        verify(deploy).deploy(eq("source-postgresql"), pgVars.capture());
+        assertThat(pgVars.getValue()).containsEntry("connector_name", "dz-source-pgsrc")
+                .containsEntry("table_include_list", "cdc_src.orders");
+
+        verify(deploy, org.mockito.Mockito.times(2)).deploy(eq("iceberg-sink"),
+                org.mockito.ArgumentMatchers.argThat(m -> "dz-iceberg-dz".equals(m.get("connector_name"))),
+                any());
+        verify(deploy).deploy(eq("iceberg-sink"),
+                org.mockito.ArgumentMatchers.argThat(m -> "dz-iceberg-pgsrc".equals(m.get("connector_name"))),
+                any());
+    }
+
+    @Test
+    void 소스의_마지막_테이블_해제는_그_소스의_커넥터만_지운다() {
+        long pgSrcId = connections.create(new DbConnection(null, "pgsrc2", "POSTGRESQL", "SOURCE",
+                "pghost", 5432, "cdc", "dz_capture", "pw", "pgsrc2")).id();
+
+        mockTable("CDC.T1", true, true);
+        mockPgTable("cdc_src.orders", true, true);
+        long oracleId = service.register(srcId, tgtId, List.of(spec("CDC.T1"))).stream()
+                .filter(t -> t.tableName().equals("T1")).findFirst().orElseThrow().id();
+        service.register(pgSrcId, tgtId, List.of(spec("cdc_src.orders")));
+
+        // Oracle 소스의 유일한 테이블을 해제 — PostgreSQL 소스 커넥터는 절대 건드리지 않는다
+        service.unregister(oracleId, false);
+
+        verify(deploy).deleteConnector("dz-source-dz");
+        verify(deploy).deleteConnector("dz-iceberg-dz");
+        verify(deploy, org.mockito.Mockito.never()).deleteConnector("dz-source-pgsrc2");
+        verify(deploy, org.mockito.Mockito.never()).deleteConnector("dz-iceberg-pgsrc2");
     }
 
 }

@@ -12,6 +12,10 @@
  * --------------------------------------------------
  * 26. 08. 27.       | 최남희  | 하드코딩 hex를 CSS 변수/토큰 클래스로 교체 — 라이트 테마 대응
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: origin(SCHEMA_TOPIC|FINGERPRINT) 배지
+ * |                          | 추가 — PostgreSQL 등 schema change topic이 없는 소스는 스키마
+ * |                          | 지문 비교로 감지된다(architecture.md 7절)
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -22,7 +26,7 @@ import { api } from '@/lib/api'
 
 interface DdlEvent {
   id: number
-  kafkaOffset: number
+  kafkaOffset: number | null
   eventTsMs: number
   scn: string | null
   schemaName: string | null
@@ -31,6 +35,12 @@ interface DdlEvent {
   state: 'SNAPSHOT' | 'DETECTED' | 'APPROVED' | 'REJECTED' | 'IGNORED'
   note: string | null
   decidedAt: string | null
+  origin: 'SCHEMA_TOPIC' | 'FINGERPRINT'
+}
+
+const originLabel: Record<DdlEvent['origin'], string> = {
+  SCHEMA_TOPIC: 'schema change topic',
+  FINGERPRINT: '스키마 지문 비교',
 }
 
 const stateColor: Record<DdlEvent['state'], string> = {
@@ -161,9 +171,10 @@ export function DdlPanel() {
                       <pre className="overflow-x-auto rounded-lg border border-border bg-background p-3 font-mono text-[11.5px] leading-relaxed text-foreground/90">
                         {e.ddlText}
                       </pre>
-                      <div className="mt-2 flex flex-wrap gap-3 font-mono text-[11px] text-muted-foreground">
+                      <div className="mt-2 flex flex-wrap items-center gap-3 font-mono text-[11px] text-muted-foreground">
+                        <span className="rounded bg-secondary px-1.5 py-0.5">{originLabel[e.origin]}</span>
                         {e.scn && <span>SCN {e.scn}</span>}
-                        <span>offset {e.kafkaOffset}</span>
+                        {e.kafkaOffset != null && <span>offset {e.kafkaOffset}</span>}
                         {e.note && <span className="text-foreground">{e.note}</span>}
                       </div>
                       {e.state === 'DETECTED' && (

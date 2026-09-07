@@ -6,7 +6,7 @@
     <resultMap id="ddlEvent" type="io.deltazium.backend.ddl.DdlEvent">
         <constructor>
             <idArg column="id" javaType="long"/>
-            <arg column="kafka_offset" javaType="_long"/>
+            <arg column="kafka_offset" javaType="Long"/>
             <arg column="event_ts_ms" javaType="_long"/>
             <arg column="scn" javaType="String"/>
             <arg column="schema_name" javaType="String"/>
@@ -15,11 +15,12 @@
             <arg column="state" javaType="String"/>
             <arg column="note" javaType="String"/>
             <arg column="decided_at" javaType="java.time.LocalDateTime"/>
+            <arg column="origin" javaType="String"/>
         </constructor>
     </resultMap>
 
     <select id="findAll" resultMap="ddlEvent">
-        SELECT * FROM ddl_events ORDER BY kafka_offset DESC
+        SELECT * FROM ddl_events ORDER BY id DESC
     </select>
 
     <select id="findById" resultMap="ddlEvent">
@@ -31,8 +32,15 @@
     </select>
 
     <insert id="insertEvent">
-        INSERT INTO ddl_events (kafka_offset, event_ts_ms, scn, schema_name, table_name, ddl_text, state)
-        VALUES (#{kafkaOffset}, #{tsMs}, #{scn}, #{schema}, #{table}, #{ddl}, #{state})
+        INSERT INTO ddl_events (kafka_offset, event_ts_ms, scn, schema_name, table_name, ddl_text, state, origin)
+        VALUES (#{kafkaOffset}, #{tsMs}, #{scn}, #{schema}, #{table}, #{ddl}, #{state}, 'SCHEMA_TOPIC')
+    </insert>
+
+    <!-- FINGERPRINT 기원 — Kafka offset이 없다(kafka_offset NULL). 멱등 삽입이 필요 없다
+         (SchemaFingerprintService가 지문이 실제로 바뀐 시점에만 1회 호출한다). -->
+    <insert id="insertFingerprintEventRow" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO ddl_events (event_ts_ms, scn, schema_name, table_name, ddl_text, state, origin)
+        VALUES (#{tsMs}, NULL, #{schema}, #{table}, #{ddl}, #{state}, 'FINGERPRINT')
     </insert>
 
     <update id="decide">

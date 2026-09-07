@@ -30,6 +30,11 @@
  * |                          | 소스별 인스턴스 전환(dz-iceberg-<prefix>)에 따름. dz-source와
  * |                          | 마찬가지로 topic-prefix=dz를 그대로 가정한다(단일 소스 전제)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: source·iceberg-sink 노드를 접두 기준
+ * |                          | 집계(byPrefixAggregate)로 전환 — 소스가 여러 개면 개수·집계
+ * |                          | 상태로 요약 표시(소스별 노드를 개별로 그리는 전체 동적 토폴로지는
+ * |                          | 범위 밖으로 남김, UI 최소주의 판단)
+ * --------------------------------------------------
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
@@ -104,12 +109,6 @@ function relativeTime(ms: number): string {
   return `${Math.floor(diffHour / 24)}일 전`
 }
 
-function connectorStatus(states: ConnectorStates | null, name: string): NodeStatus {
-  if (!states || !(name in states)) return 'none'
-  const s = effectiveState(states[name])
-  return s === 'RUNNING' ? 'ok' : s === 'PAUSED' ? 'warn' : 'crit'
-}
-
 function jdbcSinkAggregate(states: ConnectorStates | null): { status: NodeStatus; count: number } {
   if (!states) return { status: 'none', count: 0 }
   const sinks = Object.entries(states).filter(([n]) => n.startsWith('dz-jdbc-sink-'))
@@ -121,6 +120,21 @@ function jdbcSinkAggregate(states: ConnectorStates | null): { status: NodeStatus
       ? 'warn'
       : 'ok'
   return { status, count: sinks.length }
+}
+
+/** dz-source-<prefix> · dz-iceberg-<prefix> — 소스당 1개(4절)라 접두로 묶어 집계한다.
+ * 소스가 여러 개인 배선을 토폴로지 노드 하나로 요약해 보여준다(다중 소스·다중 타깃 ②). */
+function byPrefixAggregate(states: ConnectorStates | null, prefix: string): { status: NodeStatus; count: number } {
+  if (!states) return { status: 'none', count: 0 }
+  const matches = Object.entries(states).filter(([n]) => n.startsWith(prefix))
+  if (matches.length === 0) return { status: 'none', count: 0 }
+  const st = matches.map(([, i]) => effectiveState(i))
+  const status: NodeStatus = st.some((s) => s !== 'RUNNING' && s !== 'PAUSED')
+    ? 'crit'
+    : st.some((s) => s === 'PAUSED')
+      ? 'warn'
+      : 'ok'
+  return { status, count: matches.length }
 }
 
 export function TopologyPanel({
@@ -181,20 +195,26 @@ export function TopologyPanel({
   }, [])
 
   const topo: TopoData = useMemo(() => {
-    const source = connections.find((c) => c.role === 'SOURCE')
+    const sources = connections.filter((c) => c.role === 'SOURCE')
     const target = connections.find((c) => c.role === 'TARGET')
     const deployed = connectors !== null && Object.keys(connectors).length > 0
     const jdbc = jdbcSinkAggregate(connectors)
+    const src = byPrefixAggregate(connectors, 'dz-source-')
+    const iceSink = byPrefixAggregate(connectors, 'dz-iceberg-')
     return {
       srcDb: {
-        label: source ? source.name : 'Oracle SRC',
-        sub: source ? `${source.host}:${source.port}/${source.databaseName}` : '연결 미등록',
-        status: source ? 'ok' : 'none',
+        label: sources.length === 0 ? 'SRC' : sources.length === 1 ? sources[0].name : `소스 ${sources.length}개`,
+        sub: sources.length === 0
+          ? '연결 미등록'
+          : sources.length === 1
+            ? `${sources[0].host}:${sources[0].port}/${sources[0].databaseName}`
+            : sources.map((s) => s.dbType).join(' · '),
+        status: sources.length > 0 ? 'ok' : 'none',
       },
       source: {
-        label: 'dz-source',
-        sub: 'Debezium Oracle · LogMiner',
-        status: connectorStatus(connectors, 'dz-source'),
+        label: sources.length <= 1 ? (sources[0] ? `dz-source-${sources[0].topicPrefix ?? ''}` : 'dz-source') : 'dz-source-*',
+        sub: sources.length > 1 ? `소스별 1개 · ${src.count}개 배포됨` : 'Debezium source',
+        status: src.status,
       },
       kafka: {
         label: 'Kafka',
@@ -212,9 +232,9 @@ export function TopologyPanel({
         status: target ? 'ok' : 'none',
       },
       icebergSink: {
-        label: 'dz-iceberg-dz',
-        sub: 'append-only changelog',
-        status: connectorStatus(connectors, 'dz-iceberg-dz'),
+        label: sources.length <= 1 ? (sources[0] ? `dz-iceberg-${sources[0].topicPrefix ?? ''}` : 'dz-iceberg') : 'dz-iceberg-*',
+        sub: sources.length > 1 ? `소스별 1개 · ${iceSink.count}개 배포됨` : 'append-only changelog',
+        status: iceSink.status,
       },
       iceberg: {
         label: 'Iceberg / MinIO',

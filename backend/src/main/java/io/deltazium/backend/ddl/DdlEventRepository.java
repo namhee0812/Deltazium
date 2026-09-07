@@ -19,6 +19,10 @@ import org.apache.ibatis.annotations.Param;
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: insertFingerprintEvent 추가 —
+ * |                          | schema change topic이 없는 소스의 스키마 지문 diff 기록용
+ * |                          | (Kafka offset이 없어 insertIfAbsent 경로를 쓰지 않는다)
+ * --------------------------------------------------
  */
 @Mapper
 public interface DdlEventRepository {
@@ -45,6 +49,30 @@ public interface DdlEventRepository {
         }
         insertEvent(kafkaOffset, tsMs, scn, schema, table, ddl, state);
         return true;
+    }
+
+    /** 스키마 지문 비교(FINGERPRINT)로 감지한 DDL 초안 — 호출측(SchemaFingerprintService)이
+     * 지문이 실제로 바뀐 시점에만 부르므로 멱등 삽입이 필요 없다. */
+    class InsertFingerprintRow {
+        public Long id;
+        public long tsMs;
+        public String schema;
+        public String table;
+        public String ddl;
+        public String state;
+    }
+
+    void insertFingerprintEventRow(InsertFingerprintRow row);
+
+    default long insertFingerprintEvent(long tsMs, String schema, String table, String ddl, String state) {
+        InsertFingerprintRow row = new InsertFingerprintRow();
+        row.tsMs = tsMs;
+        row.schema = schema;
+        row.table = table;
+        row.ddl = ddl;
+        row.state = state;
+        insertFingerprintEventRow(row);
+        return row.id;
     }
 
     void decide(@Param("id") long id, @Param("state") String state, @Param("note") String note);

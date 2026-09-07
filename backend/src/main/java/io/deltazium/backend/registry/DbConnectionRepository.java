@@ -18,6 +18,9 @@ import org.apache.ibatis.annotations.Mapper;
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: topic_prefix 컬럼 매핑, findByTopicPrefix
+ * |                          | 추가(연결 등록 시 SOURCE 유일성 검증용)
+ * --------------------------------------------------
  */
 @Mapper
 public interface DbConnectionRepository {
@@ -27,6 +30,9 @@ public interface DbConnectionRepository {
     Optional<DbConnection> findById(long id);
 
     Optional<DbConnection> findByName(String name);
+
+    /** SOURCE 연결의 topic_prefix 유일성 검증용 — role 무관하게 조회하고 서비스에서 role을 본다. */
+    Optional<DbConnection> findByTopicPrefix(String topicPrefix);
 
     /** generated key를 받으려면 가변 홀더가 필요하다 (record는 불변) */
     class InsertRow {
@@ -39,6 +45,7 @@ public interface DbConnectionRepository {
         public String databaseName;
         public String username;
         public String password;
+        public String topicPrefix;
     }
 
     void insertRow(InsertRow row);
@@ -53,6 +60,7 @@ public interface DbConnectionRepository {
         row.databaseName = c.databaseName();
         row.username = c.username();
         row.password = c.password();
+        row.topicPrefix = c.topicPrefix();
         insertRow(row);
         return c.withId(row.id);
     }

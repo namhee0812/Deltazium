@@ -15,6 +15,10 @@
  * |                          | 테이블 수를 /api/registrations와 join해 표시. "+ 연결 추가"
  * |                          | 점선 카드로 등록 다이얼로그 진입.
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: SOURCE 연결에 topicPrefix 입력 추가
+ * |                          | (기본값 = 이름 슬러그, backend가 채움 — 비워두면 자동), 카드에
+ * |                          | 소스 식별자 표시
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, MoreVertical, Plus } from 'lucide-react'
@@ -305,6 +309,18 @@ export function ConnectionsPanel() {
                 onChange={(e) => set({ password: e.target.value })}
               />
             </div>
+            {form.role === 'SOURCE' && (
+              <div className="col-span-2 space-y-1">
+                <Label htmlFor="conn-prefix">소스 식별자 (topic prefix)</Label>
+                <Input
+                  id="conn-prefix"
+                  value={form.topicPrefix ?? ''}
+                  onChange={(e) => set({ topicPrefix: e.target.value })}
+                  placeholder="비워두면 이름에서 자동 생성 (예: orcl225, pgsrc)"
+                  className="font-mono"
+                />
+              </div>
+            )}
           </div>
 
           {formTest && (
@@ -390,6 +406,12 @@ function ConnectionCard({
           <span className="font-mono text-[12px]">
             {tableCount === null ? '—' : `${tableCount}개`}
           </span>
+          {c.role === 'SOURCE' && (
+            <>
+              <span className="text-ink-3">소스 식별자</span>
+              <span className="truncate font-mono text-[12px]">{c.topicPrefix ?? '—'}</span>
+            </>
+          )}
         </div>
         {/* 소스 등록 사전 점검값(supplemental logging·archivelog 등)은 /api/registrations/
             db-checks/{id}가 실시간 조회해야 얻어지는 값이라 /api/connections 응답엔 없다.

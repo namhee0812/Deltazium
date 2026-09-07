@@ -15,13 +15,14 @@ mybatis:
 deltazium:
   ddl-poller:
     enabled: false   # 단위 테스트는 Kafka 없이 돈다
+  fingerprint-poller:
+    enabled: false   # 단위 테스트는 Kafka 없이 돈다
   connect:
     base-url: http://localhost:8083
   connectors:
     template-dir: ../connectors
   kafka:
     bootstrap: localhost:9092
-  topic-prefix: dz
   runtime-dir: /tmp
   disk-warn-pct: 85
   iceberg:

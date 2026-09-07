@@ -9,7 +9,6 @@ import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.jdbc.JdbcCatalog;
 import org.apache.iceberg.types.Types;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -31,6 +30,10 @@ import org.springframework.stereotype.Service;
  * |                          | `_pos` struct(topic/partition/offset/timestamp) 추가,
  * |                          | namespace를 고정 설정값 대신 `changelog_<topic.prefix>`로 계산
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: topicPrefix를 생성자 고정값에서 메서드
+ * |                          | 인자로 전환 — 소스가 여러 개면 namespace도 호출마다 달라진다
+ * |                          | (카탈로그는 설치당 하나, namespace만 소스별, 3·5.1절)
+ * --------------------------------------------------
  */
 @Service
 public class ChangelogTableService {
@@ -46,24 +49,25 @@ public class ChangelogTableService {
     static final String CATALOG_NAME = "iceberg";
 
     private final IcebergProperties props;
-    private final String namespace;
     private volatile JdbcCatalog catalog;
 
-    public ChangelogTableService(IcebergProperties props,
-                                 @Value("${deltazium.topic-prefix}") String topicPrefix) {
+    public ChangelogTableService(IcebergProperties props) {
         this.props = props;
-        // namespace는 소스별 — 소스 식별자(topic.prefix)가 늘어나면(② 마일스톤) 인스턴스별로
-        // 나뉜다. 지금은 소스가 하나라 전역 topic-prefix를 그대로 쓴다 (5.1절).
-        this.namespace = "changelog_" + topicPrefix.toLowerCase(Locale.ROOT);
+    }
+
+    /** namespace: changelog_<topic.prefix> 소문자 — 소스별로 나뉜다 (5.1절). */
+    public String namespace(String topicPrefix) {
+        return "changelog_" + topicPrefix.toLowerCase(Locale.ROOT);
     }
 
     /** changelog 테이블명: {namespace}.{schema}_{table} 소문자 (5.1절) */
-    public String changelogTableName(String schema, String table) {
-        return namespace + "." + (schema + "_" + table).toLowerCase(Locale.ROOT);
+    public String changelogTableName(String topicPrefix, String schema, String table) {
+        return namespace(topicPrefix) + "." + (schema + "_" + table).toLowerCase(Locale.ROOT);
     }
 
     /** 테이블이 없으면 기본 골격 + 파티션 스펙으로 생성. 이미 있으면 그대로 둔다. */
-    public void ensureChangelogTable(String schema, String table) {
+    public void ensureChangelogTable(String topicPrefix, String schema, String table) {
+        String namespace = namespace(topicPrefix);
         TableIdentifier id = TableIdentifier.of(
                 namespace, (schema + "_" + table).toLowerCase(Locale.ROOT));
         JdbcCatalog cat = catalog();
@@ -80,9 +84,9 @@ public class ChangelogTableService {
      * changelog 테이블 삭제. purge=true면 S3 데이터 파일까지 지운다.
      * 복구 원본을 지우는 작업 — 사용자가 UI에서 명시적으로 확인한 경우에만 호출할 것.
      */
-    public void dropChangelogTable(String schema, String table, boolean purge) {
+    public void dropChangelogTable(String topicPrefix, String schema, String table, boolean purge) {
         TableIdentifier id = TableIdentifier.of(
-                namespace, (schema + "_" + table).toLowerCase(Locale.ROOT));
+                namespace(topicPrefix), (schema + "_" + table).toLowerCase(Locale.ROOT));
         JdbcCatalog cat = catalog();
         if (cat.tableExists(id)) {
             cat.dropTable(id, purge);
@@ -116,10 +120,6 @@ public class ChangelogTableService {
         return PartitionSpec.builderFor(schema)
                 .truncate("source.ts_ms", PARTITION_WIDTH_MS)
                 .build();
-    }
-
-    String namespace() {
-        return namespace;
     }
 
     JdbcCatalog catalog() {

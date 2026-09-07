@@ -10,7 +10,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.deltazium.backend.connect.ConnectorNames;
 import io.deltazium.backend.events.TableEventService;
+import io.deltazium.backend.registry.DbConnectionService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -44,6 +46,11 @@ import org.springframework.stereotype.Component;
  * |                          | schemas.enabled=true — 최상위에서 찾다 전부 무시하던 버그),
  * |                          | auto.offset.reset earliest (첫 스냅샷 STARTED 유실 방지)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 전역 topic-prefix 제거 — 시작 시점의
+ * |                          | SOURCE 커넥션 전체의 notification 토픽(<prefix>-notifications)을
+ * |                          | 구독한다. 상태는 여전히 전역 하나(SnapshotStatus) — 소스별 구분은
+ * |                          | 하지 않는다(재스냅샷이 단일 소스 전제라 지금은 충분, TODO ②)
+ * --------------------------------------------------
  */
 @Component
 @ConditionalOnProperty(name = "deltazium.notification-poller.enabled",
@@ -62,19 +69,28 @@ public class SnapshotNotificationPoller {
     }
 
     private final TableEventService events;
+    private final DbConnectionService connections;
     private final String bootstrap;
-    private final String topic;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicReference<SnapshotStatus> status = new AtomicReference<>(SnapshotStatus.none());
     private KafkaConsumer<String, String> consumer;
     private Thread thread;
 
     public SnapshotNotificationPoller(TableEventService events,
-                                      @Value("${deltazium.kafka.bootstrap}") String bootstrap,
-                                      @Value("${deltazium.topic-prefix}") String topicPrefix) {
+                                      DbConnectionService connections,
+                                      @Value("${deltazium.kafka.bootstrap}") String bootstrap) {
         this.events = events;
+        this.connections = connections;
         this.bootstrap = bootstrap;
-        this.topic = topicPrefix + "-notifications";
+    }
+
+    /** 시작 시점의 SOURCE 커넥션 전체의 notification 토픽. 새 소스는 backend 재기동 후 반영. */
+    private List<String> notificationTopics() {
+        return connections.list().stream()
+                .filter(c -> "SOURCE".equals(c.role()) && c.topicPrefix() != null)
+                .map(c -> ConnectorNames.notificationTopic(c.topicPrefix()))
+                .distinct()
+                .toList();
     }
 
     public SnapshotStatus status() {
@@ -99,14 +115,22 @@ public class SnapshotNotificationPoller {
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
         consumer = new KafkaConsumer<>(props);
         running.set(true);
-        thread = new Thread(this::pollLoop, "snapshot-notification-poller");
+        List<String> topics = notificationTopics();
+        thread = new Thread(() -> pollLoop(topics), "snapshot-notification-poller");
         thread.setDaemon(true);
         thread.start();
     }
 
-    private void pollLoop() {
+    private void pollLoop(List<String> topics) {
         try {
-            consumer.subscribe(List.of(topic));
+            if (topics.isEmpty()) {
+                log.info("SOURCE 커넥션 없음 — snapshot notification poller 대기 상태로 시작");
+                while (running.get()) {
+                    Thread.sleep(2000);
+                }
+                return;
+            }
+            consumer.subscribe(topics);
             while (running.get()) {
                 var records = consumer.poll(Duration.ofSeconds(2));
                 for (ConsumerRecord<String, String> rec : records) {

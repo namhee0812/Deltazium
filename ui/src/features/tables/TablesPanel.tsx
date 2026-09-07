@@ -41,6 +41,10 @@
  * 26. 09. 05.       | 최남희  | changelog 삭제 경고 문구의 "SCN 재발행 복구" → "시각 재발행
  * |                          | 복구" — 복구 진입점이 SCN에서 시각으로 전환됨(architecture.md 6.2절)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 커넥터 이름을 소스 topicPrefix 기반으로
+ * |                          | 조립(dz-jdbc-sink-<prefix>-<suffix>), 캡처 장애 배너가 등록된
+ * |                          | 모든 소스 커넥터를 확인하도록 확장(하드코딩 dz-source 제거)
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -91,6 +95,8 @@ interface RegisteredTable {
   id: number
   schemaName: string
   tableName: string
+  /** 소스 커넥션의 topic.prefix — 커넥터 이름 조립(dz-jdbc-sink-<prefix>-<suffix>)에 필요 */
+  sourceTopicPrefix: string | null
 }
 
 interface TableEvent {
@@ -115,6 +121,7 @@ interface Row {
   id: number
   schemaName: string
   tableName: string
+  sourceTopicPrefix: string | null
   metrics: TableMetrics | null
 }
 
@@ -137,6 +144,10 @@ const columnHelper = createColumnHelper<Row>()
 
 const suffix = (m: { schemaName: string; tableName: string }) =>
   `${m.schemaName}_${m.tableName}`.toLowerCase()
+
+/** backend ConnectorNames와 같은 규칙 — 소스 prefix가 아직 없으면(조회 실패 등) N/A로 빠진다. */
+const jdbcSinkName = (m: { sourceTopicPrefix: string | null; schemaName: string; tableName: string }) =>
+  m.sourceTopicPrefix ? `dz-jdbc-sink-${m.sourceTopicPrefix}-${suffix(m)}` : null
 
 const METRICS_ERROR_PREFIX = '지표 조회 실패(Kafka 연결 확인): '
 
@@ -200,15 +211,25 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       id: r.id,
       schemaName: r.schemaName,
       tableName: r.tableName,
+      sourceTopicPrefix: r.sourceTopicPrefix,
       metrics: byKey.get(`${r.schemaName}.${r.tableName}`) ?? null,
     }))
   }, [registered, metrics])
 
-  // 캡처(dz-source) 전역 상태 — 행별 배지는 각 테이블의 jdbc-sink만 보므로,
-  // 캡처가 죽으면 여기 배너로 알린다 (sink 초록 + lag 0 = 정상처럼 보이는 착시 방지)
-  const sourceInfo = connectors['dz-source']
-  const sourceState = sourceInfo ? effectiveState(sourceInfo) : null
-  const sourceBroken = sourceState === 'FAILED'
+  // 캡처 상태 — 행별 배지는 각 테이블의 jdbc-sink만 보므로, 소스 커넥터(dz-source-<prefix>,
+  // 소스별 1개)가 죽으면 여기 배너로 알린다 (sink 초록 + lag 0 = 정상처럼 보이는 착시 방지).
+  // 소스가 여러 개면 그중 하나라도 FAILED면 배너를 띄운다(어느 소스인지는 이벤트 조회로 특정).
+  const sourcePrefixes = useMemo(
+    () => [...new Set((rows ?? []).map((r) => r.sourceTopicPrefix).filter((p): p is string => !!p))],
+    [rows],
+  )
+  const sourceConnectorNames = sourcePrefixes.map((p) => `dz-source-${p}`)
+  const sourceInfos = sourceConnectorNames.map((name) => connectors[name]).filter((i) => !!i)
+  const brokenSourceInfo = sourceInfos.find((info) => effectiveState(info) === 'FAILED')
+  const sourceBroken = !!brokenSourceInfo
+  // 정지 배너는 "전부 정지"일 때만 — 소스 중 하나만 정지면 그 소스의 테이블만 멈춘 것이라
+  // 전역 배너로 알리면 오히려 오해를 준다(다중 소스 전제, 여러 소스면 이 배너는 보수적으로 숨김).
+  const sourcePaused = sourceInfos.length > 0 && sourceInfos.every((info) => effectiveState(info) === 'PAUSED')
   const [detectedAt, setDetectedAt] = useState<string | null>(null)
 
   useEffect(() => {
@@ -220,14 +241,17 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     api<Ev[]>('/api/events?limit=100')
       .then((evs) => {
         const hit = evs.find(
-          (e) => e.eventType === 'CONNECTOR_FAILED' && e.message.includes('dz-source'))
+          (e) => e.eventType === 'CONNECTOR_FAILED'
+            && sourceConnectorNames.some((name) => e.message.includes(name)))
         setDetectedAt(hit ? hit.occurredAt.replace('T', ' ').slice(0, 16) : null)
       })
       .catch(() => setDetectedAt(null))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceBroken])
 
   const sinkState = (m: Row) => {
-    const info = connectors[`dz-jdbc-sink-${suffix(m)}`]
+    const name = jdbcSinkName(m)
+    const info = name ? connectors[name] : undefined
     return info ? effectiveState(info) : 'N/A'
   }
 
@@ -468,15 +492,15 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
               </Button>
               <div className="mt-1 font-mono text-[11px] text-muted-foreground">
                 {detectedAt && <>감지: {detectedAt} · </>}
-                원인: {causeLine(sourceInfo) ?? 'trace 없음 — 이벤트 탭 참조'}
+                원인: {causeLine(brokenSourceInfo) ?? 'trace 없음 — 이벤트 탭 참조'}
               </div>
-              {traceOf(sourceInfo) && (
+              {traceOf(brokenSourceInfo) && (
                 <details className="mt-1">
                   <summary className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground">
                     상세 보기 (전체 trace)
                   </summary>
                   <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface-2 p-2 text-[10px] leading-snug">
-                    {traceOf(sourceInfo)}
+                    {traceOf(brokenSourceInfo)}
                   </pre>
                 </details>
               )}
@@ -484,7 +508,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
           </div>
         </div>
       )}
-      {sourceState === 'PAUSED' && (
+      {sourcePaused && (
         <div className="border-b border-border bg-surface-2 px-4 py-2 text-[13px] text-muted-foreground">
           ⏸ 캡처 일시정지 — 전 테이블 신규 변경 수집이 멈춰 있습니다 (재개 전까지 redo 보존 기간에 유의)
         </div>
@@ -574,7 +598,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
             row={selected}
             bucket={bucketOf(selected)}
             sinkState={sinkState(selected)}
-            sourceCause={causeLine(connectors[`dz-jdbc-sink-${suffix(selected)}`])}
+            sourceCause={causeLine(jdbcSinkName(selected) ? connectors[jdbcSinkName(selected)!] : undefined)}
             lastCommitAtMs={
               changelog?.find((c) => c.table === `${selected.schemaName}.${selected.tableName}`)
                 ?.lastCommitAtMs ?? null
@@ -588,8 +612,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
             onResnapshot={() => setResnapDialog('routine')}
             onDelete={() => { setDropChangelog(false); setDeleting(selected) }}
             onRetry={() =>
-              act(() =>
-                api(`/api/connectors/dz-jdbc-sink-${suffix(selected)}/restart`, { method: 'POST' }))
+              act(() => api(`/api/connectors/${jdbcSinkName(selected)}/restart`, { method: 'POST' }))
             }
           />
         )}

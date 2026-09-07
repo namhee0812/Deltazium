@@ -329,6 +329,63 @@ server-side fallback은 Opus/Fable 계열 전용이라 모델명 prefix로 조�
 탭 전환에도 대화가 유지되고, 스트리밍 중 닫아도 백그라운드에서 완료된다.
 EventSource가 POST를 못 하므로 SSE는 fetch 스트리밍으로 직접 파싱한다(`ui/src/lib/sse.ts`).
 
+## 다중 소스·다중 타깃 ② PostgreSQL 구현 판단 (2026-09-07)
+
+architecture.md 2.2·4·7·8절 확정 사항의 "어떻게 구현했는가" 기록. 설계 판단이 개입된
+지점만 남긴다.
+
+**스키마 지문은 해시만으로 diff를 복원할 수 없어 필드 목록도 함께 저장한다.**
+`registered_tables.schema_fingerprint`(SHA-256)는 "바뀌었는가"만 싸게 판정하는 값이라
+일방향이다. TODO ②는 "diff 요약 + 타깃 DDL 초안"을 요구하는데, 이전 시점에 어떤 필드가
+있었는지 알아야 추가/삭제/타입변경을 구분할 수 있다. 그래서 `SchemaFingerprint.
+toJson/fromJson`으로 after struct 필드 목록(JSON)을 `registered_tables.schema_fields_json`에
+함께 저장하고, 지문 비교에서 변경이 감지되면 이 스냅샷을 "직전 상태"로 삼아 diff한다.
+지문 자체는 여전히 "변경 여부"를 판정하는 1차 게이트로 남아 있다 — 매 주기 JSON 문자열
+전체를 비교하는 대신 해시 비교로 빠르게 넘어간다.
+
+**diff 대상은 "직전 감시 시점의 source 필드 목록"이지 "현재 타깃 컬럼"이 아니다.**
+처음엔 타깃 테이블의 실제 컬럼과 비교하는 방안도 검토했으나 기각했다 — Debezium 논리
+타입(`int32`, `org.apache.kafka.connect.data.Decimal` 등)과 타깃 DB 네이티브 타입
+(`NUMBER`, `VARCHAR2` 등)은 어휘 체계가 달라, 타입이 전혀 안 바뀌어도 문자열 비교상
+전부 "타입변경"으로 오검출된다. source 스냅샷끼리(둘 다 Debezium 타입 어휘) 비교해야
+ADDED/REMOVED/TYPE_CHANGED 판정이 의미를 가진다.
+
+**타입 매핑은 대상 DbType별로 분기한 소형 표 하나뿐.** `SchemaFingerprint.mapType`은
+정수·문자열·bytes·boolean·날짜 계열만 다루고, `struct`/`array`나 `org.apache.kafka.
+connect.data.Decimal`(정밀도·스케일이 필요해 소형 매핑으로 못 다룸) 등은 매핑이 없으면
+초안을 만들지 않는다 — "확인 후 수동 DDL"이 안전한 기본값이라는 원칙(TODO의 "타입 변경은
+초안 없음"과 같은 결)을 매핑 실패 케이스에도 그대로 적용했다.
+
+**타입 변경만 있으면 ddl_events 상태를 DETECTED가 아니라 SNAPSHOT으로 남긴다.**
+실행 가능한 DDL이 없는데 DETECTED로 두면 사용자가 [승인]을 눌렀을 때 빈 텍스트나 설명
+문구를 그대로 실행하려다 SQL 에러가 난다. 기존 DdlPanel이 이미 SNAPSHOT 상태에는 승인·
+거부 버튼을 숨기므로(정보성), 이 상태를 그대로 재사용해 "확인만 가능"을 표현했다 — 별도
+상태값을 늘리지 않았다.
+
+**커넥터 이름 규칙을 `ConnectorNames` 클래스 하나로 강제한 이유.** 소스가 여러 개가 되면
+`"dz-jdbc-sink-" + suffix` 같은 문자열 조립이 backend 곳곳(RegistrationService·RecoveryService·
+DdlEventService·KafkaMetricsService·ResnapshotOrchestrator)에 흩어져 있던 걸 그대로 두면
+prefix를 빠뜨리는 실수가 나기 쉽다. 이름 규칙이 바뀔 일(현재도 이미 한 번 바뀜)에 대비해
+한 곳만 고치면 되게 했다. UI(`TablesPanel`)는 backend에 의존할 수 없어 같은 규칙을
+TypeScript로 다시 구현했는데, 이건 기존에도 `suffix()` 계산이 프론트·백엔드 양쪽에
+있던 선례를 따른 것이다(완전한 단일 진원지는 API가 커넥터 이름 자체를 내려주는 것이지만,
+지금은 `sourceTopicPrefix`만 내려주고 조립은 각자 한다 — 필요해지면 API 응답에 커넥터
+이름 필드를 추가하는 게 다음 개선 지점).
+
+**DdlEventPoller·SnapshotNotificationPoller의 "새 소스는 재기동 필요" 한계.** 두 poller
+모두 `@PostConstruct`에서 그 시점의 SOURCE 커넥션 목록으로 구독 토픽을 확정한다. 소스를
+등록한 뒤 이 poller들이 그 소스의 스키마 변경·스냅샷 진행을 보려면 backend 재기동이
+필요하다 — 기존에도 같은 패턴(단일 소스 시절엔 애초에 재기동 없이는 시작조차 안 됐음)이라
+새로 생긴 제약은 아니고, 다중 소스로 오면서 "이미 떠 있는 backend에 소스를 하나 더
+등록했을 때"라는 새 시나리오에서 처음 드러난 것이다. `SchemaFingerprintPoller`는 반대로
+매 주기(1분) DB에서 대상을 다시 조회하므로 이 제약이 없다 — 소스 등록에 즉시 반응한다.
+
+**RecoveryService.verify()의 체크섬은 여전히 Oracle 전용이다.** `checksumSql`은 `ORA_HASH`를
+쓴다 — 소스가 PostgreSQL이 되면 SRC측 체크섬 검증이 동작하지 않는다(TARGET은 계속 Oracle
+전제라 TGT측은 문제없음). PostgreSQL 소스의 복구 리허설에서 체크섬까지 맞추려면 PG용
+집계 SQL(예: `md5(string_agg(...))`)이 추가로 필요하다 — TODO ②의 "PG 소스 실 배선
+스모크" 검증 항목에는 있지만 이 구현 범위에서 다루지 않았다(결정 필요 사항).
+
 ## 개발 환경 특이사항
 
 - vite dev 서버는 `usePolling` (vite.config.ts): 이 서버에서 inotify 감시가 변경을

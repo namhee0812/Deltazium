@@ -5,6 +5,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import io.deltazium.backend.connect.ConnectClient;
+import io.deltazium.backend.connect.ConnectorNames;
 import io.deltazium.backend.events.TableEventService;
 import io.deltazium.backend.registration.RegisteredTable;
 import io.deltazium.backend.registration.RegisteredTableRepository;
@@ -25,6 +26,9 @@ import org.springframework.stereotype.Service;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: jdbc-sink 커넥터명에 소스 topicPrefix
+ * |                          | 반영(ConnectorNames.jdbcSink) — DbConnectionService 의존 추가
  * --------------------------------------------------
  */
 @Service
@@ -74,7 +78,8 @@ public class DdlEventService {
     public DdlEvent reject(long id) {
         DdlEvent event = pending(id);
         RegisteredTable registered = requireRegistered(event);
-        String connector = "dz-jdbc-sink-" + registered.suffix();
+        String prefix = connections.get(registered.sourceConnectionId()).topicPrefix();
+        String connector = ConnectorNames.jdbcSink(prefix, registered.suffix());
         connect.pause(connector);
         repository.decide(id, "REJECTED",
                 "apply 정지 — " + connector + " pause. changelog는 계속 축적됨");

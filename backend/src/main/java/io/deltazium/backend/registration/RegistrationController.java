@@ -3,7 +3,8 @@ package io.deltazium.backend.registration;
 import java.util.List;
 import java.util.Map;
 
-import io.deltazium.backend.dictionary.OracleDictionaryService;
+import io.deltazium.backend.dictionary.PrecheckItem;
+import io.deltazium.backend.dictionary.SourceDictionary;
 import io.deltazium.backend.dictionary.SourceTableInfo;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -30,6 +31,10 @@ import org.springframework.web.bind.annotation.RestController;
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 사전 점검을 PrecheckItem 목록 응답으로
+ * |                          | 전환, supplemental-logging → capture-setup/preview·apply로
+ * |                          | 교체, GET 목록을 RegisteredTableView(소스 topicPrefix 포함)로
+ * --------------------------------------------------
  */
 @RestController
 @RequestMapping("/api/registrations")
@@ -50,8 +55,8 @@ public class RegistrationController {
     }
 
     @GetMapping
-    public List<RegisteredTable> list() {
-        return service.list();
+    public List<RegisteredTableView> list() {
+        return service.listView();
     }
 
     /** 소스 딕셔너리 조회 — pattern 예: CDC.* / CDC.TEST_% / CDC.T1 */
@@ -68,22 +73,28 @@ public class RegistrationController {
         return service.columns(connectionId, table);
     }
 
-    /** DB 레벨 사전 점검 (ARCHIVELOG · DB supplemental logging). */
+    /** DB 레벨 사전 점검 (예: Oracle ARCHIVELOG, PostgreSQL wal_level) — 소스 종류 무관 범용 구조. */
     @GetMapping("/db-checks/{sourceConnectionId}")
-    public Map<String, String> databaseChecks(@PathVariable long sourceConnectionId) {
+    public List<PrecheckItem> databaseChecks(@PathVariable long sourceConnectionId) {
         return service.databaseChecks(sourceConnectionId);
     }
 
-    /** LogMiner 권한 점검 — 권한명 → 보유 여부. */
+    /** 캡처 계정 권한 점검 — 항목은 소스 종류별로 다르다(8절). */
     @GetMapping("/privilege-checks/{sourceConnectionId}")
-    public Map<String, Boolean> privilegeChecks(@PathVariable long sourceConnectionId) {
+    public List<PrecheckItem> privilegeChecks(@PathVariable long sourceConnectionId) {
         return service.privilegeChecks(sourceConnectionId);
     }
 
-    /** supp.log(ALL) 적용 — UI에서 "적용하겠습니까?" YES를 받은 뒤에만 호출된다. */
-    @PostMapping("/supplemental-logging")
-    public Map<String, String> applySupplementalLogging(@RequestBody TablesRequest req) {
-        return service.applySupplementalLogging(req.sourceConnectionId(), req.tables());
+    /** 캡처 사전조건 미리보기 — 승인 화면에 보여줄 DDL (Oracle: supp.log ALL, PostgreSQL: REPLICA IDENTITY FULL). */
+    @PostMapping("/capture-setup/preview")
+    public Map<String, String> captureSetupPreview(@RequestBody TablesRequest req) {
+        return service.captureSetupPreview(req.sourceConnectionId(), req.tables());
+    }
+
+    /** 캡처 사전조건 적용 — UI에서 "적용하겠습니까?" YES를 받은 뒤에만 호출된다. */
+    @PostMapping("/capture-setup/apply")
+    public Map<String, String> applyCaptureSetup(@RequestBody TablesRequest req) {
+        return service.applyCaptureSetup(req.sourceConnectionId(), req.tables());
     }
 
     /** 등록 확정 + source·jdbc-sink 배포. snapshotMode: INITIAL(기본) | NO_DATA. */
@@ -117,9 +128,9 @@ public class RegistrationController {
         return Map.of("error", e.getMessage());
     }
 
-    @ExceptionHandler(OracleDictionaryService.DictionaryException.class)
+    @ExceptionHandler(SourceDictionary.DictionaryException.class)
     @ResponseStatus(HttpStatus.BAD_GATEWAY)
-    public Map<String, String> dictionaryError(OracleDictionaryService.DictionaryException e) {
+    public Map<String, String> dictionaryError(SourceDictionary.DictionaryException e) {
         return Map.of("error", e.getMessage());
     }
 }

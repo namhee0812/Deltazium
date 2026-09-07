@@ -7,6 +7,14 @@ application {
     mainClass = 'io.deltazium.recovery.RecoveryJob'
 }
 
+// backend(RecoveryService)가 build/install/recovery-job/bin/recovery-job 런처를 직접 실행한다
+// (application.yml deltazium.recovery.launcher). installDist는 application 플러그인의 기본
+// build 계열 작업에 묶여 있지 않아 `./gradlew clean build`만 실행하면 이 경로가 사라진 채로
+// 남는 함정이 있었다(2026-09-07 확인) — assemble에 걸어 build 때마다 항상 재생성되게 한다.
+tasks.named('assemble') {
+    dependsOn 'installDist'
+}
+
 dependencies {
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.4'
     // Iceberg 읽기 계층 — iceberg-data(Java API) 단일 프로세스 (architecture.md 5.3절, Spark/Trino 금지)

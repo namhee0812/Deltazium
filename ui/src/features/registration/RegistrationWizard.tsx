@@ -14,6 +14,13 @@
  * |                          | SCN에서 시각으로 전환됨(architecture.md 6.2절). 배포 요약의
  * |                          | dz-iceberg-sink 표기도 dz-iceberg-dz(소스별 인스턴스명)로 갱신
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 사전 점검을 backend PrecheckItem 목록
+ * |                          | 기반 범용 렌더링으로 전환(Oracle 전용 필드명 하드코딩 제거),
+ * |                          | supplemental-logging → capture-setup(preview/apply)로 교체
+ * |                          | (Oracle supp.log·PostgreSQL REPLICA IDENTITY FULL 공용 UX),
+ * |                          | suppLogAll → captureReady, 배포 요약 커넥터명을 소스 topicPrefix
+ * |                          | 기준으로 동적 표시
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
@@ -38,8 +45,17 @@ interface SourceTableInfo {
   schema: string
   table: string
   hasPk: boolean
-  suppLogAll: boolean
+  captureReady: boolean
   numRows: number | null
+}
+
+/** 사전 점검 결과 한 줄 — 소스 종류 무관 범용 구조(backend PrecheckItem). */
+interface PrecheckItem {
+  key: string
+  label: string
+  ok: boolean
+  detail: string
+  blocking: boolean
 }
 
 interface TableColumn {
@@ -91,8 +107,9 @@ export function RegistrationWizard({
 
   const [mappings, setMappings] = useState<Record<string, TableMapping>>({})
 
-  const [dbChecks, setDbChecks] = useState<Record<string, string> | null>(null)
-  const [privChecks, setPrivChecks] = useState<Record<string, boolean> | null>(null)
+  const [dbChecks, setDbChecks] = useState<PrecheckItem[] | null>(null)
+  const [privChecks, setPrivChecks] = useState<PrecheckItem[] | null>(null)
+  const [captureSetupPreview, setCaptureSetupPreview] = useState<Record<string, string> | null>(null)
   const [suppResults, setSuppResults] = useState<Record<string, string> | null>(null)
 
   const [snapshotMode, setSnapshotMode] = useState<'INITIAL' | 'NO_DATA'>('INITIAL')
@@ -112,6 +129,7 @@ export function RegistrationWizard({
     setMappings({})
     setDbChecks(null)
     setPrivChecks(null)
+    setCaptureSetupPreview(null)
     setSuppResults(null)
     setSnapshotMode('INITIAL')
     setError(null)
@@ -244,22 +262,28 @@ export function RegistrationWizard({
 
   /* ── 사전 점검 단계 ── */
 
-  const loadChecks = () =>
-    run(async () => {
-      setDbChecks(await api<Record<string, string>>(`/api/registrations/db-checks/${sourceId}`))
-      setPrivChecks(
-        await api<Record<string, boolean>>(`/api/registrations/privilege-checks/${sourceId}`),
-      )
-    })
-
   const pickedInfos = (candidates ?? []).filter((t) => picked.includes(qualified(t)))
   const needSupp = pickedInfos.filter(
-    (t) => !t.suppLogAll && suppResults?.[qualified(t)] !== 'OK',
+    (t) => !t.captureReady && suppResults?.[qualified(t)] !== 'OK',
   )
+
+  const loadChecks = () =>
+    run(async () => {
+      setDbChecks(await api<PrecheckItem[]>(`/api/registrations/db-checks/${sourceId}`))
+      setPrivChecks(await api<PrecheckItem[]>(`/api/registrations/privilege-checks/${sourceId}`))
+      if (needSupp.length > 0) {
+        setCaptureSetupPreview(
+          await api<Record<string, string>>('/api/registrations/capture-setup/preview', {
+            method: 'POST',
+            body: JSON.stringify({ sourceConnectionId: sourceId, tables: needSupp.map(qualified) }),
+          }),
+        )
+      }
+    })
 
   const applySupp = () =>
     run(async () => {
-      const results = await api<Record<string, string>>('/api/registrations/supplemental-logging', {
+      const results = await api<Record<string, string>>('/api/registrations/capture-setup/apply', {
         method: 'POST',
         body: JSON.stringify({ sourceConnectionId: sourceId, tables: needSupp.map(qualified) }),
       })
@@ -293,27 +317,40 @@ export function RegistrationWizard({
       onClose()
     })
 
-  const archivelogOk = dbChecks?.archivelog === 'ARCHIVELOG'
-  const missingPrivs = Object.entries(privChecks ?? {})
-    .filter(([, ok]) => !ok)
-    .map(([name]) => name)
+  // dbChecks 중 blocking=true(필수) 항목이 전부 통과해야 다음으로 갈 수 있다 — 항목 이름은
+  // 소스 종류별로 다르므로(Oracle: archivelog, PostgreSQL: wal_level 등) 여기서 특정 key를
+  // 가정하지 않는다.
+  const dbChecksOk = dbChecks !== null && dbChecks.every((c) => c.ok || !c.blocking)
+  const missingPrivs = (privChecks ?? []).filter((p) => p.blocking && !p.ok)
   const privsOk = privChecks !== null && missingPrivs.length === 0
   const canNext = [
     sourceId != null,
     picked.length > 0,
     targetId != null,
     allMappingsValid,
-    dbChecks != null && archivelogOk && privsOk && needSupp.length === 0,
+    dbChecksOk && privsOk && needSupp.length === 0,
     true,
   ][step]
 
+  // topicPrefix는 비워두면 backend가 이름 슬러그로 채운다 — 저장 전엔 정확한 값을 모르므로
+  // 미리보기 라벨로만 쓴다("<자동>" 표기, 실제 값은 배포 완료 후 연결 카드에서 확인).
+  const sourcePrefixLabel = connections.find((c) => c.id === sourceId)?.topicPrefix ?? '<자동>'
+  const sourceDbType = connections.find((c) => c.id === sourceId)?.dbType
   const sourceUser = connections.find((c) => c.id === sourceId)?.username ?? '<캡처계정>'
+  // GRANT 문법은 DB 종류별로 다르다 — 점검 항목 렌더링은 범용이지만 실행 가능한 스크립트는
+  // 소스 종류를 알아야 만들 수 있다(현재 지원 2종에 한해 생성, 그 외는 항목명만 안내).
   const grantScript = missingPrivs
-    .map((p) =>
-      p.startsWith('EXECUTE ON ')
-        ? `GRANT EXECUTE ON SYS.${p.slice('EXECUTE ON '.length)} TO ${sourceUser};`
-        : `GRANT ${p} TO ${sourceUser};`,
-    )
+    .map((p) => {
+      if (sourceDbType === 'ORACLE') {
+        return p.key.startsWith('EXECUTE ON ')
+          ? `GRANT EXECUTE ON SYS.${p.key.slice('EXECUTE ON '.length)} TO ${sourceUser};`
+          : `GRANT ${p.key} TO ${sourceUser};`
+      }
+      if (sourceDbType === 'POSTGRESQL') {
+        return `ALTER ROLE ${sourceUser} ${p.key};`
+      }
+      return `-- ${p.label} 권한을 DBA에게 요청하세요`
+    })
     .join('\n')
 
   const renameCount = picked.reduce((n, q) => {
@@ -426,8 +463,8 @@ export function RegistrationWizard({
                           </span>
                         )}
                         {!t.hasPk && <span className="text-crit">PK 없음 — 등록 불가</span>}
-                        {t.hasPk && !t.suppLogAll && (
-                          <span className="text-warn">supp.log 미설정</span>
+                        {t.hasPk && !t.captureReady && (
+                          <span className="text-warn">캡처 사전조건 미설정</span>
                         )}
                       </div>
                     </div>
@@ -576,28 +613,28 @@ export function RegistrationWizard({
                   DB 레벨 점검 실행
                 </Button>
               ) : (
-                <>
-                  <CheckRow ok={archivelogOk} label="ARCHIVELOG 모드" detail={dbChecks.archivelog} />
+                dbChecks.map((c) => (
                   <CheckRow
-                    ok={dbChecks.db_supplemental_log_min === 'YES'}
-                    warnOnly
-                    label="DB 최소 supplemental logging"
-                    detail={dbChecks.db_supplemental_log_min}
+                    key={c.key}
+                    ok={c.ok}
+                    warnOnly={!c.blocking}
+                    label={c.label}
+                    detail={c.detail}
                   />
-                </>
+                ))
               )}
 
               {privChecks !== null && (
                 <>
-                  <div className="mt-1 text-[13px] font-semibold">캡처 계정 권한 (최소 8개)</div>
-                  {Object.entries(privChecks).map(([name, ok]) => (
-                    <CheckRow key={name} ok={ok} label={name} detail={ok ? '보유' : '누락'} />
+                  <div className="mt-1 text-[13px] font-semibold">캡처 계정 권한</div>
+                  {privChecks.map((p) => (
+                    <CheckRow key={p.key} ok={p.ok} warnOnly={!p.blocking} label={p.label} detail={p.detail} />
                   ))}
                   {missingPrivs.length > 0 && (
                     <div className="rounded-[10px] border border-crit bg-crit/10 p-3 text-xs leading-relaxed">
                       <p className="mb-2">
                         누락 권한 {missingPrivs.length}개 — 계정 스스로 부여할 수 없어
-                        <b> DBA 계정으로</b> 아래 GRANT를 실행해야 합니다. 실행 후 [재점검]을
+                        <b> DBA 계정으로</b> 아래 명령을 실행해야 합니다. 실행 후 [재점검]을
                         눌러 확인하세요.
                       </p>
                       <pre className="overflow-x-auto rounded bg-background p-2 font-mono text-[11px]">
@@ -608,12 +645,10 @@ export function RegistrationWizard({
                 </>
               )}
 
-              <div className="mt-1 text-[13px] font-semibold">
-                테이블 supplemental logging (ALL) COLUMNS
-              </div>
+              <div className="mt-1 text-[13px] font-semibold">테이블 캡처 사전조건</div>
               {pickedInfos.map((t) => {
                 const q = qualified(t)
-                const applied = t.suppLogAll || suppResults?.[q] === 'OK'
+                const applied = t.captureReady || suppResults?.[q] === 'OK'
                 const failMsg = suppResults?.[q] && suppResults[q] !== 'OK' ? suppResults[q] : null
                 return (
                   <CheckRow
@@ -633,24 +668,20 @@ export function RegistrationWizard({
                 </Button>
               )}
 
-              {needSupp.length > 0 && (
+              {needSupp.length > 0 && captureSetupPreview && (
                 <div className="rounded-[10px] border border-warn bg-warn/10 p-3 text-xs leading-relaxed">
                   <p className="mb-2">
                     {needSupp.length}개 테이블에 다음 DDL을 실행해야 CDC 등록이 가능합니다:
                   </p>
                   <pre className="overflow-x-auto rounded bg-background p-2 font-mono text-[11px]">
-                    {needSupp
-                      .map(
-                        (t) => `ALTER TABLE ${qualified(t)} ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;`,
-                      )
-                      .join('\n')}
+                    {needSupp.map((t) => captureSetupPreview[qualified(t)]).join('\n')}
                   </pre>
                   <p className="mt-2 font-semibold">적용하겠습니까?</p>
                   <Button size="sm" className="mt-1.5" disabled={busy} onClick={() => void applySupp()}>
                     YES — 소스에 DDL 적용
                   </Button>
                   <p className="mt-1.5 text-muted-foreground">
-                    권한이 없으면 Oracle 에러 메시지가 표시됩니다 — DBA에게 위 DDL 실행을 요청하세요.
+                    권한이 없으면 에러 메시지가 표시됩니다 — DBA에게 위 DDL 실행을 요청하세요.
                   </p>
                 </div>
               )}
@@ -722,7 +753,8 @@ export function RegistrationWizard({
                   {connections.find((c) => c.id === targetId)?.name}
                 </div>
                 <div className="text-muted-foreground">
-                  커넥터: dz-source · 테이블별 dz-jdbc-sink-* · dz-iceberg-dz(changelog)
+                  커넥터: dz-source-{sourcePrefixLabel} · 테이블별 dz-jdbc-sink-{sourcePrefixLabel}-*
+                  · dz-iceberg-{sourcePrefixLabel}(changelog)
                 </div>
               </div>
               {renameCount > 0 && (
@@ -755,7 +787,10 @@ export function RegistrationWizard({
               disabled={!canNext || busy}
               onClick={() => {
                 if (step === 2) ensureMappingEntries()
-                if (step === 3) setDbChecks(null)
+                if (step === 3) {
+                  setDbChecks(null)
+                  setCaptureSetupPreview(null)
+                }
                 setStep(step + 1)
               }}
             >

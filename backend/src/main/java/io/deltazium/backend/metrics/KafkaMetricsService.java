@@ -8,8 +8,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
+import io.deltazium.backend.connect.ConnectorNames;
 import io.deltazium.backend.registration.RegisteredTable;
 import io.deltazium.backend.registration.RegisteredTableRepository;
+import io.deltazium.backend.registry.DbConnectionService;
 import jakarta.annotation.PreDestroy;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
@@ -44,6 +46,10 @@ import org.springframework.stereotype.Service;
  * |                          | iceberg-sink 커넥터명이 소스별(dz-iceberg-<prefix>)로 바뀌며
  * |                          | consumer group 이름도 함께 바뀜(Connect 기본 규칙: connect-<커넥터명>)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 전역 topic-prefix 제거 — 테이블마다 자신의
+ * |                          | 소스 커넥션에서 topicPrefix를 조회해 토픽·consumer group을 계산
+ * |                          | (DbConnectionService 의존 추가, ConnectorNames로 이름 조립)
+ * --------------------------------------------------
  */
 @Service
 public class KafkaMetricsService {
@@ -61,27 +67,18 @@ public class KafkaMetricsService {
     private record Sample(long endOffset, long atMillis) {
     }
 
-    /** jdbc-sink는 테이블별 커넥터 — consumer group도 테이블별 (connect-dz-jdbc-sink-<suffix>) */
-    static String jdbcGroup(RegisteredTable t) {
-        return "connect-dz-jdbc-sink-" + t.suffix();
-    }
-
     private final RegisteredTableRepository registrations;
+    private final DbConnectionService connections;
     private final String bootstrap;
-    private final String topicPrefix;
-    private final String icebergGroup;
     private final Map<String, Sample> lastSamples = new ConcurrentHashMap<>();
     private volatile AdminClient admin;
 
     public KafkaMetricsService(RegisteredTableRepository registrations,
-                               @Value("${deltazium.kafka.bootstrap}") String bootstrap,
-                               @Value("${deltazium.topic-prefix}") String topicPrefix) {
+                               DbConnectionService connections,
+                               @Value("${deltazium.kafka.bootstrap}") String bootstrap) {
         this.registrations = registrations;
+        this.connections = connections;
         this.bootstrap = bootstrap;
-        this.topicPrefix = topicPrefix;
-        // iceberg-sink는 소스별 인스턴스(dz-iceberg-<prefix>) — consumer group은 Connect 기본
-        // 규칙(connect-<커넥터명>)을 따른다 (architecture.md 4절)
-        this.icebergGroup = "connect-dz-iceberg-" + topicPrefix;
     }
 
     public List<TableMetrics> tableMetrics() {
@@ -89,6 +86,8 @@ public class KafkaMetricsService {
         if (tables.isEmpty()) {
             return List.of();
         }
+        // 테이블별 소스 topicPrefix 캐시 — 같은 소스 테이블이 여러 개면 반복 조회를 피한다
+        Map<Long, String> prefixByConn = new HashMap<>();
         try {
             AdminClient client = admin();
             // 등록 직후엔 Debezium source가 토픽을 만들기 전일 수 있다 —
@@ -96,28 +95,35 @@ public class KafkaMetricsService {
             var existing = client.listTopics().names().get();
             Map<TopicPartition, OffsetSpec> latest = new HashMap<>();
             for (RegisteredTable t : tables) {
-                if (existing.contains(topic(t))) {
-                    latest.put(new TopicPartition(topic(t), 0), OffsetSpec.latest());
+                String topic = topic(t, prefixByConn);
+                if (existing.contains(topic)) {
+                    latest.put(new TopicPartition(topic, 0), OffsetSpec.latest());
                 }
             }
             Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> ends =
                     latest.isEmpty() ? Map.of() : client.listOffsets(latest).all().get();
-            Map<TopicPartition, OffsetAndMetadata> iceberg =
-                    client.listConsumerGroupOffsets(icebergGroup).partitionsToOffsetAndMetadata().get();
-            Map<String, Map<TopicPartition, OffsetAndMetadata>> jdbcByTable = new HashMap<>();
+            // iceberg-sink는 소스당 1개라 소스별로 한 번만 조회
+            Map<String, Map<TopicPartition, OffsetAndMetadata>> icebergByPrefix = new HashMap<>();
+            Map<Long, Map<TopicPartition, OffsetAndMetadata>> jdbcByTable = new HashMap<>();
             for (RegisteredTable t : tables) {
-                jdbcByTable.put(t.suffix(), client.listConsumerGroupOffsets(jdbcGroup(t))
-                        .partitionsToOffsetAndMetadata().get());
+                String prefix = prefixByConn.get(t.sourceConnectionId());
+                icebergByPrefix.computeIfAbsent(prefix, p -> get(client,
+                        ConnectorNames.consumerGroup(ConnectorNames.icebergSink(p))));
+                jdbcByTable.put(t.id(), get(client, ConnectorNames.consumerGroup(
+                        ConnectorNames.jdbcSink(prefix, t.suffix()))));
             }
 
             long now = System.currentTimeMillis();
             return tables.stream().map(t -> {
-                TopicPartition tp = new TopicPartition(topic(t), 0);
+                String prefix = prefixByConn.get(t.sourceConnectionId());
+                String topic = topic(t, prefixByConn);
+                TopicPartition tp = new TopicPartition(topic, 0);
                 long end = ends.containsKey(tp) ? ends.get(tp).offset() : 0L;
-                double rate = rate(tp.topic(), end, now);
+                double rate = rate(topic, end, now);
                 return new TableMetrics(
-                        t.schemaName(), t.tableName(), tp.topic(), end, rate,
-                        lag(end, jdbcByTable.get(t.suffix()).get(tp)), lag(end, iceberg.get(tp)));
+                        t.schemaName(), t.tableName(), topic, end, rate,
+                        lag(end, jdbcByTable.get(t.id()).get(tp)),
+                        lag(end, icebergByPrefix.get(prefix).get(tp)));
             }).toList();
         } catch (ExecutionException e) {
             throw new MetricsException("Kafka 지표 조회 실패: " + e.getCause().getMessage(), e);
@@ -127,8 +133,18 @@ public class KafkaMetricsService {
         }
     }
 
-    private String topic(RegisteredTable t) {
-        return topicPrefix + "." + t.qualified();
+    private String topic(RegisteredTable t, Map<Long, String> prefixByConn) {
+        String prefix = prefixByConn.computeIfAbsent(t.sourceConnectionId(),
+                id -> connections.get(id).topicPrefix());
+        return ConnectorNames.captureTopic(prefix, t.schemaName(), t.tableName());
+    }
+
+    private Map<TopicPartition, OffsetAndMetadata> get(AdminClient client, String group) {
+        try {
+            return client.listConsumerGroupOffsets(group).partitionsToOffsetAndMetadata().get();
+        } catch (Exception e) {
+            return Map.of();
+        }
     }
 
     /** 직전 조회와의 offset 증가율. 첫 조회거나 시간차가 없으면 0. */

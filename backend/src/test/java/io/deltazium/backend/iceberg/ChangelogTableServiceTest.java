@@ -22,6 +22,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 26. 09. 05.       | 최남희  | 다중 소스·다중 타깃 ①: namespace를 topic-prefix 기반 계산값으로,
  * |                          | 기본 골격에 _pos 검증 추가 (5.1절)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: topicPrefix를 생성자 고정값에서 메서드
+ * |                          | 인자로 전환 — 소스가 여러 개면 namespace도 호출마다 달라진다
+ * --------------------------------------------------
  */
 class ChangelogTableServiceTest {
 
@@ -29,19 +32,18 @@ class ChangelogTableServiceTest {
             "jdbc:postgresql://x/iceberg", "u", "p", "s3://wh/warehouse",
             "http://x:9010", "ak", "sk");
 
-    private final ChangelogTableService service = new ChangelogTableService(props, "dz");
+    private final ChangelogTableService service = new ChangelogTableService(props);
 
     @Test
     void changelog_테이블명은_소스별_namespace_스키마_테이블_소문자() {
-        assertThat(service.changelogTableName("SRC", "ORDERS")).isEqualTo("changelog_dz.src_orders");
-        assertThat(service.changelogTableName("CDC", "TEST_TABLE_01"))
+        assertThat(service.changelogTableName("dz", "SRC", "ORDERS")).isEqualTo("changelog_dz.src_orders");
+        assertThat(service.changelogTableName("dz", "CDC", "TEST_TABLE_01"))
                 .isEqualTo("changelog_dz.cdc_test_table_01");
     }
 
     @Test
     void namespace는_topic_prefix에서_계산된다() {
-        ChangelogTableService other = new ChangelogTableService(props, "ANOTHER");
-        assertThat(other.namespace()).isEqualTo("changelog_another");
+        assertThat(service.namespace("ANOTHER")).isEqualTo("changelog_another");
     }
 
     @Test

@@ -40,6 +40,9 @@ import static org.mockito.Mockito.verify;
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: jdbc-sink 커넥터명에 소스 topicPrefix가
+ * |                          | 들어가 소스 커넥션에 명시 topicPrefix("dz")를 지정
+ * --------------------------------------------------
  */
 class DdlEventServiceTest {
 
@@ -69,7 +72,7 @@ class DdlEventServiceTest {
     @BeforeEach
     void setUp() {
         long sourceId = connections.create(new DbConnection(null, "s", "ORACLE", "SOURCE",
-                "h", 1521, "SRC", "u", "p")).id();
+                "h", 1521, "SRC", "u", "p", "dz")).id();
         targetId = connections.create(new DbConnection(null, "t", "ORACLE", "TARGET",
                 "h", 1521, "TGT", "u", "p")).id();
         registrations.insert("CDC", "AUTO_100", sourceId, targetId, null, null);
@@ -94,7 +97,7 @@ class DdlEventServiceTest {
     void 거부하면_해당_테이블의_jdbc_sink_커넥터가_pause된다() {
         DdlEvent result = service.reject(eventId());
 
-        verify(connect).pause("dz-jdbc-sink-cdc_auto_100");
+        verify(connect).pause("dz-jdbc-sink-dz-cdc_auto_100");
         assertThat(result.state()).isEqualTo("REJECTED");
         assertThat(result.note()).contains("apply 정지");
     }

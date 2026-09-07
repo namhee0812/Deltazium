@@ -30,6 +30,8 @@ import org.springframework.http.MediaType;
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: PostgreSQL 활성화로 지원 목록이 2종이 됨
+ * --------------------------------------------------
  */
 @WebMvcTest(DbConnectionController.class)
 class DbConnectionControllerTest {
@@ -55,9 +57,11 @@ class DbConnectionControllerTest {
     void db_types는_지원_목록만_내려준다() throws Exception {
         mvc.perform(get("/api/connections/db-types"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].code").value("ORACLE"))
-                .andExpect(jsonPath("$[0].label").value("Oracle"));
+                .andExpect(jsonPath("$[0].label").value("Oracle"))
+                .andExpect(jsonPath("$[1].code").value("POSTGRESQL"))
+                .andExpect(jsonPath("$[1].label").value("PostgreSQL"));
     }
 
     @Test

@@ -30,8 +30,9 @@ ln -sfn "$DZ_RT/kafka_2.13-$KAFKA_VER" "$DZ_RT/kafka"
 [ -x "$DZ_RT/bin/minio" ] || { fetch https://dl.min.io/server/minio/release/linux-amd64/minio "$DZ_RT/bin/minio"; chmod +x "$DZ_RT/bin/minio"; }
 [ -x "$DZ_RT/bin/mc" ]    || { fetch https://dl.min.io/client/mc/release/linux-amd64/mc "$DZ_RT/bin/mc"; chmod +x "$DZ_RT/bin/mc"; }
 
-## Debezium 플러그인 (Oracle source에는 ojdbc11 동봉)
-for c in oracle jdbc; do
+## Debezium 플러그인 (Oracle source에는 ojdbc11 동봉, PostgreSQL source는 pgoutput 네이티브라
+## 별도 드라이버 불필요 — 다중 소스·다중 타깃 ②, 2026-09-07)
+for c in oracle postgres jdbc; do
   if [ ! -d "$DZ_PLUGIN_PATH/debezium-connector-$c" ]; then
     fetch "https://repo1.maven.org/maven2/io/debezium/debezium-connector-$c/$DEBEZIUM_VER/debezium-connector-$c-$DEBEZIUM_VER-plugin.tar.gz" \
       "$DL/debezium-connector-$c-$DEBEZIUM_VER-plugin.tar.gz"
