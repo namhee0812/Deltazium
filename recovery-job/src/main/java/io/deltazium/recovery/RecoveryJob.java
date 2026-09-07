@@ -9,13 +9,14 @@ import java.util.Properties;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.deltazium.recovery.envelope.ConnectJsonAssembler;
+import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.data.IcebergGenerics;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.io.CloseableIterable;
-import org.apache.iceberg.jdbc.JdbcCatalog;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -31,8 +32,9 @@ import org.slf4j.LoggerFactory;
  * 프루닝) → `_pos` 순서로 정렬 → envelope 재조립 → 복구 토픽 발행. **타깃 apply는 하지 않는다**
  * — recovery-sink(live와 동일한 JDBC sink 설정)가 담당한다. 여기가 이 잡의 경계다.
  * 인자(키=값):
- * catalog-uri, catalog-user, catalog-password, warehouse,
- * s3-endpoint, s3-access-key, s3-secret-key,
+ * catalog.&lt;key&gt;=&lt;value&gt; (반복 — Iceberg 카탈로그 속성 그대로, 예: catalog.uri=...,
+ * catalog.jdbc.user=..., catalog.type=rest 등. backend IcebergProperties.catalogProperties()가
+ * 단일 진원지 — architecture.md 3절, TODO ③),
  * table=changelog_dz.cdc_auto_100, from-ts-ms=1753300000000,
  * key-columns=ID[,COL2], bootstrap=localhost:9092, topic=dz-recovery.cdc_auto_100
  *
@@ -49,6 +51,12 @@ import org.slf4j.LoggerFactory;
  * |                          | 방출 순서가 어긋나는 문제 회피. scan은 ts_ms 파티션 한 칸 앞부터
  * |                          | 전부 읽고 정밀 절단은 하지 않는다(PK upsert 멱등이 흡수).
  * |                          | 재조립에서 `_pos`는 제외(envelope 무손실 불변식 유지).
+ * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ③ 저장소 프로파일(MinIO/R2): 카탈로그 접속
+ * |                          | 인자를 catalog-uri 등 고정 키에서 `catalog.&lt;key&gt;=&lt;value&gt;`
+ * |                          | 반복 인자로 전환하고 `openCatalog`가 `CatalogUtil.buildIcebergCatalog`로
+ * |                          | 프로파일에 맞는 카탈로그(JDBC 또는 REST)를 연다 — backend의
+ * |                          | IcebergProperties.catalogProperties()와 같은 속성 이름을 그대로 쓴다.
  * --------------------------------------------------
  */
 public final class RecoveryJob {
@@ -78,7 +86,7 @@ public final class RecoveryJob {
         List<String> keyColumns = List.of(require(args, "key-columns").split(","));
         String topic = require(args, "topic");
 
-        JdbcCatalog catalog = openCatalog(args);
+        Catalog catalog = openCatalog(args);
         try {
             int dot = tableName.indexOf('.');
             Table table = catalog.loadTable(TableIdentifier.of(
@@ -128,7 +136,9 @@ public final class RecoveryJob {
             System.out.println("RECOVERY_RESULT published=" + published + " skipped=" + skipped);
         } finally {
             try {
-                catalog.close();
+                if (catalog instanceof AutoCloseable closeable) {
+                    closeable.close();
+                }
             } catch (Exception ignored) {
                 // 종료 경로
             }
@@ -154,22 +164,25 @@ public final class RecoveryJob {
         return pos == null ? null : (Long) pos.getField("offset");
     }
 
-    private static JdbcCatalog openCatalog(Map<String, String> args) {
-        JdbcCatalog catalog = new JdbcCatalog();
-        Map<String, String> props = new HashMap<>();
-        props.put("uri", require(args, "catalog-uri"));
-        props.put("jdbc.user", require(args, "catalog-user"));
-        props.put("jdbc.password", require(args, "catalog-password"));
-        props.put("warehouse", require(args, "warehouse"));
-        props.put("io-impl", "org.apache.iceberg.aws.s3.S3FileIO");
-        props.put("s3.endpoint", require(args, "s3-endpoint"));
-        props.put("s3.path-style-access", "true");
-        props.put("s3.access-key-id", require(args, "s3-access-key"));
-        props.put("s3.secret-access-key", require(args, "s3-secret-key"));
-        props.put("client.region", "us-east-1");
+    /** "catalog." 접두 인자 전부를 카탈로그 속성으로 넘긴다 — 프로파일(JDBC/REST)은 그 안의
+     * catalog-impl 또는 type 값이 결정한다(backend IcebergProperties.catalogProperties()와 동일 키). */
+    private static Catalog openCatalog(Map<String, String> args) {
+        Map<String, String> props = catalogProperties(args);
+        if (props.isEmpty()) {
+            throw new IllegalArgumentException("카탈로그 인자 누락: catalog.<key>=<value> 형태로 최소 1개 필요");
+        }
         // sink·backend와 같은 카탈로그 이름이어야 같은 테이블이 보인다
-        catalog.initialize("iceberg", props);
-        return catalog;
+        return CatalogUtil.buildIcebergCatalog("iceberg", props, null);
+    }
+
+    static Map<String, String> catalogProperties(Map<String, String> args) {
+        Map<String, String> props = new HashMap<>();
+        for (Map.Entry<String, String> e : args.entrySet()) {
+            if (e.getKey().startsWith("catalog.")) {
+                props.put(e.getKey().substring("catalog.".length()), e.getValue());
+            }
+        }
+        return props;
     }
 
     private static Map<String, String> parseArgs(String[] rawArgs) {

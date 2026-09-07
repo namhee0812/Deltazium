@@ -67,6 +67,12 @@ import org.springframework.transaction.annotation.Transactional;
  * |                          | iceberg-sink의 control 토픽을 소스별(control-iceberg-<prefix>)로
  * |                          | — 공유 control 토픽의 백로그 재생으로 커밋 응답이 늦어지는 실측 반영
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ③ 저장소 프로파일(MinIO/R2): iceberg-sink
+ * |                          | 배포에서 catalog_jdbc_url 등 개별 vars를 제거하고
+ * |                          | `IcebergProperties.catalogProperties()`를 `iceberg.catalog.<key>`
+ * |                          | 접두로 extraConfig에 병합(템플릿의 catalog 블록 제거와 대응,
+ * |                          | connectors/README.md)
+ * --------------------------------------------------
  */
 @Service
 public class RegistrationService {
@@ -352,26 +358,23 @@ public class RegistrationService {
         // control 토픽도 소스별 — 공유 시 새 인스턴스의 task가 다른 소스의 control 백로그를
         // 처음부터 읽느라 커밋 응답이 수 분 늦어진다 (2026-09-07 실측, connectors/README.md)
         icebergVars.put("topic_prefix", prefix);
-        icebergVars.put("catalog_jdbc_url", iceberg.catalogUri());
-        icebergVars.put("catalog_jdbc_user", iceberg.catalogUser());
-        icebergVars.put("catalog_jdbc_password", iceberg.catalogPassword());
-        icebergVars.put("warehouse", iceberg.warehouse());
-        icebergVars.put("s3_endpoint", iceberg.s3Endpoint());
-        icebergVars.put("s3_access_key", iceberg.s3AccessKey());
-        icebergVars.put("s3_secret_key", iceberg.s3SecretKey());
         icebergVars.put("iceberg_tables", tables.stream()
                 .map(t -> changelog.changelogTableName(prefix, t.schemaName(), t.tableName()))
                 .collect(Collectors.joining(",")));
-        Map<String, String> routeRegex = new HashMap<>();
+
+        // 카탈로그 접속 정보는 커넥터 정의가 아니라 설치 프로파일에 속한다(3절) — 템플릿에서
+        // 빠진 iceberg.catalog.* 블록을 여기서 extraConfig로 채운다 (TODO ③, 단일 진원지)
+        Map<String, String> extraConfig = new HashMap<>();
+        iceberg.catalogProperties().forEach((k, v) -> extraConfig.put("iceberg.catalog." + k, v));
         for (RegisteredTable t : tables) {
             // route-field=_pos.topic(템플릿) — 라우팅은 토픽 이름 정확 일치로,
             // 테이블명만 보던 종전 방식의 동명 테이블 제약을 해소 (5.1절)
             String topic = ConnectorNames.captureTopic(prefix, t.schemaName(), t.tableName());
-            routeRegex.put("iceberg.table."
+            extraConfig.put("iceberg.table."
                     + changelog.changelogTableName(prefix, t.schemaName(), t.tableName()) + ".route-regex",
                     "^" + Pattern.quote(topic) + "$");
         }
-        deploy.deploy("iceberg-sink", icebergVars, routeRegex);
+        deploy.deploy("iceberg-sink", icebergVars, extraConfig);
     }
 
     /** source 커넥터 배포 — 템플릿·설정 키는 소스 dbType별로 다르다 (connectors/README.md). */

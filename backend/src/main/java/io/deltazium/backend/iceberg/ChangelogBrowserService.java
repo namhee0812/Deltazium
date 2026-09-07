@@ -11,7 +11,9 @@ import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.io.CloseableIterable;
 import org.slf4j.Logger;
@@ -35,6 +37,11 @@ import org.springframework.stereotype.Service;
  * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 고정 namespace 하나 대신 카탈로그의
  * |                          | changelog_* 네임스페이스 전부를 훑도록 전환 — 소스가 늘면
  * |                          | namespace도 늘어난다(namespace가 소스별, 5.1절)
+ * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ③ 저장소 프로파일: catalog()가 JdbcCatalog
+ * |                          | 대신 Catalog를 반환하도록 바뀌어 listNamespaces()는
+ * |                          | SupportsNamespaces로 캐스팅해서 호출(REST 카탈로그도 이 인터페이스
+ * |                          | 구현). 미구현 카탈로그면 네임스페이스 목록을 비운다.
  * --------------------------------------------------
  */
 @Service
@@ -66,10 +73,13 @@ public class ChangelogBrowserService {
      * changelog도 보인다 (namespace가 소스별, 5.1절). */
     public List<ChangelogInfo> list() {
         List<ChangelogInfo> result = new ArrayList<>();
-        for (Namespace ns : tables.catalog().listNamespaces()) {
-            if (ns.length() == 1 && ns.level(0).startsWith("changelog_")) {
-                for (TableIdentifier id : tables.catalog().listTables(ns)) {
-                    result.add(describe(id));
+        Catalog cat = tables.catalog();
+        if (cat instanceof SupportsNamespaces nsCatalog) {
+            for (Namespace ns : nsCatalog.listNamespaces()) {
+                if (ns.length() == 1 && ns.level(0).startsWith("changelog_")) {
+                    for (TableIdentifier id : cat.listTables(ns)) {
+                        result.add(describe(id));
+                    }
                 }
             }
         }

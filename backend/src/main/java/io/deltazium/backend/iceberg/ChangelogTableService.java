@@ -1,13 +1,14 @@
 package io.deltazium.backend.iceberg;
 
 import java.util.Locale;
-import java.util.Map;
 
+import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
-import org.apache.iceberg.jdbc.JdbcCatalog;
 import org.apache.iceberg.types.Types;
 import org.springframework.stereotype.Service;
 
@@ -34,6 +35,12 @@ import org.springframework.stereotype.Service;
  * |                          | 인자로 전환 — 소스가 여러 개면 namespace도 호출마다 달라진다
  * |                          | (카탈로그는 설치당 하나, namespace만 소스별, 3·5.1절)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ③ 저장소 프로파일(MinIO/R2): JdbcCatalog
+ * |                          | 직접 참조를 제거하고 `CatalogUtil.buildIcebergCatalog`로 프로파일에
+ * |                          | 맞는 카탈로그(JDBC 또는 REST)를 연다(IcebergProperties.catalogProperties()가
+ * |                          | 단일 진원지). namespace 존재 검사는 `SupportsNamespaces` 캐스팅 —
+ * |                          | REST 카탈로그도 이 인터페이스를 구현한다.
+ * --------------------------------------------------
  */
 @Service
 public class ChangelogTableService {
@@ -42,14 +49,14 @@ public class ChangelogTableService {
     static final int PARTITION_WIDTH_MS = 86_400_000;
 
     /**
-     * JdbcCatalog는 catalog_name 컬럼으로 테이블을 스코핑한다.
-     * iceberg-sink의 기본 카탈로그 이름("iceberg", IcebergSinkConfig.DEFAULT_CATALOG_NAME)과
-     * 반드시 일치해야 backend가 만든 테이블을 sink가 본다.
+     * 카탈로그 구현별 스코핑(JdbcCatalog는 catalog_name 컬럼)과 무관하게, iceberg-sink의
+     * 기본 카탈로그 이름("iceberg", IcebergSinkConfig.DEFAULT_CATALOG_NAME)과 반드시 일치해야
+     * backend가 만든 테이블을 sink가 본다.
      */
     static final String CATALOG_NAME = "iceberg";
 
     private final IcebergProperties props;
-    private volatile JdbcCatalog catalog;
+    private volatile Catalog catalog;
 
     public ChangelogTableService(IcebergProperties props) {
         this.props = props;
@@ -70,9 +77,9 @@ public class ChangelogTableService {
         String namespace = namespace(topicPrefix);
         TableIdentifier id = TableIdentifier.of(
                 namespace, (schema + "_" + table).toLowerCase(Locale.ROOT));
-        JdbcCatalog cat = catalog();
-        if (!cat.namespaceExists(Namespace.of(namespace))) {
-            cat.createNamespace(Namespace.of(namespace));
+        Catalog cat = catalog();
+        if (cat instanceof SupportsNamespaces nsCatalog && !nsCatalog.namespaceExists(Namespace.of(namespace))) {
+            nsCatalog.createNamespace(Namespace.of(namespace));
         }
         if (!cat.tableExists(id)) {
             Schema base = baseSchema();
@@ -87,7 +94,7 @@ public class ChangelogTableService {
     public void dropChangelogTable(String topicPrefix, String schema, String table, boolean purge) {
         TableIdentifier id = TableIdentifier.of(
                 namespace(topicPrefix), (schema + "_" + table).toLowerCase(Locale.ROOT));
-        JdbcCatalog cat = catalog();
+        Catalog cat = catalog();
         if (cat.tableExists(id)) {
             cat.dropTable(id, purge);
         }
@@ -122,24 +129,12 @@ public class ChangelogTableService {
                 .build();
     }
 
-    JdbcCatalog catalog() {
-        JdbcCatalog c = catalog;
+    Catalog catalog() {
+        Catalog c = catalog;
         if (c == null) {
             synchronized (this) {
                 if (catalog == null) {
-                    c = new JdbcCatalog();
-                    c.initialize(CATALOG_NAME, Map.of(
-                            "uri", props.catalogUri(),
-                            "jdbc.user", props.catalogUser(),
-                            "jdbc.password", props.catalogPassword(),
-                            "warehouse", props.warehouse(),
-                            "io-impl", "org.apache.iceberg.aws.s3.S3FileIO",
-                            "s3.endpoint", props.s3Endpoint(),
-                            "s3.path-style-access", "true",
-                            "s3.access-key-id", props.s3AccessKey(),
-                            "s3.secret-access-key", props.s3SecretKey(),
-                            "client.region", "us-east-1"));
-                    catalog = c;
+                    catalog = CatalogUtil.buildIcebergCatalog(CATALOG_NAME, props.catalogProperties(), null);
                 }
                 c = catalog;
             }

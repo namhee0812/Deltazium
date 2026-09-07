@@ -25,10 +25,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: topicPrefix를 생성자 고정값에서 메서드
  * |                          | 인자로 전환 — 소스가 여러 개면 namespace도 호출마다 달라진다
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ③ 저장소 프로파일: IcebergProperties 생성자를
+ * |                          | minio 팩토리 메서드로 교체(필드 증가 대응)
+ * --------------------------------------------------
  */
 class ChangelogTableServiceTest {
 
-    private final IcebergProperties props = new IcebergProperties(
+    private final IcebergProperties props = IcebergProperties.minio(
             "jdbc:postgresql://x/iceberg", "u", "p", "s3://wh/warehouse",
             "http://x:9010", "ak", "sk");
 

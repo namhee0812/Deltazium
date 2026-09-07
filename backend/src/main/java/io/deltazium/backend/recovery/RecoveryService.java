@@ -58,6 +58,13 @@ import org.springframework.stereotype.Service;
  * |                          | 테이블명에 소스 topicPrefix를 반영(ConnectorNames), 딕셔너리를
  * |                          | DictionaryRouter로 교체 — 타깃 컬럼 조회가 dbType별로 정확해짐
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ③ 저장소 프로파일(MinIO/R2): buildCommand의
+ * |                          | catalog-uri 등 고정 인자를 `IcebergProperties.catalogProperties()`
+ * |                          | 기반 `catalog.&lt;key&gt;=&lt;value&gt;` 반복 인자로 전환 — recovery-job이
+ * |                          | 어느 프로파일이든 같은 방식으로 카탈로그를 연다(3절 단일 진원지).
+ * |                          | 비밀값이 프로세스 인자(ps 노출)로 전달되는 현행 방식은 유지
+ * |                          | (docs/internals.md 기록)
+ * --------------------------------------------------
  */
 @Service
 public class RecoveryService {
@@ -167,13 +174,7 @@ public class RecoveryService {
                               List<String> keyColumns, String recoveryTopic, String logPath) {
         List<String> cmd = new ArrayList<>();
         cmd.add(launcher);
-        cmd.add("catalog-uri=" + iceberg.catalogUri());
-        cmd.add("catalog-user=" + iceberg.catalogUser());
-        cmd.add("catalog-password=" + iceberg.catalogPassword());
-        cmd.add("warehouse=" + iceberg.warehouse());
-        cmd.add("s3-endpoint=" + iceberg.s3Endpoint());
-        cmd.add("s3-access-key=" + iceberg.s3AccessKey());
-        cmd.add("s3-secret-key=" + iceberg.s3SecretKey());
+        iceberg.catalogProperties().forEach((k, v) -> cmd.add("catalog." + k + "=" + v));
         cmd.add("table=" + changelog.changelogTableName(topicPrefix, table.schemaName(), table.tableName()));
         cmd.add("from-ts-ms=" + fromTimeMs);
         cmd.add("key-columns=" + String.join(",", keyColumns));

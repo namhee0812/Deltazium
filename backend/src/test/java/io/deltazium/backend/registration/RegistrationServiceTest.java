@@ -67,6 +67,10 @@ import static org.mockito.Mockito.when;
  * |                          | source 템플릿을 source-oracle로, 다중 소스 격리(소스별 독립
  * |                          | 배포·해제) 테스트 추가
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ③ 저장소 프로파일: iceberg-sink extraConfig에
+ * |                          | 종전 템플릿의 iceberg.catalog.* 키·값이 그대로 들어가는지 검증
+ * |                          | 추가(회귀 방지, 템플릿에서 backend 주입으로 이관됐기 때문)
+ * --------------------------------------------------
  */
 @EnableConfigurationProperties(IcebergProperties.class)
 class RegistrationServiceTest {
@@ -364,8 +368,21 @@ class RegistrationServiceTest {
                 .containsEntry("connector_name", "dz-iceberg-dz")
                 .containsEntry("iceberg_tables", "changelog.cdc_t1");
         // route-regex는 토픽 이름 정확 일치 (5.1절) — 테이블명만 보던 종전 방식에서 전환
+        // 카탈로그 접속 정보(iceberg.catalog.*)는 템플릿에서 빠지고 여기서 주입된다(TODO ③) —
+        // minio 프로파일(테스트 application.yml)에서 종전 템플릿 하드코딩 값과 동일해야 한다
         assertThat(extra.getValue())
-                .containsEntry("iceberg.table.changelog.cdc_t1.route-regex", "^\\Qdz.CDC.T1\\E$");
+                .containsEntry("iceberg.table.changelog.cdc_t1.route-regex", "^\\Qdz.CDC.T1\\E$")
+                .containsEntry("iceberg.catalog.catalog-impl", "org.apache.iceberg.jdbc.JdbcCatalog")
+                .containsEntry("iceberg.catalog.uri", "jdbc:postgresql://localhost:5433/iceberg_catalog")
+                .containsEntry("iceberg.catalog.jdbc.user", "deltazium")
+                .containsEntry("iceberg.catalog.jdbc.password", "deltazium")
+                .containsEntry("iceberg.catalog.warehouse", "s3://deltazium-warehouse/warehouse")
+                .containsEntry("iceberg.catalog.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
+                .containsEntry("iceberg.catalog.s3.endpoint", "http://localhost:9010")
+                .containsEntry("iceberg.catalog.s3.path-style-access", "true")
+                .containsEntry("iceberg.catalog.s3.access-key-id", "deltazium")
+                .containsEntry("iceberg.catalog.s3.secret-access-key", "deltazium123")
+                .containsEntry("iceberg.catalog.client.region", "us-east-1");
     }
 
     @Test

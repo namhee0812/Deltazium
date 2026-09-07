@@ -91,6 +91,12 @@ https://debezium.io/documentation/reference/stable/connectors/postgresql.html
    `route-field=_pos.topic` + 테이블별 route-regex(토픽 이름 정확 일치,
    `^<prefix>\.<SCHEMA>\.<TABLE>$`). 종전 `route-field=source.table`의 동명 테이블 제약 해소.
    **주의: JdbcCatalog는 catalog_name으로 스코핑 — backend와 sink 모두 "iceberg" 이름 사용.**
+   **2026-09-07 변경 (저장소 프로파일 MinIO/R2, TODO ③)**: `iceberg.catalog.*` 9개 키(catalog-impl·
+   uri·jdbc.user/password·warehouse·io-impl·s3.*·client.region)를 템플릿에서 제거했다. backend의
+   `RegistrationService.deploySource`가 `IcebergProperties.catalogProperties()`(프로파일별 카탈로그
+   속성 맵 — minio: JDBC+S3FileIO, r2: REST+토큰)를 `iceberg.catalog.<key>` 접두로 extraConfig에
+   병합해 배포 시점에 채운다. 템플릿을 프로파일별로 나누지 않는 이유: 카탈로그 접속 정보는
+   설치 프로파일에 속하지 커넥터 정의에 속하지 않는다(3절) — 템플릿은 두 프로파일에서 동일.
 2. ~~jdbc-sink 토픽→타깃 테이블 매핑~~ **확정(2026-07-25)**: RegexRouter로 토픽명에서
    `<prefix>.<schema>.` 접두를 제거해 테이블명만 남기고, apply는 **TARGET 연결 계정의
    기본 스키마**에 수행한다 (`collection.name.format=${topic}`). 스키마 한정자 문제 회피 —
