@@ -98,10 +98,32 @@
       재등록(커넥터 이름 전환) 절차, internals.md 지문 감지 구현 판단
     - 검증: 단위·통합 테스트, PG 소스 실 배선 스모크(사용자 실행 후) — PG→Oracle 타깃 + changelog `_pos`
   - [ ] **③ 저장소 프로파일: MinIO / R2** — R2 프로파일 = Cloudflare R2(10GB·egress 무료) +
-        R2 Data Catalog(Iceberg REST)
-    - `deploy/env.sh`·backend 설정을 프로파일화, R2 프로파일에서 MinIO·iceberg_catalog DB 미기동
-    - 연결 화면에 읽기 전용 "changelog 저장소" 카드(프로파일·버킷·카탈로그·외부 접근 가능 여부·연결 테스트)
-    - 검증: 카탈로그 전환 스모크 + recovery-job 왕복 테스트, 인터넷 너머 커밋 시간 실측
+        R2 Data Catalog(Iceberg REST) (2026-09-07 구체화·위임)
+    - **R2 규격(공식 문서 확인 2026-09-07)**: REST 카탈로그 `type=rest`, `uri`(카탈로그 활성화 시 표시),
+      `warehouse`(표시값), `token`(R2 API 토큰, R2+catalog 권한 "Admin Read & Write"; 읽기 전용
+      클라이언트는 "Admin Read only"). Spark 예시가 S3 키 없이 동작 → 카탈로그가 S3 자격을 위임
+      (vended credentials). S3 엔드포인트 `<account_id>.r2.cloudflarestorage.com`, 리전 `auto`.
+      Snowflake는 `STORAGE_PROVIDER='S3COMPAT'` 외부 볼륨 + `CATALOG_SOURCE=ICEBERG_REST` bearer 통합
+      공식 예시 있음(④ 전제 확인, 읽기 전용).
+    - **카탈로그 속성 단일 진원지**: backend `IcebergProperties.catalogProperties()`가 프로파일별
+      Iceberg 카탈로그 속성 맵을 만든다 — minio: 현행 JDBC(+S3FileIO·MinIO 키), r2: rest+uri+warehouse+
+      token(+io-impl S3FileIO, `client.region=auto`, 위임 실패 대비 선택적 S3 키). 이 맵을
+      ① backend 자신(`CatalogUtil.buildIcebergCatalog`, `JdbcCatalog` 직접 참조 제거),
+      ② iceberg-sink 배포(템플릿의 catalog 블록 제거 → `iceberg.catalog.<key>`를 extraConfig로),
+      ③ recovery-job 기동 인자(`catalog.<key>=<value>`, recovery-job도 CatalogUtil로) 세 곳이 공유
+    - **설정 파일**: `deploy/env.sh`에 `DZ_STORAGE_PROFILE=minio`(기본), 존재하면 `deploy/env.local.sh`
+      (git-ignore, R2 uri·warehouse·token·엔드포인트·선택적 키)를 source. `deploy/env.local.sh.example`
+      제공. backend는 같은 환경변수를 읽는다(`deltazium.iceberg.profile` 등)
+    - **deploy 분기**: r2 프로파일이면 start-infra가 MinIO·iceberg_catalog DB를 띄우지 않고,
+      smoke-test·watchdog·dzadmin status도 프로파일을 따른다
+    - **UI**: 연결 화면에 읽기 전용 "changelog 저장소" 카드 — `GET /api/system/changelog-storage`
+      (profile·catalogType·catalogUri 호스트·warehouse/버킷·externallyReachable=profile==r2, 비밀값 없음)
+      + `POST .../test`(namespace 목록 조회 + 데이터 파일 경로 접근). DW 타깃 사전 점검(8절)이 같은
+      externallyReachable을 쓴다(④에서 연결)
+    - **검증**: 단위 테스트(프로파일별 속성 맵), minio 프로파일 통합 테스트 회귀, REST 프로파일은
+      `org.apache.iceberg:iceberg-open-api` 테스트 픽스처(RESTCatalogServer, test scope)로 통합 테스트
+      시도(불가 시 사유 기록), recovery-job 왕복 테스트. **R2 실 스모크는 사용자 계정 준비 후**:
+      버킷·카탈로그 활성화·토큰 → env.local.sh → 프로파일 전환 → 테이블 재등록 → 커밋 시간 실측
     - 프로파일 전환은 changelog 이전이 따르는 설치 작업 — 절차를 operations.md에
   - [ ] **④ DW 계열: Snowflake · Databricks** (설계 문서 v2:
         https://claude.ai/code/artifact/581e7a1e-b7ca-4e0b-b6d6-556d8464c3cc — 단, 증분 기준
