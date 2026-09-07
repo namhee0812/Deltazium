@@ -19,6 +19,11 @@
  * |                          | (기본값 = 이름 슬러그, backend가 채움 — 비워두면 자동), 카드에
  * |                          | 소스 식별자 표시
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ③ 저장소 프로파일(MinIO/R2): 읽기 전용
+ * |                          | "changelog 저장소" 카드 추가(GET /api/system/changelog-storage +
+ * |                          | POST .../test) — 편집 불가, 비밀값 없음. DW 타깃(예정)이 changelog에
+ * |                          | 닿을 수 있는지(externallyReachable)를 보여준다.
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, MoreVertical, Plus } from 'lucide-react'
@@ -67,6 +72,23 @@ interface RowTest {
   testedAtMs: number
 }
 
+/** GET /api/system/changelog-storage 응답 — 비밀값 없음(읽기 전용 카드 전용, TODO ③). */
+interface ChangelogStorageInfo {
+  profile: string
+  catalogType: string
+  catalogUriHost: string | null
+  warehouse: string | null
+  bucket: string | null
+  s3Endpoint: string | null
+  externallyReachable: boolean
+}
+
+interface StorageTestResult {
+  ok: boolean
+  message: string
+  elapsedMs: number
+}
+
 const CARD_GRID_COLS = 'repeat(auto-fill, minmax(320px, 360px))'
 
 /** DB 연결 저장소 — 등록·수정·삭제·연결 테스트. 지원 DB 목록은 backend가 내려준다. */
@@ -77,6 +99,10 @@ export function ConnectionsPanel() {
   const [listError, setListError] = useState<string | null>(null)
   const [rowTests, setRowTests] = useState<Record<number, RowTest>>({})
   const [testingId, setTestingId] = useState<number | null>(null)
+
+  const [storageInfo, setStorageInfo] = useState<ChangelogStorageInfo | null>(null)
+  const [storageTest, setStorageTest] = useState<{ result: StorageTestResult; testedAtMs: number } | null>(null)
+  const [storageTesting, setStorageTesting] = useState(false)
 
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<DbConnection>(emptyConnection)
@@ -99,7 +125,27 @@ export function ConnectionsPanel() {
     api<DbTypeOption[]>('/api/connections/db-types')
       .then(setDbTypes)
       .catch(() => setDbTypes([{ code: 'ORACLE', label: 'Oracle' }]))
+    api<ChangelogStorageInfo>('/api/system/changelog-storage')
+      .then(setStorageInfo)
+      .catch(() => setStorageInfo(null))
   }, [reload])
+
+  const testStorage = async () => {
+    setStorageTesting(true)
+    try {
+      const result = await api<StorageTestResult>('/api/system/changelog-storage/test', {
+        method: 'POST',
+      })
+      setStorageTest({ result, testedAtMs: Date.now() })
+    } catch (e) {
+      setStorageTest({
+        result: { ok: false, message: (e as Error).message, elapsedMs: 0 },
+        testedAtMs: Date.now(),
+      })
+    } finally {
+      setStorageTesting(false)
+    }
+  }
 
   const openNew = () => {
     setForm(emptyConnection)
@@ -200,6 +246,14 @@ export function ConnectionsPanel() {
       {listError && <p className="text-sm text-crit">{listError}</p>}
 
       <div className="grid gap-4" style={{ gridTemplateColumns: CARD_GRID_COLS }}>
+        {storageInfo && (
+          <ChangelogStorageCard
+            info={storageInfo}
+            test={storageTest}
+            testing={storageTesting}
+            onTest={() => void testStorage()}
+          />
+        )}
         {connections.map((c) => (
           <ConnectionCard
             key={c.id}
@@ -433,6 +487,68 @@ function ConnectionCard({
         <GhostButton onClick={onTest} disabled={testing}>
           {testing && <Loader2 className="size-3.5 animate-spin" />}
           테스트
+        </GhostButton>
+      </CardFooter>
+    </Card>
+  )
+}
+
+/**
+ * changelog 저장소 카드 — 읽기 전용(편집 불가, 비밀값 없음). 프로파일 전환은 설치 작업
+ * (deploy/env.local.sh + 재기동)이라 이 화면에서 바꾸지 않는다. externallyReachable은 SaaS DW
+ * 타깃이 changelog에 닿을 수 있는지를 뜻한다(TODO ④에서 사전 점검이 이 값을 그대로 쓴다).
+ */
+function ChangelogStorageCard({
+  info,
+  test,
+  testing,
+  onTest,
+}: {
+  info: ChangelogStorageInfo
+  test: { result: StorageTestResult; testedAtMs: number } | null
+  testing: boolean
+  onTest: () => void
+}) {
+  const accent = !test ? 'var(--stop)' : test.result.ok ? 'var(--ok)' : 'var(--crit)'
+  const profileLabel = info.profile === 'r2' ? 'Cloudflare R2' : 'MinIO (온프레미스)'
+
+  return (
+    <Card>
+      <CardHeader className="border-l-4 bg-surface-2" style={{ borderLeftColor: accent }}>
+        <CardTitle className="min-w-0 truncate">changelog 저장소</CardTitle>
+        <StatusPill variant={info.externallyReachable ? 'brand' : 'stop'} dot={false}>
+          {info.externallyReachable ? '외부 접근 가능' : '사내망 전용'}
+        </StatusPill>
+      </CardHeader>
+
+      <CardContent>
+        <div className="grid grid-cols-[112px_1fr] gap-x-3 gap-y-1.5 text-[12.5px]">
+          <span className="text-ink-3">프로파일</span>
+          <span className="truncate font-mono text-[12px]">{profileLabel}</span>
+          <span className="text-ink-3">카탈로그</span>
+          <span className="truncate font-mono text-[12px]">
+            {info.catalogType} · {info.catalogUriHost ?? '—'}
+          </span>
+          <span className="text-ink-3">warehouse</span>
+          <span className="truncate font-mono text-[12px]">{info.warehouse ?? '—'}</span>
+        </div>
+
+        {test && !test.result.ok && (
+          <div className="mt-2.5 rounded-md border border-crit/40 bg-crit-soft px-3 py-2 text-[12px] text-crit">
+            {test.result.message}
+          </div>
+        )}
+      </CardContent>
+
+      <CardFooter>
+        <span className="mr-auto font-mono text-[11px] text-ink-3">
+          {test
+            ? new Date(test.testedAtMs).toLocaleTimeString('ko-KR', { hour12: false })
+            : '미테스트'}
+        </span>
+        <GhostButton onClick={onTest} disabled={testing}>
+          {testing && <Loader2 className="size-3.5 animate-spin" />}
+          연결 테스트
         </GhostButton>
       </CardFooter>
     </Card>
