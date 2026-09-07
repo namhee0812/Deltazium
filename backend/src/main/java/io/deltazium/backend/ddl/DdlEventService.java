@@ -5,6 +5,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import io.deltazium.backend.connect.ConnectClient;
+import io.deltazium.backend.connect.ConnectorNames;
 import io.deltazium.backend.events.TableEventService;
 import io.deltazium.backend.registration.RegisteredTable;
 import io.deltazium.backend.registration.RegisteredTableRepository;
@@ -74,7 +75,8 @@ public class DdlEventService {
     public DdlEvent reject(long id) {
         DdlEvent event = pending(id);
         RegisteredTable registered = requireRegistered(event);
-        String connector = "dz-jdbc-sink-" + registered.suffix();
+        String prefix = connections.get(registered.sourceConnectionId()).topicPrefix();
+        String connector = ConnectorNames.jdbcSink(prefix, registered.suffix());
         connect.pause(connector);
         repository.decide(id, "REJECTED",
                 "apply 정지 — " + connector + " pause. changelog는 계속 축적됨");
