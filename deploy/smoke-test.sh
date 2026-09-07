@@ -11,9 +11,16 @@ check() { # name cmd...
 }
 
 check "PostgreSQL ($DZ_PG_PORT)"      "$DZ_PG_BIN/psql" -h localhost -p "$DZ_PG_PORT" -U "$DZ_PG_USER" -d "$DZ_PG_DB" -c "SELECT 1"
-check "PostgreSQL iceberg_catalog"     "$DZ_PG_BIN/psql" -h localhost -p "$DZ_PG_PORT" -U "$DZ_PG_USER" -d iceberg_catalog -c "SELECT 1"
-check "MinIO ($DZ_MINIO_PORT)"         curl -sf "http://localhost:$DZ_MINIO_PORT/minio/health/live"
-check "MinIO bucket $DZ_MINIO_BUCKET"  "$DZ_RT/bin/mc" ls "dz/$DZ_MINIO_BUCKET"
+# MinIO·iceberg_catalog DB는 minio 프로파일 전용 — r2 프로파일은 R2 Data Catalog(REST)를 쓴다
+# (TODO ③, architecture.md 3절). r2일 때는 검사 자체를 건너뛴다(FAIL로 치지 않음).
+if [ "$DZ_STORAGE_PROFILE" = "minio" ]; then
+  check "PostgreSQL iceberg_catalog"     "$DZ_PG_BIN/psql" -h localhost -p "$DZ_PG_PORT" -U "$DZ_PG_USER" -d iceberg_catalog -c "SELECT 1"
+  check "MinIO ($DZ_MINIO_PORT)"         curl -sf "http://localhost:$DZ_MINIO_PORT/minio/health/live"
+  check "MinIO bucket $DZ_MINIO_BUCKET"  "$DZ_RT/bin/mc" ls "dz/$DZ_MINIO_BUCKET"
+else
+  echo "SKIP PostgreSQL iceberg_catalog (저장소 프로파일=$DZ_STORAGE_PROFILE)"
+  echo "SKIP MinIO (저장소 프로파일=$DZ_STORAGE_PROFILE)"
+fi
 check "Kafka ($DZ_KAFKA_PORT)"         "$DZ_KAFKA_HOME/bin/kafka-broker-api-versions.sh" --bootstrap-server "localhost:$DZ_KAFKA_PORT"
 check "Kafka Connect ($DZ_CONNECT_PORT)" curl -sf "http://localhost:$DZ_CONNECT_PORT/"
 

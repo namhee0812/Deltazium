@@ -56,7 +56,13 @@ port_status() { # label port
 infra_status() {
   echo "[infra]"
   port_status pg "$DZ_PG_PORT"
-  port_status minio "$DZ_MINIO_PORT"
+  # 저장소 프로파일이 r2면 MinIO를 기동하지 않는다(TODO ③) — DOWN으로 오검출돼 워치독이
+  # 재기동을 시도하지 않도록 그 프로파일에서는 행 자체를 뺀다.
+  if [ "$DZ_STORAGE_PROFILE" = "minio" ]; then
+    port_status minio "$DZ_MINIO_PORT"
+  else
+    printf "  %-9s N/A   (저장소 프로파일=%s)\n" minio "$DZ_STORAGE_PROFILE"
+  fi
   port_status kafka "$DZ_KAFKA_PORT"
   port_status connect "$DZ_CONNECT_PORT"
 }
