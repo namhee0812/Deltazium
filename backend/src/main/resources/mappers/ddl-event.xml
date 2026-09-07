@@ -37,10 +37,11 @@
     </insert>
 
     <!-- FINGERPRINT 기원 — Kafka offset이 없다(kafka_offset NULL). 멱등 삽입이 필요 없다
-         (SchemaFingerprintService가 지문이 실제로 바뀐 시점에만 1회 호출한다). -->
+         (SchemaFingerprintService가 지문이 실제로 바뀐 시점에만 1회 호출한다).
+         note에 diff 요약을 바로 채운다 — ddl_text는 승인 시 그대로 실행되는 문장 전용. -->
     <insert id="insertFingerprintEventRow" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
-        INSERT INTO ddl_events (event_ts_ms, scn, schema_name, table_name, ddl_text, state, origin)
-        VALUES (#{tsMs}, NULL, #{schema}, #{table}, #{ddl}, #{state}, 'FINGERPRINT')
+        INSERT INTO ddl_events (event_ts_ms, scn, schema_name, table_name, ddl_text, state, note, origin)
+        VALUES (#{tsMs}, NULL, #{schema}, #{table}, #{ddl}, #{state}, #{note}, 'FINGERPRINT')
     </insert>
 
     <update id="decide">

@@ -143,18 +143,26 @@ class SchemaFingerprintTest {
 
         String ddl = SchemaFingerprint.draftDdl("ORACLE", "TGT", "ORDERS", changes);
 
-        assertThat(ddl).contains("ALTER TABLE \"TGT\".\"ORDERS\" ADD (\"AMOUNT\" VARCHAR2(4000));")
-                .contains("ALTER TABLE \"TGT\".\"ORDERS\" DROP COLUMN \"LEGACY_FLAG\";");
+        // 단일 실행문(세미콜론 없음) — 승인 시 Statement.execute()에 그대로 넘겨지므로
+        // 여러 문장을 세미콜론으로 이으면 안 된다(2026-09-07 수정, 실측 ORA-00900).
+        assertThat(ddl).isEqualTo(
+                "ALTER TABLE \"TGT\".\"ORDERS\" ADD (\"AMOUNT\" VARCHAR2(4000)) DROP (\"LEGACY_FLAG\")");
+        assertThat(ddl).doesNotContain(";");
     }
 
     @Test
     void 추가_삭제만_있으면_postgresql_초안_DDL을_만든다() {
-        var changes = List.of(new SchemaFingerprint.FieldChange(SchemaFingerprint.ChangeKind.ADDED, null,
-                new SchemaFingerprint.FieldDesc("amount", "int32", true, Map.of())));
+        var changes = List.of(
+                new SchemaFingerprint.FieldChange(SchemaFingerprint.ChangeKind.ADDED, null,
+                        new SchemaFingerprint.FieldDesc("amount", "int32", true, Map.of())),
+                new SchemaFingerprint.FieldChange(SchemaFingerprint.ChangeKind.REMOVED,
+                        new SchemaFingerprint.FieldDesc("legacy_flag", "int8", true, Map.of()), null));
 
         String ddl = SchemaFingerprint.draftDdl("POSTGRESQL", "tgt", "orders", changes);
 
-        assertThat(ddl).isEqualTo("ALTER TABLE \"tgt\".\"orders\" ADD COLUMN \"amount\" INTEGER;");
+        assertThat(ddl).isEqualTo(
+                "ALTER TABLE \"tgt\".\"orders\" ADD COLUMN \"amount\" INTEGER, DROP COLUMN \"legacy_flag\"");
+        assertThat(ddl).doesNotContain(";");
     }
 
     @Test

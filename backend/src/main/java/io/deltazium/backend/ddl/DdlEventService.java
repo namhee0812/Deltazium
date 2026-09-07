@@ -30,6 +30,10 @@ import org.springframework.stereotype.Service;
  * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: jdbc-sink 커넥터명에 소스 topicPrefix
  * |                          | 반영(ConnectorNames.jdbcSink) — DbConnectionService 의존 추가
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | PG 소스 실 배선 스모크 수정: origin=FINGERPRINT는 ddl_text가
+ * |                          | 이미 타깃 이름으로 조립돼 있어(SchemaFingerprint.draftDdl) 이름
+ * |                          | 치환 없이 그대로 실행 — rewriteForTarget은 SCHEMA_TOPIC 전용
+ * --------------------------------------------------
  */
 @Service
 public class DdlEventService {
@@ -59,13 +63,20 @@ public class DdlEventService {
         return repository.findAll();
     }
 
-    /** 승인 — 등록 테이블의 DDL만 가능. 타깃 이름이 다르면 DDL을 치환 후 실행, 성공 시에만 상태 변경. */
+    /**
+     * 승인 — 등록 테이블의 DDL만 가능. origin에 따라 실행 문장을 다르게 구한다:
+     * SCHEMA_TOPIC은 소스 이름으로 온 DDL이라 타깃 이름으로 치환 후 실행하고,
+     * FINGERPRINT는 SchemaFingerprint.draftDdl이 이미 타깃 이름으로 조립해 저장했으므로
+     * 치환 없이 그대로 실행한다(치환을 또 거치면 타깃 이름 문자열을 오매칭할 위험만 있다).
+     */
     public DdlEvent approve(long id) {
         DdlEvent event = pending(id);
         RegisteredTable registered = requireRegistered(event);
-        String ddl = rewriteForTarget(event.ddlText(), registered);
+        boolean fingerprintOrigin = "FINGERPRINT".equals(event.origin());
+        String ddl = fingerprintOrigin ? event.ddlText() : rewriteForTarget(event.ddlText(), registered);
         executor.execute(connections.get(registered.targetConnectionId()), ddl);
-        String note = ddl.equals(event.ddlText())
+        String note = fingerprintOrigin ? "타깃에 DDL 적용 완료(스키마 지문 초안)"
+                : ddl.equals(event.ddlText())
                 ? "타깃에 DDL 적용 완료"
                 : "타깃 이름으로 치환 적용: " + registered.targetQualified();
         repository.decide(id, "APPROVED", note);

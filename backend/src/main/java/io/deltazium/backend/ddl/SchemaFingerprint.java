@@ -173,14 +173,23 @@ public final class SchemaFingerprint {
         return changes;
     }
 
-    /** Debezium 스키마 타입 → 타깃 DDL 타입 소형 매핑 (2026-09-07, ADD COLUMN 초안 전용).
+    /**
+     * Debezium 스키마 타입 → 타깃 DDL 타입 소형 매핑 (2026-09-07, ADD/DROP COLUMN 초안 전용).
      * 매핑에 없는 타입(struct/array, 미분류 의미 타입 등)은 초안을 만들지 않는다 — 확인 후
-     * 수동 DDL이 필요하다는 뜻으로, TODO의 "타입 변경은 초안 없음"과 같은 안전 원칙이다. */
+     * 수동 DDL이 필요하다는 뜻으로, TODO의 "타입 변경은 초안 없음"과 같은 안전 원칙이다.
+     *
+     * <p>반환값은 **세미콜론 없는 단일 실행문**이다 — 승인 시 이 문자열을 그대로
+     * {@code Statement.execute()}에 넘기므로(DdlEventService.approve, FINGERPRINT origin은
+     * 이름 치환도 하지 않는다) 여러 문장을 세미콜론으로 이어붙이면 JDBC 드라이버가
+     * 거부한다(실측: ORA-00900, ddl_events id=39). ADD·DROP이 함께 있으면 Oracle은 한
+     * ALTER TABLE에 ADD(...)와 DROP(...) 절을 나란히(공백 구분) 쓸 수 있고, PostgreSQL은
+     * ADD COLUMN·DROP COLUMN 액션을 쉼표로 나열할 수 있어 각각 단일 문장으로 합친다.
+     */
     public static String draftDdl(String targetDbType, String targetSchema, String targetTable,
                                   List<FieldChange> changes) {
         boolean oracle = "ORACLE".equalsIgnoreCase(targetDbType);
-        List<String> addClauses = new ArrayList<>();
-        List<String> dropClauses = new ArrayList<>();
+        List<String> addCols = new ArrayList<>();   // Oracle: "COL TYPE" / Postgres: "col TYPE"
+        List<String> dropCols = new ArrayList<>();  // 컬럼명(따옴표 포함)만 — 절 조립은 아래서
         for (FieldChange c : changes) {
             if (c.kind() == ChangeKind.ADDED) {
                 String mapped = mapType(targetDbType, c.after().type());
@@ -188,36 +197,36 @@ public final class SchemaFingerprint {
                     continue; // 매핑 없음 — 초안 생략
                 }
                 String col = oracle ? c.after().name().toUpperCase(java.util.Locale.ROOT) : c.after().name();
-                addClauses.add(oracle ? "\"%s\" %s".formatted(col, mapped)
-                        : "ADD COLUMN \"%s\" %s".formatted(col, mapped));
+                addCols.add("\"%s\" %s".formatted(col, mapped));
             } else if (c.kind() == ChangeKind.REMOVED) {
                 String col = oracle ? c.before().name().toUpperCase(java.util.Locale.ROOT) : c.before().name();
-                dropClauses.add(oracle ? "\"%s\"".formatted(col) : "DROP COLUMN \"%s\"".formatted(col));
+                dropCols.add("\"%s\"".formatted(col));
             }
             // TYPE_CHANGED는 초안을 만들지 않는다 (TODO ②: "타입 변경은 초안 없이 확인만")
         }
-        if (addClauses.isEmpty() && dropClauses.isEmpty()) {
+        if (addCols.isEmpty() && dropCols.isEmpty()) {
             return null;
         }
         String qualified = "\"%s\".\"%s\"".formatted(targetSchema, targetTable);
-        StringBuilder sb = new StringBuilder();
-        if (!addClauses.isEmpty()) {
-            sb.append(oracle
-                    ? "ALTER TABLE %s ADD (%s);".formatted(qualified, String.join(", ", addClauses))
-                    : "ALTER TABLE %s %s;".formatted(qualified, String.join(", ", addClauses)));
-        }
-        for (String drop : dropClauses) {
-            if (sb.length() > 0) {
-                sb.append(' ');
+        if (oracle) {
+            List<String> clauses = new ArrayList<>();
+            if (!addCols.isEmpty()) {
+                clauses.add("ADD (%s)".formatted(String.join(", ", addCols)));
             }
-            sb.append(oracle
-                    ? "ALTER TABLE %s DROP COLUMN %s;".formatted(qualified, drop)
-                    : "ALTER TABLE %s %s;".formatted(qualified, drop));
+            if (!dropCols.isEmpty()) {
+                clauses.add("DROP (%s)".formatted(String.join(", ", dropCols)));
+            }
+            return "ALTER TABLE %s %s".formatted(qualified, String.join(" ", clauses));
         }
-        return sb.toString();
+        // PostgreSQL: 액션을 쉼표로 나열 — ADD COLUMN 각각 + DROP COLUMN 각각
+        List<String> actions = new ArrayList<>();
+        addCols.forEach(c -> actions.add("ADD COLUMN " + c));
+        dropCols.forEach(c -> actions.add("DROP COLUMN " + c));
+        return "ALTER TABLE %s %s".formatted(qualified, String.join(", ", actions));
     }
 
-    /** 사람이 읽는 diff 요약 한 줄 (ddl_events.ddl_text 앞부분에 붙인다). */
+    /** 사람이 읽는 diff 요약 한 줄 — ddl_events.note에 넣는다(ddl_text는 실행 문장 전용,
+     * 2026-09-07 수정: 요약·초안을 한 컬럼에 섞어 넣던 것이 승인 시 그대로 실행돼 ORA-00900을 냈다). */
     public static String summarize(List<FieldChange> changes) {
         List<String> parts = new ArrayList<>();
         for (FieldChange c : changes) {
