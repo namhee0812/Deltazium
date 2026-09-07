@@ -119,6 +119,17 @@ class RegistrationServiceTest {
                 new TableColumn("STATUS", "VARCHAR2", false)));
     }
 
+    private void mockPgTable(String qualified, boolean pk, boolean ready) {
+        int dot = qualified.indexOf('.');
+        String schema = qualified.substring(0, dot);
+        String table = qualified.substring(dot + 1);
+        when(pgDictionary.listTables(any(), eq(qualified))).thenReturn(List.of(
+                new SourceTableInfo(schema, table, pk, ready, 100L)));
+        when(pgDictionary.listColumns(any(), eq(schema), eq(table))).thenReturn(List.of(
+                new TableColumn("id", "int4", true),
+                new TableColumn("status", "text", false)));
+    }
+
     private static RegistrationService.TableSpec spec(String source) {
         return new RegistrationService.TableSpec(source, null, null, null);
     }
@@ -351,6 +362,58 @@ class RegistrationServiceTest {
         // route-regex는 토픽 이름 정확 일치 (5.1절) — 테이블명만 보던 종전 방식에서 전환
         assertThat(extra.getValue())
                 .containsEntry("iceberg.table.changelog.cdc_t1.route-regex", "^\\Qdz.CDC.T1\\E$");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 소스별로_독립_배포된다_다른_소스는_영향받지_않는다() {
+        long pgSrcId = connections.create(new DbConnection(null, "pgsrc", "POSTGRESQL", "SOURCE",
+                "pghost", 5432, "cdc", "dz_capture", "pw", "pgsrc")).id();
+
+        mockTable("CDC.T1", true, true);
+        mockPgTable("cdc_src.orders", true, true);
+
+        service.register(srcId, tgtId, List.of(spec("CDC.T1")));
+        service.register(pgSrcId, tgtId, List.of(spec("cdc_src.orders")));
+
+        // deployConnectors()는 등록마다 등록된 소스 전부를 재배포한다(기존 단일 소스 시절 패턴과
+        // 동일 — Connect REST upsert라 안전) — source-oracle은 두 번째 register()에서도 다시
+        // 배포되고, source-postgresql은 그때 처음 배포된다.
+        ArgumentCaptor<Map<String, String>> oracleVars = ArgumentCaptor.forClass(Map.class);
+        verify(deploy, org.mockito.Mockito.times(2)).deploy(eq("source-oracle"), oracleVars.capture());
+        assertThat(oracleVars.getValue()).containsEntry("connector_name", "dz-source-dz");
+
+        ArgumentCaptor<Map<String, String>> pgVars = ArgumentCaptor.forClass(Map.class);
+        verify(deploy).deploy(eq("source-postgresql"), pgVars.capture());
+        assertThat(pgVars.getValue()).containsEntry("connector_name", "dz-source-pgsrc")
+                .containsEntry("table_include_list", "cdc_src.orders");
+
+        verify(deploy, org.mockito.Mockito.times(2)).deploy(eq("iceberg-sink"),
+                org.mockito.ArgumentMatchers.argThat(m -> "dz-iceberg-dz".equals(m.get("connector_name"))),
+                any());
+        verify(deploy).deploy(eq("iceberg-sink"),
+                org.mockito.ArgumentMatchers.argThat(m -> "dz-iceberg-pgsrc".equals(m.get("connector_name"))),
+                any());
+    }
+
+    @Test
+    void 소스의_마지막_테이블_해제는_그_소스의_커넥터만_지운다() {
+        long pgSrcId = connections.create(new DbConnection(null, "pgsrc2", "POSTGRESQL", "SOURCE",
+                "pghost", 5432, "cdc", "dz_capture", "pw", "pgsrc2")).id();
+
+        mockTable("CDC.T1", true, true);
+        mockPgTable("cdc_src.orders", true, true);
+        long oracleId = service.register(srcId, tgtId, List.of(spec("CDC.T1"))).stream()
+                .filter(t -> t.tableName().equals("T1")).findFirst().orElseThrow().id();
+        service.register(pgSrcId, tgtId, List.of(spec("cdc_src.orders")));
+
+        // Oracle 소스의 유일한 테이블을 해제 — PostgreSQL 소스 커넥터는 절대 건드리지 않는다
+        service.unregister(oracleId, false);
+
+        verify(deploy).deleteConnector("dz-source-dz");
+        verify(deploy).deleteConnector("dz-iceberg-dz");
+        verify(deploy, org.mockito.Mockito.never()).deleteConnector("dz-source-pgsrc2");
+        verify(deploy, org.mockito.Mockito.never()).deleteConnector("dz-iceberg-pgsrc2");
     }
 
 }

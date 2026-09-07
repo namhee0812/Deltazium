@@ -15,6 +15,8 @@ mybatis:
 deltazium:
   ddl-poller:
     enabled: false   # 단위 테스트는 Kafka 없이 돈다
+  fingerprint-poller:
+    enabled: false   # 단위 테스트는 Kafka 없이 돈다
   connect:
     base-url: http://localhost:8083
   connectors:

@@ -17,8 +17,10 @@ import java.util.Locale;
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
- * 26. 09. 07.       | 최남희  | schemaFingerprint 필드 추가(스키마 지문 비교 감지, architecture.md
- * |                          | 7절 개정) — 기존 생성자는 유지해 null로 위임(하위 호환)
+ * 26. 09. 07.       | 최남희  | schemaFingerprint·schemaFieldsJson 필드 추가(스키마 지문 비교
+ * |                          | 감지, architecture.md 7절 개정) — fieldsJson은 지문(해시)만으로
+ * |                          | 복원 불가한 diff 계산용 필드 스냅샷(구현 판단, docs/internals.md).
+ * |                          | 기존 생성자는 유지해 null로 위임(하위 호환)
  * --------------------------------------------------
  */
 public record RegisteredTable(
@@ -30,20 +32,21 @@ public record RegisteredTable(
         String targetSchemaName,
         String targetTableName,
         String snapshotMode,
-        String schemaFingerprint) {
+        String schemaFingerprint,
+        String schemaFieldsJson) {
 
     public RegisteredTable(Long id, String schemaName, String tableName,
                            long sourceConnectionId, long targetConnectionId,
                            String targetSchemaName, String targetTableName) {
         this(id, schemaName, tableName, sourceConnectionId, targetConnectionId,
-                targetSchemaName, targetTableName, "INITIAL", null);
+                targetSchemaName, targetTableName, "INITIAL", null, null);
     }
 
     public RegisteredTable(Long id, String schemaName, String tableName,
                            long sourceConnectionId, long targetConnectionId,
                            String targetSchemaName, String targetTableName, String snapshotMode) {
         this(id, schemaName, tableName, sourceConnectionId, targetConnectionId,
-                targetSchemaName, targetTableName, snapshotMode, null);
+                targetSchemaName, targetTableName, snapshotMode, null, null);
     }
 
     public String qualified() {

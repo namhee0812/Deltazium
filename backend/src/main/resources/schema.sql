@@ -22,6 +22,9 @@ ALTER TABLE registered_tables ADD COLUMN IF NOT EXISTS snapshot_mode VARCHAR(16)
 -- 스키마 지문(schema change topic이 없는 소스의 DDL 감지, architecture.md 7절) — SHA-256 hex(64자).
 -- 첫 지문은 이벤트 없이 저장되고, 변경 시 ddl_events(origin=FINGERPRINT)에 diff를 남긴다.
 ALTER TABLE registered_tables ADD COLUMN IF NOT EXISTS schema_fingerprint VARCHAR(64);
+-- 지문(해시)만으로는 무엇이 바뀌었는지 복원할 수 없어 diff 계산용으로 after struct 필드 목록의
+-- JSON 스냅샷을 함께 보관한다(2026-09-07 구현 판단 — SchemaFingerprintPoller 전용, docs/internals.md).
+ALTER TABLE registered_tables ADD COLUMN IF NOT EXISTS schema_fields_json VARCHAR(20000);
 
 -- 마이그레이션: 기존 설치의 UNIQUE(schema_name, table_name)를
 -- (source_connection_id, schema_name, table_name)로 교체 (멱등 — 이미 전환됐으면 둘 다 no-op).

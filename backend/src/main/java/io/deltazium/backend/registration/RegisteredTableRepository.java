@@ -79,5 +79,6 @@ public interface RegisteredTableRepository {
         return deleteRow(id) == 1;
     }
 
-    void updateFingerprint(@Param("id") long id, @Param("fingerprint") String fingerprint);
+    void updateFingerprint(@Param("id") long id, @Param("fingerprint") String fingerprint,
+                           @Param("fieldsJson") String fieldsJson);
 }
