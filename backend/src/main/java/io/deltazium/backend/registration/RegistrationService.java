@@ -11,7 +11,10 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import io.deltazium.backend.connect.ConnectorDeployService;
-import io.deltazium.backend.dictionary.OracleDictionaryService;
+import io.deltazium.backend.connect.ConnectorNames;
+import io.deltazium.backend.dictionary.DictionaryRouter;
+import io.deltazium.backend.dictionary.PrecheckItem;
+import io.deltazium.backend.dictionary.SourceDictionary;
 import io.deltazium.backend.dictionary.SourceTableInfo;
 import io.deltazium.backend.dictionary.TableColumn;
 import io.deltazium.backend.events.TableEventService;
@@ -19,6 +22,7 @@ import io.deltazium.backend.iceberg.ChangelogTableService;
 import io.deltazium.backend.iceberg.IcebergProperties;
 import io.deltazium.backend.registry.DbConnection;
 import io.deltazium.backend.registry.DbConnectionService;
+import io.deltazium.backend.registry.DbType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,11 +32,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 작성일자 : 26. 07. 25.
  * 작성자 : 최남희
  * 설명 : CDC 테이블 등록 (architecture.md 8절).
- * 흐름: 딕셔너리 조회 → 사전 점검(PK 필수, supp.log ALL, 권한) → 컬럼 매핑 검증 →
+ * 흐름: 딕셔너리 조회 → 사전 점검(PK 필수, 캡처 설정, 권한) → 컬럼 매핑 검증 →
  * 메타데이터 저장 → 커넥터 배포.
- * 커넥터 구성: source는 전역 1개, iceberg-sink는 **소스별 1개**(dz-iceberg-<prefix> —
- * 현재는 소스가 하나라 결과적으로 1개, 4절), jdbc-sink는 **테이블별 1개**
- * (dz-jdbc-sink-<suffix>) — 타깃 테이블명 매핑과 테이블 단위 정지(7절)를 위해.
+ * 커넥터 구성: source·iceberg-sink는 **소스 커넥션별 1개**(dz-source-&lt;prefix&gt;·
+ * dz-iceberg-&lt;prefix&gt;, 4절), jdbc-sink는 **테이블별 1개**
+ * (dz-jdbc-sink-&lt;prefix&gt;-&lt;suffix&gt;) — 타깃 테이블명 매핑과 테이블 단위 정지(7절)를 위해.
  *
  * <p>
  * 수정 내역
@@ -53,6 +57,14 @@ import org.springframework.transaction.annotation.Transactional;
  * |                          | 토픽 기준으로 바뀌며 해소된 동명 테이블 제약(다른 스키마의
  * |                          | 동일 테이블명 거부)도 제거
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 전역 topic-prefix 제거 — 커넥션별
+ * |                          | topicPrefix로 소스마다 source·iceberg-sink를 독립 배포/해제
+ * |                          | (deploySource로 단위화, ConnectorNames로 이름 조립). 딕셔너리를
+ * |                          | DictionaryRouter로 교체(Oracle·PostgreSQL 분기, 8절). 등록 중복
+ * |                          | 판정을 (source_connection_id, schema, table)로 전환. jdbc-sink
+ * |                          | 타깃을 테이블별 targetConnectionId에서 조회하도록 수정(종전엔
+ * |                          | 첫 등록 호출의 target 하나를 전체에 썼다)
+ * --------------------------------------------------
  */
 @Service
 public class RegistrationService {
@@ -65,34 +77,31 @@ public class RegistrationService {
     private final RegisteredTableRepository repository;
     private final RegisteredColumnRepository columnRepository;
     private final DbConnectionService connections;
-    private final OracleDictionaryService dictionary;
+    private final DictionaryRouter dictionaryRouter;
     private final ConnectorDeployService deploy;
     private final ChangelogTableService changelog;
     private final IcebergProperties iceberg;
     private final TableEventService events;
     private final String kafkaBootstrap;
-    private final String topicPrefix;
 
     public RegistrationService(RegisteredTableRepository repository,
                                RegisteredColumnRepository columnRepository,
                                DbConnectionService connections,
-                               OracleDictionaryService dictionary,
+                               DictionaryRouter dictionaryRouter,
                                ConnectorDeployService deploy,
                                ChangelogTableService changelog,
                                IcebergProperties iceberg,
                                TableEventService events,
-                               @Value("${deltazium.kafka.bootstrap}") String kafkaBootstrap,
-                               @Value("${deltazium.topic-prefix}") String topicPrefix) {
+                               @Value("${deltazium.kafka.bootstrap}") String kafkaBootstrap) {
         this.repository = repository;
         this.columnRepository = columnRepository;
         this.connections = connections;
-        this.dictionary = dictionary;
+        this.dictionaryRouter = dictionaryRouter;
         this.deploy = deploy;
         this.changelog = changelog;
         this.iceberg = iceberg;
         this.events = events;
         this.kafkaBootstrap = kafkaBootstrap;
-        this.topicPrefix = topicPrefix;
     }
 
     public List<RegisteredTable> list() {
@@ -106,7 +115,7 @@ public class RegistrationService {
     /** 소스 딕셔너리에서 패턴에 걸리는 테이블 + 점검 상태 조회 (등록 후보). */
     public List<SourceTableInfo> discover(long sourceConnectionId, String pattern) {
         DbConnection source = requireRole(sourceConnectionId, "SOURCE");
-        return dictionary.listTables(source, pattern);
+        return dictionaryRouter.forConnection(source).listTables(source, pattern);
     }
 
     /** 컬럼 목록 (소스/타깃 어느 연결이든) — 매핑 화면용. */
@@ -115,23 +124,33 @@ public class RegistrationService {
         if (dot <= 0) {
             throw new IllegalArgumentException("SCHEMA.TABLE 형식이어야 한다: " + qualifiedTable);
         }
-        return dictionary.listColumns(connections.get(connectionId),
+        DbConnection conn = connections.get(connectionId);
+        return dictionaryRouter.forConnection(conn).listColumns(conn,
                 qualifiedTable.substring(0, dot), qualifiedTable.substring(dot + 1));
     }
 
-    /** DB 레벨 사전 점검 (ARCHIVELOG, DB supplemental logging). */
-    public Map<String, String> databaseChecks(long sourceConnectionId) {
-        return dictionary.databaseChecks(requireRole(sourceConnectionId, "SOURCE"));
+    /** DB 레벨 사전 점검 (예: Oracle ARCHIVELOG, PostgreSQL wal_level). */
+    public List<PrecheckItem> databaseChecks(long sourceConnectionId) {
+        DbConnection source = requireRole(sourceConnectionId, "SOURCE");
+        return dictionaryRouter.forConnection(source).databaseChecks(source);
     }
 
-    /** LogMiner 권한 점검 — 누락 시 UI가 DBA용 GRANT 스크립트 안내 (자체 적용 불가). */
-    public Map<String, Boolean> privilegeChecks(long sourceConnectionId) {
-        return dictionary.privilegeChecks(requireRole(sourceConnectionId, "SOURCE"));
+    /** 캡처 계정 권한 점검 — 누락 시 UI가 DBA용 GRANT 스크립트 안내 (자체 적용 불가). */
+    public List<PrecheckItem> privilegeChecks(long sourceConnectionId) {
+        DbConnection source = requireRole(sourceConnectionId, "SOURCE");
+        return dictionaryRouter.forConnection(source).privilegeChecks(source);
     }
 
-    /** 사용자가 UI에서 승인한 경우에만 호출 — 테이블별 supp.log(ALL) 적용 시도. */
-    public Map<String, String> applySupplementalLogging(long sourceConnectionId, List<String> tables) {
-        return dictionary.applySupplementalLogging(requireRole(sourceConnectionId, "SOURCE"), tables);
+    /** 캡처 사전조건 미리보기 — 승인 화면에 보여줄 DDL 문 (qualified → DDL). */
+    public Map<String, String> captureSetupPreview(long sourceConnectionId, List<String> tables) {
+        DbConnection source = requireRole(sourceConnectionId, "SOURCE");
+        return dictionaryRouter.forConnection(source).captureSetupPreview(source, tables);
+    }
+
+    /** 사용자가 UI에서 승인한 경우에만 호출 — 캡처 사전조건(supp.log/REPLICA IDENTITY FULL) 적용. */
+    public Map<String, String> applyCaptureSetup(long sourceConnectionId, List<String> tables) {
+        DbConnection source = requireRole(sourceConnectionId, "SOURCE");
+        return dictionaryRouter.forConnection(source).applyCaptureSetup(source, tables);
     }
 
     @Transactional
@@ -150,6 +169,7 @@ public class RegistrationService {
                                           List<TableSpec> specs, String snapshotMode) {
         DbConnection source = requireRole(sourceConnectionId, "SOURCE");
         DbConnection target = requireRole(targetConnectionId, "TARGET");
+        SourceDictionary dictionary = dictionaryRouter.forConnection(source);
         if (specs == null || specs.isEmpty()) {
             throw new IllegalArgumentException("등록할 테이블이 없다");
         }
@@ -160,7 +180,7 @@ public class RegistrationService {
 
         // 검증 후 저장 — 하나라도 실패하면 전체 롤백
         for (TableSpec spec : specs) {
-            SourceTableInfo info = validateTable(source, spec.source());
+            SourceTableInfo info = validateTable(source, dictionary, spec.source());
             List<TableColumn> sourceColumns = dictionary.listColumns(source, info.schema(), info.table());
             List<ColumnMapping> mappings = normalizeMappings(spec, sourceColumns);
 
@@ -170,7 +190,7 @@ public class RegistrationService {
             columnRepository.insertAll(tableId, mappings);
         }
 
-        deployConnectors(source, target);
+        deployConnectors();
         for (TableSpec spec : specs) {
             int dot = spec.source().indexOf('.');
             events.info(spec.source().substring(0, dot).toUpperCase(Locale.ROOT),
@@ -181,7 +201,7 @@ public class RegistrationService {
         return repository.findAll();
     }
 
-    private SourceTableInfo validateTable(DbConnection source, String qualified) {
+    private SourceTableInfo validateTable(DbConnection source, SourceDictionary dictionary, String qualified) {
         if (qualified == null || qualified.contains("*") || qualified.contains("%")) {
             throw new IllegalArgumentException("와일드카드는 등록 시점에 허용되지 않는다: " + qualified);
         }
@@ -193,15 +213,16 @@ public class RegistrationService {
         if (!info.hasPk()) {
             throw new IllegalArgumentException("PK 없는 테이블은 등록 불가 (멱등 upsert 전제): " + qualified);
         }
-        if (!info.suppLogAll()) {
-            throw new IllegalArgumentException("supplemental logging (ALL) COLUMNS 미설정: " + qualified
-                    + " — 사전 점검 단계에서 적용 후 다시 시도");
+        if (!info.captureReady()) {
+            throw new IllegalArgumentException("캡처 사전조건 미충족 (" + dictionary.captureSetupLabel()
+                    + "): " + qualified + " — 사전 점검 단계에서 적용 후 다시 시도");
         }
-        if (repository.exists(info.schema(), info.table())) {
+        if (repository.exists(source.id(), info.schema(), info.table())) {
             throw new IllegalArgumentException("이미 등록된 테이블: " + qualified);
         }
-        // 종전엔 다른 스키마의 동명 테이블을 라우팅 충돌로 거부했다 — route-field가
-        // 토픽 이름 기준(_pos.topic)으로 바뀌며 그 제약은 해소됐다 (2026-09-05, 5.1절).
+        // 등록 키는 (source_connection_id, schema, table) — 다른 소스의 동일 schema.table은
+        // 별개 테이블이라 거부하지 않는다 (2026-09-07, 다중 소스). route-field도 토픽 이름
+        // 기준(_pos.topic)이라 동명 테이블 라우팅 충돌도 없다 (2026-09-05, 5.1절).
         return info;
     }
 
@@ -256,69 +277,59 @@ public class RegistrationService {
     }
 
     /**
-     * 등록 전체 목록 기준으로 snapshot.mode를 지정해 재배포 — 재스냅샷 오케스트레이터
-     * (ResnapshotOrchestrator ④단계) 전용. 정지·offset 리셋·재개는 오케스트레이터가 담당한다.
+     * 등록 전체 목록을 소스 커넥션별로 묶어 각자 배포 — 신규 등록·해제 후 갱신에 공용.
+     * 소스 하나의 실패·설정 변경이 다른 소스에 영향을 주지 않는다(4절).
      */
-    public void redeployWithSnapshotMode(String snapshotMode) {
-        List<RegisteredTable> all = repository.findAll();
-        if (all.isEmpty()) {
-            throw new IllegalStateException("등록된 테이블이 없다");
+    private void deployConnectors() {
+        Map<Long, List<RegisteredTable>> bySource = repository.findAll().stream()
+                .collect(Collectors.groupingBy(RegisteredTable::sourceConnectionId));
+        for (Map.Entry<Long, List<RegisteredTable>> e : bySource.entrySet()) {
+            deploySource(connections.get(e.getKey()), e.getValue(), null);
         }
-        DbConnection source = connections.get(all.get(0).sourceConnectionId());
-        DbConnection target = connections.get(all.get(0).targetConnectionId());
-        deployConnectors(source, target, snapshotMode);
+        // 구버전 단일 jdbc-sink/전역 source가 남아있으면 제거 (테이블별·소스별 커넥터로 전환됨)
+        try {
+            deploy.deleteConnector("dz-jdbc-sink");
+            deploy.deleteConnector("dz-source");
+        } catch (Exception ignored) {
+            // 없으면 그만 — 배포 흐름을 막지 않는다
+        }
     }
 
-    /** 등록 전체 목록 기준으로 source·iceberg-sink(소스별)·jdbc-sink(테이블별) 갱신 배포. */
-    private void deployConnectors(DbConnection source, DbConnection target) {
-        deployConnectors(source, target, null);
-    }
-
-    /** @param snapshotModeOverride null이면 첫 등록의 선택을 따르고, 지정 시 그 모드로 배포(재스냅샷). */
-    private void deployConnectors(DbConnection source, DbConnection target, String snapshotModeOverride) {
-        List<RegisteredTable> all = repository.findAll();
-        String includeList = all.stream().map(RegisteredTable::qualified)
+    /**
+     * 소스 커넥션 하나의 source·iceberg-sink(소스당 1개) + 그 소스에 속한 테이블들의
+     * jdbc-sink(테이블당 1개)를 배포한다. 다른 소스는 건드리지 않는다.
+     *
+     * @param snapshotModeOverride null이면 그 소스의 첫 등록(가장 오래된 행) 선택을 따르고,
+     *                             지정 시 그 모드로 배포(재스냅샷, ResnapshotOrchestrator 전용).
+     */
+    private void deploySource(DbConnection source, List<RegisteredTable> tables, String snapshotModeOverride) {
+        String prefix = source.topicPrefix();
+        String includeList = tables.stream().map(RegisteredTable::qualified)
                 .collect(Collectors.joining(","));
-        String topics = all.stream().map(t -> topicPrefix + "." + t.qualified())
+        String topics = tables.stream()
+                .map(t -> ConnectorNames.captureTopic(prefix, t.schemaName(), t.tableName()))
                 .collect(Collectors.joining(","));
 
-        for (RegisteredTable t : all) {
-            changelog.ensureChangelogTable(t.schemaName(), t.tableName());
+        for (RegisteredTable t : tables) {
+            changelog.ensureChangelogTable(prefix, t.schemaName(), t.tableName());
         }
 
-        // snapshot.mode는 커넥터 전역 — 첫 등록(가장 오래된 행)의 선택을 따른다 (재스냅샷 시 오버라이드)
         String snapshotMode = snapshotModeOverride != null ? snapshotModeOverride
-                : all.stream()
+                : tables.stream()
                 .min(Comparator.comparingLong(RegisteredTable::id))
                 .map(t -> "NO_DATA".equalsIgnoreCase(t.snapshotMode()) ? "no_data" : "initial")
                 .orElse("initial");
 
-        Map<String, String> sourceVars = new HashMap<>();
-        sourceVars.put("connector_name", "dz-source");
-        sourceVars.put("oracle_host", source.host());
-        sourceVars.put("oracle_port", String.valueOf(source.port()));
-        sourceVars.put("oracle_user", source.username());
-        sourceVars.put("oracle_password", source.password());
-        sourceVars.put("oracle_dbname", source.databaseName());
-        sourceVars.put("topic_prefix", topicPrefix);
-        sourceVars.put("table_include_list", includeList);
-        sourceVars.put("kafka_bootstrap", kafkaBootstrap);
-        sourceVars.put("snapshot_mode", snapshotMode);
-        deploy.deploy("source", sourceVars);
+        deploySourceConnector(source, prefix, includeList, snapshotMode);
 
-        // 구버전 단일 jdbc-sink가 남아있으면 제거 (테이블별 커넥터로 전환됨)
-        try {
-            deployLegacyCleanup();
-        } catch (Exception ignored) {
-            // 없으면 그만 — 배포 흐름을 막지 않는다
-        }
-
-        // jdbc-sink: 테이블별 커넥터 — 타깃 이름 매핑 + 컬럼 선택(field.include.list) 반영
-        for (RegisteredTable t : all) {
+        // jdbc-sink: 테이블별 커넥터 — 타깃은 테이블별 targetConnectionId에서 조회한다
+        // (종전엔 첫 등록 호출의 target 하나를 전체 재배포에 재사용했다 — 다중 타깃 전제로 수정).
+        for (RegisteredTable t : tables) {
+            DbConnection target = connections.get(t.targetConnectionId());
             List<ColumnMapping> mappings = columnRepository.findByTable(t.id());
             Map<String, String> vars = new HashMap<>();
-            vars.put("connector_name", "dz-jdbc-sink-" + t.suffix());
-            vars.put("topics", topicPrefix + "." + t.qualified());
+            vars.put("connector_name", ConnectorNames.jdbcSink(prefix, t.suffix()));
+            vars.put("topics", ConnectorNames.captureTopic(prefix, t.schemaName(), t.tableName()));
             vars.put("target_jdbc_url", target.jdbcUrl());
             vars.put("target_user", target.username());
             vars.put("target_password", target.password());
@@ -327,8 +338,7 @@ public class RegistrationService {
         }
 
         Map<String, String> icebergVars = new HashMap<>();
-        // 소스별 인스턴스 — 소스가 늘면(② 마일스톤) 소스마다 별도 커넥터 (4절)
-        icebergVars.put("connector_name", icebergSinkName());
+        icebergVars.put("connector_name", ConnectorNames.icebergSink(prefix));
         icebergVars.put("topics", topics);
         icebergVars.put("catalog_jdbc_url", iceberg.catalogUri());
         icebergVars.put("catalog_jdbc_user", iceberg.catalogUser());
@@ -337,24 +347,54 @@ public class RegistrationService {
         icebergVars.put("s3_endpoint", iceberg.s3Endpoint());
         icebergVars.put("s3_access_key", iceberg.s3AccessKey());
         icebergVars.put("s3_secret_key", iceberg.s3SecretKey());
-        icebergVars.put("iceberg_tables", all.stream()
-                .map(t -> changelog.changelogTableName(t.schemaName(), t.tableName()))
+        icebergVars.put("iceberg_tables", tables.stream()
+                .map(t -> changelog.changelogTableName(prefix, t.schemaName(), t.tableName()))
                 .collect(Collectors.joining(",")));
         Map<String, String> routeRegex = new HashMap<>();
-        for (RegisteredTable t : all) {
+        for (RegisteredTable t : tables) {
             // route-field=_pos.topic(템플릿) — 라우팅은 토픽 이름 정확 일치로,
             // 테이블명만 보던 종전 방식의 동명 테이블 제약을 해소 (5.1절)
-            String topic = topicPrefix + "." + t.qualified();
+            String topic = ConnectorNames.captureTopic(prefix, t.schemaName(), t.tableName());
             routeRegex.put("iceberg.table."
-                    + changelog.changelogTableName(t.schemaName(), t.tableName()) + ".route-regex",
+                    + changelog.changelogTableName(prefix, t.schemaName(), t.tableName()) + ".route-regex",
                     "^" + Pattern.quote(topic) + "$");
         }
         deploy.deploy("iceberg-sink", icebergVars, routeRegex);
     }
 
-    /** 소스별 iceberg-sink 인스턴스 이름 — 현재는 소스가 하나뿐이라 topicPrefix 하나로 결정된다. */
-    private String icebergSinkName() {
-        return "dz-iceberg-" + topicPrefix;
+    /** source 커넥터 배포 — 템플릿·설정 키는 소스 dbType별로 다르다 (connectors/README.md). */
+    private void deploySourceConnector(DbConnection source, String prefix, String includeList,
+                                       String snapshotMode) {
+        DbType type = DbType.find(source.dbType())
+                .orElseThrow(() -> new IllegalArgumentException("알 수 없는 소스 DB 종류: " + source.dbType()));
+        Map<String, String> vars = new HashMap<>();
+        vars.put("connector_name", ConnectorNames.source(prefix));
+        vars.put("topic_prefix", prefix);
+        vars.put("table_include_list", includeList);
+        vars.put("kafka_bootstrap", kafkaBootstrap);
+        vars.put("snapshot_mode", snapshotMode);
+        String template = switch (type) {
+            case ORACLE -> {
+                vars.put("oracle_host", source.host());
+                vars.put("oracle_port", String.valueOf(source.port()));
+                vars.put("oracle_user", source.username());
+                vars.put("oracle_password", source.password());
+                vars.put("oracle_dbname", source.databaseName());
+                yield "source-oracle";
+            }
+            case POSTGRESQL -> {
+                vars.put("pg_host", source.host());
+                vars.put("pg_port", String.valueOf(source.port()));
+                vars.put("pg_user", source.username());
+                vars.put("pg_password", source.password());
+                vars.put("pg_dbname", source.databaseName());
+                vars.put("slot_name", "dz_" + prefix);
+                vars.put("publication_name", "dz_" + prefix);
+                yield "source-postgresql";
+            }
+            default -> throw new IllegalArgumentException("source 커넥터 템플릿 미정의: " + type.label());
+        };
+        deploy.deploy(template, vars);
     }
 
     /**
@@ -377,55 +417,69 @@ public class RegistrationService {
         return Map.of("field.include.list", String.join(",", included));
     }
 
-    private void deployLegacyCleanup() {
-        deploy.deleteConnector("dz-jdbc-sink");
+    /**
+     * 등록 전체 목록 기준 재배포 — 재스냅샷 오케스트레이터(ResnapshotOrchestrator ④단계) 전용.
+     * 지정 소스 커넥션 하나만 배포하고 다른 소스는 건드리지 않는다(오케스트레이터가 단일 소스
+     * 전제로 실행되므로 — 여러 소스가 섞인 재스냅샷은 지원하지 않는다, TODO ②).
+     */
+    public void redeployWithSnapshotMode(long sourceConnectionId, String snapshotMode) {
+        List<RegisteredTable> tables = repository.findBySource(sourceConnectionId);
+        if (tables.isEmpty()) {
+            throw new IllegalStateException("해당 소스에 등록된 테이블이 없다: id=" + sourceConnectionId);
+        }
+        deploySource(connections.get(sourceConnectionId), tables, snapshotMode);
     }
 
     /** 일시 정지 — 해당 테이블 apply만 멈춘다. 캡처·changelog 축적은 계속(재개 시 캐치업). */
     public void pause(long registeredTableId) {
         RegisteredTable t = find(registeredTableId);
-        deploy.pauseConnector("dz-jdbc-sink-" + t.suffix());
+        String prefix = connections.get(t.sourceConnectionId()).topicPrefix();
+        deploy.pauseConnector(ConnectorNames.jdbcSink(prefix, t.suffix()));
         events.info(t.schemaName(), t.tableName(), "PAUSED",
                 "apply 정지 — 캡처·changelog 축적은 계속");
     }
 
     public void resume(long registeredTableId) {
         RegisteredTable t = find(registeredTableId);
-        deploy.resumeConnector("dz-jdbc-sink-" + t.suffix());
+        String prefix = connections.get(t.sourceConnectionId()).topicPrefix();
+        deploy.resumeConnector(ConnectorNames.jdbcSink(prefix, t.suffix()));
         events.info(t.schemaName(), t.tableName(), "RESUMED", "apply 재개 — 밀린 분부터 캐치업");
     }
 
     /**
      * 등록 해제 — 커넥터에서 제거 + 메타데이터 삭제.
+     * 해제된 테이블이 그 소스의 마지막 테이블이면 그 소스의 source·iceberg-sink만 정리한다
+     * (다른 소스 무영향, TODO ②). 남은 테이블이 있으면 그 소스만 재배포.
      * @param dropChangelog true면 changelog(Iceberg/S3) 데이터까지 삭제 —
      *                      복구 원본이 사라지므로 UI에서 명시 확인을 받은 값이어야 한다. 기본 보존.
      */
     @Transactional
     public List<RegisteredTable> unregister(long registeredTableId, boolean dropChangelog) {
         RegisteredTable table = find(registeredTableId);
+        DbConnection source = connections.get(table.sourceConnectionId());
+        String prefix = source.topicPrefix();
         columnRepository.deleteByTable(registeredTableId);
         repository.delete(registeredTableId);
 
         // 테이블별 sink 제거 (recovery-sink는 있을 때만)
-        quietDelete("dz-jdbc-sink-" + table.suffix());
-        quietDelete("dz-recovery-sink-" + table.suffix());
+        quietDelete(ConnectorNames.jdbcSink(prefix, table.suffix()));
+        quietDelete(ConnectorNames.recoverySink(prefix, table.suffix()));
 
         List<RegisteredTable> remaining = repository.findAll();
-        if (remaining.isEmpty()) {
-            // 삭제 전에 offset 정리 (offset 삭제는 커넥터가 STOPPED로 존재해야 가능) —
-            // 같은 이름 재등록 시 스냅샷 SKIP 방지 (실측: NH_MIX_TABLE_01 재등록 시 SKIPPED)
-            resetConnectorOffsets("dz-source");
-            quietDelete("dz-source");
-            quietDelete(icebergSinkName());
+        List<RegisteredTable> remainingOfSource = remaining.stream()
+                .filter(t -> t.sourceConnectionId() == table.sourceConnectionId()).toList();
+        if (remainingOfSource.isEmpty()) {
+            // 이 소스의 마지막 테이블 — offset 정리 후(커넥터가 STOPPED로 존재해야 삭제 가능,
+            // 같은 이름 재등록 시 스냅샷 SKIP 방지) 이 소스의 source·iceberg-sink만 정리
+            resetConnectorOffsets(ConnectorNames.source(prefix));
+            quietDelete(ConnectorNames.source(prefix));
+            quietDelete(ConnectorNames.icebergSink(prefix));
         } else {
-            // 남은 테이블 기준으로 source include list·iceberg 라우팅 재배포
-            RegisteredTable any = remaining.get(0);
-            deployConnectors(connections.get(any.sourceConnectionId()),
-                    connections.get(any.targetConnectionId()));
+            deploySource(source, remainingOfSource, null);
         }
 
         if (dropChangelog) {
-            changelog.dropChangelogTable(table.schemaName(), table.tableName(), true);
+            changelog.dropChangelogTable(prefix, table.schemaName(), table.tableName(), true);
         }
         events.info(table.schemaName(), table.tableName(), "UNREGISTERED",
                 "등록 해제 — changelog " + (dropChangelog ? "삭제됨" : "보존"));

@@ -14,6 +14,7 @@
             <arg column="database_name" javaType="String"/>
             <arg column="username" javaType="String"/>
             <arg column="password" javaType="String"/>
+            <arg column="topic_prefix" javaType="String"/>
         </constructor>
     </resultMap>
 
@@ -29,16 +30,22 @@
         SELECT * FROM db_connections WHERE name = #{name}
     </select>
 
+    <select id="findByTopicPrefix" resultMap="dbConnection">
+        SELECT * FROM db_connections WHERE topic_prefix = #{topicPrefix}
+    </select>
+
     <insert id="insertRow" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
         INSERT INTO db_connections
-          (name, db_type, role, host, port, database_name, username, password)
-        VALUES (#{name}, #{dbType}, #{role}, #{host}, #{port}, #{databaseName}, #{username}, #{password})
+          (name, db_type, role, host, port, database_name, username, password, topic_prefix)
+        VALUES (#{name}, #{dbType}, #{role}, #{host}, #{port}, #{databaseName}, #{username}, #{password},
+                #{topicPrefix})
     </insert>
 
     <update id="updateRow">
         UPDATE db_connections
-           SET name = #{name}, role = #{role}, host = #{host}, port = #{port},
-               database_name = #{databaseName}, username = #{username}, password = #{password}
+           SET name = #{name}, db_type = #{dbType}, role = #{role}, host = #{host}, port = #{port},
+               database_name = #{databaseName}, username = #{username}, password = #{password},
+               topic_prefix = #{topicPrefix}
          WHERE id = #{id}
     </update>
 

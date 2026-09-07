@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Properties;
 
 import io.deltazium.backend.registry.DbConnection;
+import io.deltazium.backend.registry.DbType;
 import org.springframework.stereotype.Service;
 
 /**
@@ -31,9 +32,19 @@ import org.springframework.stereotype.Service;
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: SourceDictionary 인터페이스 구현으로 전환.
+ * |                          | databaseChecks·privilegeChecks가 Map 대신 List&lt;PrecheckItem&gt;을
+ * |                          | 반환(UI 범용 렌더링), applySupplementalLogging → applyCaptureSetup·
+ * |                          | captureSetupPreview로 재구성(PostgreSQL과 같은 승인 UX 계약)
+ * --------------------------------------------------
  */
 @Service
-public class OracleDictionaryService {
+public class OracleDictionaryService implements SourceDictionary {
+
+    @Override
+    public DbType dbType() {
+        return DbType.ORACLE;
+    }
 
     /** "SCHEMA.PATTERN" 입력 파싱. 와일드카드 *는 LIKE %로 변환. 예: CDC.* / CDC.TEST_% / CDC.T1 */
     static String[] parsePattern(String pattern) {
@@ -50,6 +61,7 @@ public class OracleDictionaryService {
     }
 
     /** 패턴에 걸리는 테이블 목록 + 테이블별 PK/supp.log 상태. */
+    @Override
     public List<SourceTableInfo> listTables(DbConnection source, String pattern) {
         String[] p = parsePattern(pattern);
         String sql = """
@@ -86,19 +98,26 @@ public class OracleDictionaryService {
     }
 
     /** DB 레벨 점검: ARCHIVELOG 모드, DB 최소 supplemental logging. 권한 부족 시 원인 메시지 포함. */
-    public Map<String, String> databaseChecks(DbConnection source) {
-        Map<String, String> checks = new LinkedHashMap<>();
+    @Override
+    public List<PrecheckItem> databaseChecks(DbConnection source) {
+        List<PrecheckItem> checks = new ArrayList<>();
         try (Connection conn = open(source);
              Statement st = conn.createStatement()) {
             try (ResultSet rs = st.executeQuery(
                     "SELECT log_mode, supplemental_log_data_min FROM v$database")) {
                 rs.next();
-                checks.put("archivelog", rs.getString(1));            // ARCHIVELOG | NOARCHIVELOG
-                checks.put("db_supplemental_log_min", rs.getString(2)); // YES | NO
+                String logMode = rs.getString(1);
+                String suppMin = rs.getString(2);
+                checks.add(new PrecheckItem("archivelog", "ARCHIVELOG 모드",
+                        "ARCHIVELOG".equals(logMode), logMode, true));
+                checks.add(new PrecheckItem("db_supplemental_log_min", "DB 최소 supplemental logging",
+                        "YES".equals(suppMin), suppMin, false));
             } catch (SQLException e) {
                 // v$database 권한(SELECT ANY DICTIONARY 등) 부족 — 실패 사유를 그대로 노출
-                checks.put("archivelog", "확인 불가: " + e.getMessage().strip());
-                checks.put("db_supplemental_log_min", "확인 불가");
+                String msg = "확인 불가: " + e.getMessage().strip();
+                checks.add(new PrecheckItem("archivelog", "ARCHIVELOG 모드", false, msg, true));
+                checks.add(new PrecheckItem("db_supplemental_log_min",
+                        "DB 최소 supplemental logging", false, "확인 불가", false));
             }
             return checks;
         } catch (SQLException e) {
@@ -107,6 +126,7 @@ public class OracleDictionaryService {
     }
 
     /** 컬럼 목록 + PK 여부. 소스(매핑 원본)와 타깃(매핑 대상) 모두 이걸로 조회한다. */
+    @Override
     public List<TableColumn> listColumns(DbConnection conn, String schema, String table) {
         String sql = """
                 SELECT c.column_name, c.data_type,
@@ -151,10 +171,11 @@ public class OracleDictionaryService {
      * 권한은 계정 스스로 부여할 수 없으므로(DBA 필요) 적용 API는 없다.
      * 누락 시 UI가 DBA용 GRANT 스크립트를 보여주고 배포를 차단한다.
      */
-    public Map<String, Boolean> privilegeChecks(DbConnection source) {
-        Map<String, Boolean> result = new LinkedHashMap<>();
+    @Override
+    public List<PrecheckItem> privilegeChecks(DbConnection source) {
+        List<PrecheckItem> result = new ArrayList<>();
         try (Connection conn = open(source)) {
-            result.put("CREATE SESSION", true); // 접속 성공
+            result.add(new PrecheckItem("CREATE SESSION", "CREATE SESSION", true, "보유", true));
 
             var sysPrivs = new java.util.HashSet<String>();
             try (Statement st = conn.createStatement();
@@ -164,7 +185,8 @@ public class OracleDictionaryService {
                 }
             }
             for (String p : REQUIRED_SYS_PRIVS) {
-                result.put(p, sysPrivs.contains(p));
+                boolean ok = sysPrivs.contains(p);
+                result.add(new PrecheckItem(p, p, ok, ok ? "보유" : "누락", true));
             }
 
             // EXECUTE는 직접/PUBLIC/롤 경유 모두 인정
@@ -177,7 +199,9 @@ public class OracleDictionaryService {
                 try (PreparedStatement ps = conn.prepareStatement(sql)) {
                     ps.setString(1, pkg);
                     try (ResultSet rs = ps.executeQuery()) {
-                        result.put("EXECUTE ON " + pkg, rs.next());
+                        boolean ok = rs.next();
+                        String key = "EXECUTE ON " + pkg;
+                        result.add(new PrecheckItem(key, key, ok, ok ? "보유" : "누락", true));
                     }
                 }
             }
@@ -187,11 +211,28 @@ public class OracleDictionaryService {
         }
     }
 
+    @Override
+    public String captureSetupLabel() {
+        return "supplemental logging (ALL) COLUMNS";
+    }
+
+    @Override
+    public Map<String, String> captureSetupPreview(DbConnection source, List<String> qualifiedTables) {
+        Map<String, String> preview = new LinkedHashMap<>();
+        for (String qt : qualifiedTables) {
+            String[] p = parsePattern(qt);
+            preview.put(qt, "ALTER TABLE \"%s\".\"%s\" ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;"
+                    .formatted(p[0], p[1]));
+        }
+        return preview;
+    }
+
     /**
      * 테이블별 ALL COLUMNS supplemental logging 적용 시도.
      * 반환: qualified name → "OK" 또는 Oracle 에러 메시지 (권한 부족 등은 메시지 그대로).
      */
-    public Map<String, String> applySupplementalLogging(DbConnection source, List<String> qualifiedTables) {
+    @Override
+    public Map<String, String> applyCaptureSetup(DbConnection source, List<String> qualifiedTables) {
         Map<String, String> results = new LinkedHashMap<>();
         try (Connection conn = open(source);
              Statement st = conn.createStatement()) {
@@ -221,11 +262,5 @@ public class OracleDictionaryService {
         props.setProperty("password", c.password());
         props.setProperty("oracle.net.CONNECT_TIMEOUT", "5000");
         return DriverManager.getConnection(c.jdbcUrl(), props);
-    }
-
-    public static class DictionaryException extends RuntimeException {
-        public DictionaryException(String message, Throwable cause) {
-            super(message, cause);
-        }
     }
 }

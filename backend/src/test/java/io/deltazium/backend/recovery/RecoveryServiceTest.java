@@ -22,6 +22,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * --------------------------------------------------
  * 26. 09. 05.       | 최남희  | 복구 커맨드 인자를 from-scn에서 from-ts-ms로 전환 (6.2절)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: buildCommand에 topicPrefix 인자 추가
+ * |                          | (changelog 테이블명이 소스별 namespace를 타므로)
+ * --------------------------------------------------
  */
 class RecoveryServiceTest {
 
@@ -39,20 +42,20 @@ class RecoveryServiceTest {
         var iceberg = new io.deltazium.backend.iceberg.IcebergProperties(
                 "jdbc:postgresql://localhost:5433/iceberg_catalog", "u", "p",
                 "s3://wh/warehouse", "http://localhost:9010", "ak", "sk");
-        var changelog = new io.deltazium.backend.iceberg.ChangelogTableService(iceberg, "dz");
+        var changelog = new io.deltazium.backend.iceberg.ChangelogTableService(iceberg);
         RecoveryService service = new RecoveryService(null, null, null, null, null,
                 changelog, iceberg, null, null, "localhost:9092", "/opt/recovery-job/bin/recovery-job", "/tmp");
 
         RegisteredTable table = new RegisteredTable(1L, "CDC", "AUTO_100", 1, 2, null, null);
-        List<String> cmd = service.buildCommand(table, 1753300000000L,
-                List.of("ID"), "dz-recovery.cdc_auto_100", "/tmp/x.log");
+        List<String> cmd = service.buildCommand(table, "dz", 1753300000000L,
+                List.of("ID"), "dz-recovery.dz.cdc_auto_100", "/tmp/x.log");
 
         assertThat(cmd.get(0)).isEqualTo("/opt/recovery-job/bin/recovery-job");
         assertThat(cmd).contains(
                 "table=changelog_dz.cdc_auto_100",
                 "from-ts-ms=1753300000000",
                 "key-columns=ID",
-                "topic=dz-recovery.cdc_auto_100",
+                "topic=dz-recovery.dz.cdc_auto_100",
                 "bootstrap=localhost:9092",
                 "catalog-uri=jdbc:postgresql://localhost:5433/iceberg_catalog");
     }

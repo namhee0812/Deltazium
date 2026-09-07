@@ -4,7 +4,9 @@ import java.util.List;
 import java.util.Map;
 
 import io.deltazium.backend.connect.ConnectorDeployService;
+import io.deltazium.backend.dictionary.DictionaryRouter;
 import io.deltazium.backend.dictionary.OracleDictionaryService;
+import io.deltazium.backend.dictionary.PostgresDictionaryService;
 import io.deltazium.backend.dictionary.SourceTableInfo;
 import io.deltazium.backend.dictionary.TableColumn;
 import io.deltazium.backend.iceberg.ChangelogTableService;
@@ -12,6 +14,7 @@ import io.deltazium.backend.iceberg.IcebergProperties;
 import io.deltazium.backend.registry.DbConnection;
 import io.deltazium.backend.registry.DbConnectionRepository;
 import io.deltazium.backend.registry.DbConnectionService;
+import io.deltazium.backend.registry.DbType;
 import io.deltazium.backend.registry.OracleConnectionTester;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,7 +39,7 @@ import static org.mockito.Mockito.when;
 @MybatisTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ImportAutoConfiguration(SqlInitializationAutoConfiguration.class)
-@Import({RegistrationService.class, DbConnectionService.class,
+@Import({RegistrationService.class, DbConnectionService.class, DictionaryRouter.class,
         io.deltazium.backend.events.TableEventService.class})
 /**
  * 파일명 : RegistrationServiceTest.java
@@ -73,6 +76,10 @@ class RegistrationServiceTest {
     @MockitoBean
     OracleDictionaryService dictionary;
 
+    /** DictionaryRouter가 List<SourceDictionary>를 주입받으므로 두 구현 모두 빈이어야 한다. */
+    @MockitoBean
+    PostgresDictionaryService pgDictionary;
+
     @MockitoBean
     ConnectorDeployService deploy;
 
@@ -87,12 +94,17 @@ class RegistrationServiceTest {
 
     @BeforeEach
     void setUp() {
+        when(dictionary.dbType()).thenReturn(DbType.ORACLE);
+        when(dictionary.captureSetupLabel()).thenReturn("supplemental logging (ALL) COLUMNS");
+        when(pgDictionary.dbType()).thenReturn(DbType.POSTGRESQL);
+        // 소스 커넥션의 topicPrefix가 커넥터 이름(dz-*-<prefix>-*)에 그대로 들어간다 — "dz"로 고정해
+        // 기존(단일 소스 시절) 커넥터명 기댓값과의 diff를 prefix 삽입만으로 좁힌다.
         srcId = connections.create(new DbConnection(null, "src", "ORACLE", "SOURCE",
-                "srchost", 1521, "SRCPDB", "dbz", "pw")).id();
+                "srchost", 1521, "SRCPDB", "dbz", "pw", "dz")).id();
         tgtId = connections.create(new DbConnection(null, "tgt", "ORACLE", "TARGET",
                 "tgthost", 1521, "TGTPDB", "apply", "pw")).id();
-        when(changelog.changelogTableName(anyString(), anyString())).thenAnswer(inv ->
-                "changelog." + (inv.getArgument(0) + "_" + inv.getArgument(1)).toString().toLowerCase());
+        when(changelog.changelogTableName(anyString(), anyString(), anyString())).thenAnswer(inv ->
+                "changelog." + (inv.getArgument(1) + "_" + inv.getArgument(2)).toString().toLowerCase());
     }
 
     private void mockTable(String qualified, boolean pk, boolean supp) {
@@ -127,7 +139,7 @@ class RegistrationServiceTest {
                 .containsExactly("ID", "AMOUNT", "STATUS");
 
         ArgumentCaptor<Map<String, String>> vars = ArgumentCaptor.forClass(Map.class);
-        verify(deploy).deploy(eq("source"), vars.capture());
+        verify(deploy).deploy(eq("source-oracle"), vars.capture());
         assertThat(vars.getValue()).containsEntry("table_include_list", "CDC.T1,CDC.T2");
 
         ArgumentCaptor<Map<String, String>> jdbcVars = ArgumentCaptor.forClass(Map.class);
@@ -135,7 +147,7 @@ class RegistrationServiceTest {
         verify(deploy, org.mockito.Mockito.times(2))
                 .deploy(eq("jdbc-sink"), jdbcVars.capture(), jdbcExtra.capture());
         assertThat(jdbcVars.getAllValues().get(0))
-                .containsEntry("connector_name", "dz-jdbc-sink-cdc_t1")
+                .containsEntry("connector_name", "dz-jdbc-sink-dz-cdc_t1")
                 .containsEntry("topics", "dz.CDC.T1")
                 .containsEntry("collection_name", "CDC.T1");
         // 전 컬럼 동일명 활성 → include 필터 생략
@@ -256,7 +268,7 @@ class RegistrationServiceTest {
         service.register(srcId, tgtId, List.of(spec("CDC.T1")), "NO_DATA");
 
         ArgumentCaptor<Map<String, String>> vars = ArgumentCaptor.forClass(Map.class);
-        verify(deploy).deploy(eq("source"), vars.capture());
+        verify(deploy).deploy(eq("source-oracle"), vars.capture());
         assertThat(vars.getValue()).containsEntry("snapshot_mode", "no_data");
     }
 
@@ -269,7 +281,7 @@ class RegistrationServiceTest {
         service.register(srcId, tgtId, List.of(spec("CDC.T2")), "NO_DATA");
 
         ArgumentCaptor<Map<String, String>> vars = ArgumentCaptor.forClass(Map.class);
-        verify(deploy, org.mockito.Mockito.times(2)).deploy(eq("source"), vars.capture());
+        verify(deploy, org.mockito.Mockito.times(2)).deploy(eq("source-oracle"), vars.capture());
         // 두 번째 배포도 첫 등록(INITIAL) 기준
         assertThat(vars.getAllValues().get(1)).containsEntry("snapshot_mode", "initial");
     }
@@ -288,9 +300,9 @@ class RegistrationServiceTest {
         long id = service.register(srcId, tgtId, List.of(spec("CDC.T1"))).get(0).id();
 
         service.pause(id);
-        verify(deploy).pauseConnector("dz-jdbc-sink-cdc_t1");
+        verify(deploy).pauseConnector("dz-jdbc-sink-dz-cdc_t1");
         service.resume(id);
-        verify(deploy).resumeConnector("dz-jdbc-sink-cdc_t1");
+        verify(deploy).resumeConnector("dz-jdbc-sink-dz-cdc_t1");
     }
 
     @Test
@@ -304,10 +316,10 @@ class RegistrationServiceTest {
 
         assertThat(remaining).extracting(RegisteredTable::tableName).containsExactly("T2");
         assertThat(service.mappings(t1)).isEmpty();
-        verify(deploy).deleteConnector("dz-jdbc-sink-cdc_t1");
+        verify(deploy).deleteConnector("dz-jdbc-sink-dz-cdc_t1");
         // 기본은 changelog 보존
         verify(changelog, org.mockito.Mockito.never())
-                .dropChangelogTable(anyString(), anyString(), org.mockito.ArgumentMatchers.anyBoolean());
+                .dropChangelogTable(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     @Test
@@ -318,9 +330,9 @@ class RegistrationServiceTest {
         var remaining = service.unregister(id, true);
 
         assertThat(remaining).isEmpty();
-        verify(deploy).deleteConnector("dz-source");
+        verify(deploy).deleteConnector("dz-source-dz");
         verify(deploy).deleteConnector("dz-iceberg-dz");
-        verify(changelog).dropChangelogTable("CDC", "T1", true);
+        verify(changelog).dropChangelogTable("dz", "CDC", "T1", true);
     }
 
     @Test
@@ -329,7 +341,7 @@ class RegistrationServiceTest {
         mockTable("CDC.T1", true, true);
         service.register(srcId, tgtId, List.of(spec("CDC.T1")));
 
-        verify(changelog).ensureChangelogTable("CDC", "T1");
+        verify(changelog).ensureChangelogTable("dz", "CDC", "T1");
         ArgumentCaptor<Map<String, String>> vars = ArgumentCaptor.forClass(Map.class);
         ArgumentCaptor<Map<String, String>> extra = ArgumentCaptor.forClass(Map.class);
         verify(deploy).deploy(eq("iceberg-sink"), vars.capture(), extra.capture());

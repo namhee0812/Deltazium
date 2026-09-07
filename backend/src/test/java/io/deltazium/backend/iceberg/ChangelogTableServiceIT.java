@@ -39,9 +39,9 @@ class ChangelogTableServiceIT {
 
     @Test
     void 실제_카탈로그에_사전_생성되고_멱등이다() {
-        ChangelogTableService service = new ChangelogTableService(props, "probe");
-        service.ensureChangelogTable("ITPROBE", "T1");
-        service.ensureChangelogTable("ITPROBE", "T1"); // 멱등
+        ChangelogTableService service = new ChangelogTableService(props);
+        service.ensureChangelogTable("probe", "ITPROBE", "T1");
+        service.ensureChangelogTable("probe", "ITPROBE", "T1"); // 멱등
 
         // sink와 같은 카탈로그 이름("iceberg")으로 열어야 같은 테이블이 보인다
         JdbcCatalog catalog = new JdbcCatalog();

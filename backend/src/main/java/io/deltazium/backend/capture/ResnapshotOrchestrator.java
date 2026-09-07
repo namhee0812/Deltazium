@@ -10,6 +10,7 @@ import java.util.stream.Collectors;
 
 import io.deltazium.backend.connect.ConnectClient;
 import io.deltazium.backend.connect.ConnectorDeployService;
+import io.deltazium.backend.connect.ConnectorNames;
 import io.deltazium.backend.events.TableEventService;
 import io.deltazium.backend.metrics.KafkaMetricsService;
 import io.deltazium.backend.registration.RegisteredTable;
@@ -40,12 +41,16 @@ import org.springframework.stereotype.Component;
  * --------------------------------------------------
  * 26. 08. 05.       | 최남희  | 최초 생성 (기존 RegistrationService.resnapshot 이관·확장)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 소스 커넥터 이름을 dz-source-<prefix>로
+ * |                          | 동적 계산 — 재스냅샷은 등록 테이블이 전부 같은 소스 커넥션에
+ * |                          | 속할 때만 지원(여러 소스가 섞이면 거부). 여러 소스를 함께
+ * |                          | 재스냅샷하는 시나리오는 범위 밖(TODO ② — 결정 필요 시 재논의)
+ * --------------------------------------------------
  */
 @Component
 public class ResnapshotOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(ResnapshotOrchestrator.class);
-    private static final String SOURCE = "dz-source";
 
     public enum Phase {
         STOPPING_SOURCE, DRAINING, AWAITING_DECISION, HELD, TRUNCATING,
@@ -75,12 +80,18 @@ public class ResnapshotOrchestrator {
         final AtomicBoolean recheckRequested = new AtomicBoolean(false);
         final List<RegisteredTable> tables;
         final DbConnection target;
+        final DbConnection source;
+        /** dz-source-<prefix> — 이 run이 다루는 소스 커넥터 이름 (2026-09-07, 다중 소스 ②). */
+        final String sourceConnector;
 
-        Run(String mode, boolean truncateTarget, List<RegisteredTable> tables, DbConnection target) {
+        Run(String mode, boolean truncateTarget, List<RegisteredTable> tables,
+            DbConnection target, DbConnection source) {
             this.mode = mode;
             this.truncateTarget = truncateTarget;
             this.tables = tables;
             this.target = target;
+            this.source = source;
+            this.sourceConnector = ConnectorNames.source(source.topicPrefix());
         }
 
         boolean active() {
@@ -96,7 +107,6 @@ public class ResnapshotOrchestrator {
     private final TargetTableGate gate;
     private final SnapshotNotificationPoller notifications;
     private final TableEventService events;
-    private final String topicPrefix;
     private final AtomicReference<Run> current = new AtomicReference<>();
 
     public ResnapshotOrchestrator(RegistrationService registrations,
@@ -106,8 +116,7 @@ public class ResnapshotOrchestrator {
                                   KafkaMetricsService metrics,
                                   TargetTableGate gate,
                                   SnapshotNotificationPoller notifications,
-                                  TableEventService events,
-                                  @Value("${deltazium.topic-prefix}") String topicPrefix) {
+                                  TableEventService events) {
         this.registrations = registrations;
         this.connections = connections;
         this.deploy = deploy;
@@ -116,7 +125,6 @@ public class ResnapshotOrchestrator {
         this.gate = gate;
         this.notifications = notifications;
         this.events = events;
-        this.topicPrefix = topicPrefix;
     }
 
     /** 실행 시작 — 활성 run이 있으면 거부. */
@@ -137,11 +145,20 @@ public class ResnapshotOrchestrator {
         if (tables.isEmpty()) {
             throw new IllegalStateException("등록된 테이블이 없다 — 재스냅샷 대상 없음");
         }
+        // 재스냅샷은 소스 커넥터 하나(offset)를 리셋하는 작업이라 여러 소스가 섞이면
+        // 의미가 불명확하다 — 등록 테이블이 전부 같은 소스 커넥션이어야 한다(2026-09-07, 다중 소스 ②).
+        long sourceConnectionId = tables.get(0).sourceConnectionId();
+        if (tables.stream().anyMatch(t -> t.sourceConnectionId() != sourceConnectionId)) {
+            throw new IllegalStateException(
+                    "재스냅샷은 현재 단일 소스 전제 — 여러 소스 커넥션이 섞여 있으면 지원되지 않는다"
+                            + " (docs/TODO.md 다중 소스·다중 타깃 ②)");
+        }
+        DbConnection source = connections.get(sourceConnectionId);
         DbConnection target = connections.get(tables.get(0).targetConnectionId());
-        Run run = new Run(m, truncateTarget, tables, target);
+        Run run = new Run(m, truncateTarget, tables, target, source);
         current.set(run);
         notifications.markRequested();
-        events.record("-", SOURCE, "RESNAPSHOT_REQUESTED", "INFO",
+        events.record("-", run.sourceConnector, "RESNAPSHOT_REQUESTED", "INFO",
                 ("INITIAL".equals(m) ? "초기 스냅샷부터 재기동" : "현재 시점(no_data)부터 재기동")
                         + (truncateTarget ? " + 타깃 truncate 재구축" : ""), null);
         Thread t = new Thread(() -> drive(run), "resnapshot-orchestrator");
@@ -199,19 +216,20 @@ public class ResnapshotOrchestrator {
     // ── 상태 기계 본체 ──────────────────────────────────────────────
 
     void drive(Run run) {
+        String prefix = run.source.topicPrefix();
         try {
             // ① 유입 차단 (offset 보존 — 이 시점 이후 실패·취소는 resume으로 원복)
-            deploy.stopAndAwait(SOURCE);
-            events.info("-", SOURCE, "RESNAPSHOT_STEP", "① 유입 차단 — source 정지 (offset 보존)");
+            deploy.stopAndAwait(run.sourceConnector);
+            events.info("-", run.sourceConnector, "RESNAPSHOT_STEP", "① 유입 차단 — source 정지 (offset 보존)");
 
             if (run.truncateTarget) {
                 // ② 잔량 소진 — 정지된 sink는 깨운다 (truncate 후 옛 이벤트 도착 방지)
                 run.phase = Phase.DRAINING;
                 for (RegisteredTable t : run.tables) {
-                    deploy.resumeConnector("dz-jdbc-sink-" + t.suffix());
+                    deploy.resumeConnector(ConnectorNames.jdbcSink(prefix, t.suffix()));
                 }
                 drain(run);
-                events.info("-", SOURCE, "RESNAPSHOT_STEP", "② 파이프 잔량 소진 완료");
+                events.info("-", run.sourceConnector, "RESNAPSHOT_STEP", "② 파이프 잔량 소진 완료");
 
                 // ③ 실행 주체 승인 → 실행 또는 홀드
                 run.phase = Phase.AWAITING_DECISION;
@@ -225,16 +243,16 @@ public class ResnapshotOrchestrator {
                 if (run.phase == Phase.HELD) {
                     awaitEmpty(run);
                 }
-                events.info("-", SOURCE, "RESNAPSHOT_STEP", "③ 타깃 비움 확인 (전 테이블 0행)");
+                events.info("-", run.sourceConnector, "RESNAPSHOT_STEP", "③ 타깃 비움 확인 (전 테이블 0행)");
             }
 
             // ④ offset 리셋 → 재배포 → 재개 (여기부터 되돌릴 수 없다)
             run.phase = Phase.RESETTING;
-            deploy.deleteOffsets(SOURCE);
-            registrations.redeployWithSnapshotMode(
+            deploy.deleteOffsets(run.sourceConnector);
+            registrations.redeployWithSnapshotMode(run.source.id(),
                     "NO_DATA".equals(run.mode) ? "no_data" : "initial");
-            deploy.resumeConnector(SOURCE);
-            events.info("-", SOURCE, "RESNAPSHOT_STEP", "④ offset 리셋 · 재배포 · 재개");
+            deploy.resumeConnector(run.sourceConnector);
+            events.info("-", run.sourceConnector, "RESNAPSHOT_STEP", "④ offset 리셋 · 재배포 · 재개");
 
             // ⑤ 스냅샷 → ⑥ go-live
             run.phase = Phase.SNAPSHOTTING;
@@ -253,7 +271,7 @@ public class ResnapshotOrchestrator {
                     || run.phase == Phase.STOPPING_SOURCE) {
                 rollback(run, "실패 원복: " + e.getMessage());
             } else {
-                events.record("-", SOURCE, "RESNAPSHOT_FAILED", "ERROR",
+                events.record("-", run.sourceConnector, "RESNAPSHOT_FAILED", "ERROR",
                         "offset 리셋 이후 실패 — 수동 확인 필요: " + e.getMessage(), null);
             }
             run.phase = Phase.FAILED;
@@ -263,8 +281,8 @@ public class ResnapshotOrchestrator {
 
     private void rollback(Run run, String why) {
         try {
-            deploy.resumeConnector(SOURCE); // offset 미변경 — 이어서 스트리밍
-            events.record("-", SOURCE, "RESNAPSHOT_ROLLBACK", "WARN",
+            deploy.resumeConnector(run.sourceConnector); // offset 미변경 — 이어서 스트리밍
+            events.record("-", run.sourceConnector, "RESNAPSHOT_ROLLBACK", "WARN",
                     why + " — source 재개(offset 보존)", null);
         } catch (Exception e) {
             log.error("원복 중 resume 실패: {}", e.getMessage());
@@ -272,13 +290,15 @@ public class ResnapshotOrchestrator {
     }
 
     private void drain(Run run) throws InterruptedException {
+        String prefix = run.source.topicPrefix();
         long deadline = System.currentTimeMillis() + 600_000;
         while (true) {
             checkCancelled(run);
             long remaining = 0;
             for (RegisteredTable t : run.tables) {
-                remaining += Math.max(0, metrics.groupLag(
-                        "connect-dz-jdbc-sink-" + t.suffix(), topicPrefix + "." + t.qualified()));
+                String jdbcSink = ConnectorNames.jdbcSink(prefix, t.suffix());
+                remaining += Math.max(0, metrics.groupLag(ConnectorNames.consumerGroup(jdbcSink),
+                        ConnectorNames.captureTopic(prefix, t.schemaName(), t.tableName())));
             }
             run.remainingLag = remaining;
             if (remaining == 0) {
@@ -308,7 +328,7 @@ public class ResnapshotOrchestrator {
             run.holdReason = "권한 불충분 — 계정 " + run.target.username()
                     + "에 DROP ANY TABLE이 없고 스키마 소유자도 아니다. "
                     + "DBA에게 아래 SQL 실행을 요청하라 (비워지면 자동 진행)";
-            events.record("-", SOURCE, "RESNAPSHOT_HELD", "WARN", run.holdReason, null);
+            events.record("-", run.sourceConnector, "RESNAPSHOT_HELD", "WARN", run.holdReason, null);
             return;
         }
         run.phase = Phase.TRUNCATING;
@@ -351,7 +371,7 @@ public class ResnapshotOrchestrator {
             String snapPhase = notifications.status().phase();
             if ("NO_DATA".equals(run.mode)) {
                 // no_data는 스냅샷 notification이 없다 — source RUNNING이면 곧 go-live
-                if (isSourceHealthy()) {
+                if (isSourceHealthy(run.sourceConnector)) {
                     return;
                 }
             } else if ("COMPLETED".equals(snapPhase)) {
@@ -359,7 +379,7 @@ public class ResnapshotOrchestrator {
             } else if ("ABORTED".equals(snapPhase)) {
                 throw new IllegalStateException("초기 스냅샷 중단(ABORTED) — 이벤트 탭 확인");
             }
-            if (sourceTaskFailed()) {
+            if (sourceTaskFailed(run.sourceConnector)) {
                 throw new IllegalStateException("재기동 후 source task FAILED — 커넥터 trace 확인");
             }
             Thread.sleep(3000);
@@ -367,10 +387,10 @@ public class ResnapshotOrchestrator {
         throw new IllegalStateException("스냅샷 완료 확인 시간 초과 — 진행은 계속 중일 수 있다 (이벤트 탭 확인)");
     }
 
-    private boolean isSourceHealthy() {
+    private boolean isSourceHealthy(String sourceConnector) {
         try {
-            var st = connect.status(SOURCE).path("status");
-            var node = st.isMissingNode() ? connect.status(SOURCE) : st;
+            var st = connect.status(sourceConnector).path("status");
+            var node = st.isMissingNode() ? connect.status(sourceConnector) : st;
             if (!"RUNNING".equals(node.path("connector").path("state").asText())) {
                 return false;
             }
@@ -385,10 +405,10 @@ public class ResnapshotOrchestrator {
         }
     }
 
-    private boolean sourceTaskFailed() {
+    private boolean sourceTaskFailed(String sourceConnector) {
         try {
-            var st = connect.status(SOURCE).path("status");
-            var node = st.isMissingNode() ? connect.status(SOURCE) : st;
+            var st = connect.status(sourceConnector).path("status");
+            var node = st.isMissingNode() ? connect.status(sourceConnector) : st;
             for (var task : node.path("tasks")) {
                 if ("FAILED".equals(task.path("state").asText())) {
                     return true;

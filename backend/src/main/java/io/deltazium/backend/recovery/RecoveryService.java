@@ -19,7 +19,8 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import io.deltazium.backend.connect.ConnectorDeployService;
-import io.deltazium.backend.dictionary.OracleDictionaryService;
+import io.deltazium.backend.connect.ConnectorNames;
+import io.deltazium.backend.dictionary.DictionaryRouter;
 import io.deltazium.backend.dictionary.TableColumn;
 import io.deltazium.backend.events.TableEventService;
 import io.deltazium.backend.iceberg.ChangelogTableService;
@@ -53,6 +54,10 @@ import org.springframework.stereotype.Service;
  * 26. 09. 05.       | 최남희  | 복구 진입점을 SCN에서 시각(epoch millis)으로 전환 — recovery-job은
  * |                          | ts_ms 파티션 한 칸 앞부터 스캔해 `_pos` 순서로 재생한다 (5.2·6.2절)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: recovery-sink 이름·복구 토픽·changelog
+ * |                          | 테이블명에 소스 topicPrefix를 반영(ConnectorNames), 딕셔너리를
+ * |                          | DictionaryRouter로 교체 — 타깃 컬럼 조회가 dbType별로 정확해짐
+ * --------------------------------------------------
  */
 @Service
 public class RecoveryService {
@@ -73,7 +78,7 @@ public class RecoveryService {
     private final RegisteredTableRepository registrations;
     private final RegisteredColumnRepository columns;
     private final DbConnectionService connections;
-    private final OracleDictionaryService dictionary;
+    private final DictionaryRouter dictionaryRouter;
     private final ConnectorDeployService deploy;
     private final ChangelogTableService changelog;
     private final IcebergProperties iceberg;
@@ -89,7 +94,7 @@ public class RecoveryService {
     public RecoveryService(RegisteredTableRepository registrations,
                            RegisteredColumnRepository columns,
                            DbConnectionService connections,
-                           OracleDictionaryService dictionary,
+                           DictionaryRouter dictionaryRouter,
                            ConnectorDeployService deploy,
                            ChangelogTableService changelog,
                            IcebergProperties iceberg,
@@ -101,7 +106,7 @@ public class RecoveryService {
         this.registrations = registrations;
         this.columns = columns;
         this.connections = connections;
-        this.dictionary = dictionary;
+        this.dictionaryRouter = dictionaryRouter;
         this.deploy = deploy;
         this.changelog = changelog;
         this.iceberg = iceberg;
@@ -129,10 +134,12 @@ public class RecoveryService {
      */
     public RecoveryRun trigger(long registeredTableId, long fromTimeMs, boolean autoResume) {
         RegisteredTable table = find(registeredTableId);
+        DbConnection source = connections.get(table.sourceConnectionId());
         DbConnection target = connections.get(table.targetConnectionId());
+        String prefix = source.topicPrefix();
 
         // key 컬럼: 타깃 테이블 PK (apply 대상 기준 — 소스가 죽어 있어도 복구는 가능해야 한다)
-        List<String> keyColumns = dictionary
+        List<String> keyColumns = dictionaryRouter.forConnection(target)
                 .listColumns(target, table.targetSchema(), table.targetTable()).stream()
                 .filter(TableColumn::pk).map(TableColumn::name).toList();
         if (keyColumns.isEmpty()) {
@@ -140,23 +147,23 @@ public class RecoveryService {
                     "타깃 테이블에 PK가 없다 — 복구 apply 불가: " + table.targetQualified());
         }
 
-        String recoveryTopic = "dz-recovery." + table.suffix();
-        deployRecoverySink(table, target, recoveryTopic);
+        String recoveryTopic = ConnectorNames.recoveryTopic(prefix, table.suffix());
+        deployRecoverySink(table, target, prefix, recoveryTopic);
 
         long id = runSeq.incrementAndGet();
         String logPath = logDir + "/recovery-" + table.suffix() + "-" + id + ".log";
-        List<String> command = buildCommand(table, fromTimeMs, keyColumns, recoveryTopic, logPath);
+        List<String> command = buildCommand(table, prefix, fromTimeMs, keyColumns, recoveryTopic, logPath);
 
         RecoveryRun run = new RecoveryRun(id, table.qualified(), fromTimeMs, "RUNNING",
                 0, 0, logPath, LocalDateTime.now(), autoResume);
         runs.put(id, run);
         events.record(table.schemaName(), table.tableName(), "RECOVERY_STARTED", "WARN",
                 Instant.ofEpochMilli(fromTimeMs) + "부터 재발행 시작" + (autoResume ? " (완료 후 자동 재개)" : ""), null);
-        launchProcess(id, command, logPath, table, autoResume);
+        launchProcess(id, command, logPath, table, prefix, autoResume);
         return run;
     }
 
-    List<String> buildCommand(RegisteredTable table, long fromTimeMs,
+    List<String> buildCommand(RegisteredTable table, String topicPrefix, long fromTimeMs,
                               List<String> keyColumns, String recoveryTopic, String logPath) {
         List<String> cmd = new ArrayList<>();
         cmd.add(launcher);
@@ -167,7 +174,7 @@ public class RecoveryService {
         cmd.add("s3-endpoint=" + iceberg.s3Endpoint());
         cmd.add("s3-access-key=" + iceberg.s3AccessKey());
         cmd.add("s3-secret-key=" + iceberg.s3SecretKey());
-        cmd.add("table=" + changelog.changelogTableName(table.schemaName(), table.tableName()));
+        cmd.add("table=" + changelog.changelogTableName(topicPrefix, table.schemaName(), table.tableName()));
         cmd.add("from-ts-ms=" + fromTimeMs);
         cmd.add("key-columns=" + String.join(",", keyColumns));
         cmd.add("bootstrap=" + kafkaBootstrap);
@@ -175,9 +182,10 @@ public class RecoveryService {
         return cmd;
     }
 
-    private void deployRecoverySink(RegisteredTable table, DbConnection target, String topic) {
+    private void deployRecoverySink(RegisteredTable table, DbConnection target, String topicPrefix, String topic) {
         Map<String, String> vars = new HashMap<>();
-        vars.put("connector_name", "dz-recovery-sink-" + table.suffix());
+        String connectorName = ConnectorNames.recoverySink(topicPrefix, table.suffix());
+        vars.put("connector_name", connectorName);
         vars.put("recovery_topics", topic);
         vars.put("target_jdbc_url", target.jdbcUrl());
         vars.put("target_user", target.username());
@@ -188,11 +196,11 @@ public class RecoveryService {
         deploy.deploy("recovery-sink", vars,
                 io.deltazium.backend.registration.RegistrationService.fieldIncludeConfig(mappings));
         // 이전 복구에서 pause된 상태로 남아 있을 수 있다 — 항상 깨워서 시작
-        deploy.resumeConnector("dz-recovery-sink-" + table.suffix());
+        deploy.resumeConnector(connectorName);
     }
 
     private void launchProcess(long id, List<String> command, String logPath, RegisteredTable table,
-                               boolean autoResume) {
+                               String topicPrefix, boolean autoResume) {
         Thread watcher = new Thread(() -> {
             try {
                 ProcessBuilder pb = new ProcessBuilder(command);
@@ -216,7 +224,7 @@ public class RecoveryService {
                         ok ? "재발행 완료 — " + published + "건 (건너뜀 " + skipped + ")"
                            : "재발행 실패 — 로그: " + logPath, null);
                 if (ok) {
-                    awaitApplyThenPauseSink(id, table, published, autoResume);
+                    awaitApplyThenPauseSink(id, table, topicPrefix, published, autoResume);
                 }
             } catch (Exception e) {
                 update(id, "FAILED", 0, 0);
@@ -233,11 +241,11 @@ public class RecoveryService {
      * 발행 0건이면 바로 정지. 30분 내 소진 안 되면 정지하지 않고 경고만 남긴다.
      * autoResume이면 완료 후 해당 테이블 jdbc-sink를 재개해 go-live까지 마친다.
      */
-    private void awaitApplyThenPauseSink(long id, RegisteredTable table, long published,
+    private void awaitApplyThenPauseSink(long id, RegisteredTable table, String topicPrefix, long published,
                                          boolean autoResume) {
-        String group = "connect-dz-recovery-sink-" + table.suffix();
-        String topic = "dz-recovery." + table.suffix();
-        String connector = "dz-recovery-sink-" + table.suffix();
+        String connector = ConnectorNames.recoverySink(topicPrefix, table.suffix());
+        String group = ConnectorNames.consumerGroup(connector);
+        String topic = ConnectorNames.recoveryTopic(topicPrefix, table.suffix());
         try {
             if (published > 0) {
                 long deadline = System.currentTimeMillis() + 30 * 60_000L;
@@ -259,7 +267,7 @@ public class RecoveryService {
             events.info(table.schemaName(), table.tableName(), "RECOVERY_DONE",
                     "apply 완료 확인 — " + connector + " 정지 (평시 정지 원칙)");
             if (autoResume) {
-                deploy.resumeConnector("dz-jdbc-sink-" + table.suffix());
+                deploy.resumeConnector(ConnectorNames.jdbcSink(topicPrefix, table.suffix()));
                 update(id, "LIVE", published, 0);
                 events.info(table.schemaName(), table.tableName(), "RESUMED",
                         "복구 완료 후 자동 재개 (go-live) — 경계 중복은 PK upsert 멱등으로 흡수");
@@ -276,7 +284,12 @@ public class RecoveryService {
                 r.logPath(), r.startedAt(), r.autoResume()));
     }
 
-    /** 6.4절 ⑤ 정합 검증 — 행 수 + ORA_HASH 체크섬 (활성·동일명 컬럼 기준). */
+    /**
+     * 6.4절 ⑤ 정합 검증 — 행 수 + ORA_HASH 체크섬 (활성·동일명 컬럼 기준).
+     * 주의(2026-09-07, 다중 소스 ②로 드러난 한계): checksumSql은 Oracle 전용(ORA_HASH)이라
+     * PostgreSQL 소스의 SRC측 체크섬은 아직 지원하지 않는다 — PG 소스 복구 리허설은 행 수만으로
+     * 우선 검증하고, PG용 체크섬 SQL(예: md5(string_agg(...)))은 별도 결정 필요(docs/TODO.md).
+     */
     public VerifyResult verify(long registeredTableId) {
         RegisteredTable table = find(registeredTableId);
         DbConnection source = connections.get(table.sourceConnectionId());
@@ -288,7 +301,8 @@ public class RecoveryService {
                 .collect(Collectors.toList());
         if (cols.isEmpty()) {
             // 매핑 메타데이터가 없는 구버전 등록 — 소스 딕셔너리 전 컬럼
-            cols = dictionary.listColumns(source, table.schemaName(), table.tableName())
+            cols = dictionaryRouter.forConnection(source)
+                    .listColumns(source, table.schemaName(), table.tableName())
                     .stream().map(TableColumn::name).collect(Collectors.toList());
         }
 
