@@ -224,19 +224,30 @@ group은 커넥터 이름에 묶여 있어** 이름이 바뀌면 새 커넥터�
 두 번째 소스(PostgreSQL)를 실 배선하기 전 준비 절차 — `deploy/pg-source-setup.sh`(작성만,
 미실행)를 참고해 사용자가 직접 실행:
 
-1. `wal_level=logical` 확인·적용(스크립트가 `ALTER SYSTEM`까지는 하지만 **PostgreSQL 재시작은
-   별도로 사용자가 판단해 수행** — 메타데이터·Iceberg 카탈로그를 같은 인스턴스가 서비스
-   중이므로 재시작 시점을 신중히 잡을 것).
-2. 캡처 롤 `dz_capture`(REPLICATION + LOGIN), 테스트 스키마 `cdc_src` + PK 테이블 2개를
-   스크립트로 준비한다.
-3. `debezium-connector-postgres` 플러그인 설치(`deploy/install-runtime.sh` 갱신됨) 후
+**wal_level 재시작 순서** — `pg-source-setup.sh`는 한 번 실행으로 wal_level·캡처 롤·
+스키마·테이블을 전부 준비하려 하지만, wal_level 변경은 재시작 전까지 반영되지 않는다.
+그 외 단계(역할·스키마·테이블·GRANT)는 wal_level과 무관해 재시작 여부와 상관없이 먼저
+끝내도 안전하다 — 실제로 필요한 논리 복제 슬롯 생성은 이 스크립트가 아니라 나중에
+Debezium 커넥터가 배포될 때 일어난다. 그래서 순서는:
+
+1. `./deploy/pg-source-setup.sh` 1차 실행 — wal_level이 logical이 아니면 `ALTER SYSTEM`만
+   해두고 재시작 안내를 출력한다. 캡처 롤(`dz_capture`, REPLICATION+LOGIN+**database CREATE**
+   — publication 자동 생성에 필요, 없으면 source task가 `Unable to create filtered
+   publication`으로 죽는다, 2026-09-07 실측)과 테스트 스키마 `cdc_src` + PK 테이블 2개는
+   이 1차 실행에서 이미 준비된다.
+2. **PostgreSQL 재시작** — 메타데이터·Iceberg 카탈로그를 같은 인스턴스가 서비스 중이므로
+   재시작 시점을 신중히 잡을 것(사용자 판단, 실행 중 등록/복구 작업과 겹치지 않게).
+3. `./deploy/pg-source-setup.sh` 재실행(멱등) — wal_level=logical 확인만 하고 나머지는
+   전부 no-op으로 지나간다.
+4. `debezium-connector-postgres` 플러그인 설치(`deploy/install-runtime.sh` 갱신됨) 후
    **Kafka Connect 재시작 필요**(새 플러그인은 워커 재시작 후에만 인식됨).
-4. UI DB 연결 등록 화면에서 PostgreSQL SOURCE 연결을 추가 — host/port/database=위 값,
+5. UI DB 연결 등록 화면에서 PostgreSQL SOURCE 연결을 추가 — host/port/database=위 값,
    topicPrefix는 원하는 소스 식별자(예: `pgsrc`)로 지정.
-5. CDC 등록 위저드에서 `cdc_src.*` 패턴으로 조회 → 사전 점검(wal_level·REPLICATION 권한·
-   REPLICA IDENTITY FULL) 통과 후 등록.
-6. changelog(`changelog_pgsrc.*`)에 `_pos`가 채워지는지, PG→Oracle 타깃 적재가 정상인지
+6. CDC 등록 위저드에서 `cdc_src.*` 패턴으로 조회 → 사전 점검(wal_level·REPLICATION 권한·
+   **database CREATE 권한**·REPLICA IDENTITY FULL) 통과 후 등록.
+7. changelog(`changelog_pgsrc.*`)에 `_pos`가 채워지는지, PG→Oracle 타깃 적재가 정상인지
    확인 — 이게 통과해야 "두 번째 소스가 실제로 동작한다"고 말할 수 있다(TODO ② 검증 기준).
+   2026-09-07 스모크에서 실제로 통과 확인(docs/internals.md "PG 소스 실 배선 스모크 결과").
 
 ### DDL 변경
 소스 DDL은 자동으로 수집돼 DDL 이력 탭에 쌓인다.

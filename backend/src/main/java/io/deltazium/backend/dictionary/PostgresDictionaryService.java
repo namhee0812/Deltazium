@@ -39,6 +39,13 @@ import org.springframework.stereotype.Service;
  * --------------------------------------------------
  * 26. 09. 07.       | 최남희  | 최초 생성 — 다중 소스·다중 타깃 ② 두 번째 소스
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | PG 소스 실 배선 스모크 수정: 캡처 계정에 database CREATE
+ * |                          | 권한이 없으면 publication.autocreate.mode=filtered가 publication을
+ * |                          | 만들지 못해 source task가 죽는 것을 실측(에러: "Unable to create
+ * |                          | filtered publication dz_pg", GRANT CREATE ON DATABASE로 해결).
+ * |                          | 근거: Debezium PostgreSQL 커넥터 문서(3.6/stable)의 publication
+ * |                          | 자동 생성 권한 절 — privilegeChecks에 blocking 항목으로 추가
+ * --------------------------------------------------
  */
 @Service
 public class PostgresDictionaryService implements SourceDictionary {
@@ -145,25 +152,47 @@ public class PostgresDictionaryService implements SourceDictionary {
     }
 
     /**
-     * 캡처 계정 권한 — REPLICATION 속성(또는 superuser) + LOGIN(접속 성공이 곧 증명).
-     * publication 자동 생성 권한(테이블 소유권 등)은 테이블마다 달라 여기서는 확인하지 않고
-     * 등록 실패 시 Connect 커넥터 trace로 드러난다(캡처 롤 준비 절차는 deploy/pg-source-setup.sh).
+     * 캡처 계정 권한 — REPLICATION 속성(또는 superuser) + LOGIN(접속 성공이 곧 증명) +
+     * database CREATE(publication.autocreate.mode=filtered가 publication을 만들 때 필요 —
+     * 없으면 source task가 "Unable to create filtered publication ..."로 죽는다, 2026-09-07 실측).
+     * 테이블 소유권 등 세부 권한은 테이블마다 달라 여기서는 확인하지 않고 등록 실패 시 Connect
+     * 커넥터 trace로 드러난다(캡처 롤 준비 절차는 deploy/pg-source-setup.sh).
      */
     @Override
     public List<PrecheckItem> privilegeChecks(DbConnection source) {
         List<PrecheckItem> result = new ArrayList<>();
         result.add(new PrecheckItem("LOGIN", "LOGIN", true, "보유(접속 성공)", true));
-        try (Connection conn = open(source);
-             PreparedStatement ps = conn.prepareStatement(
-                     "SELECT rolreplication OR rolsuper FROM pg_roles WHERE rolname = current_user")) {
-            try (ResultSet rs = ps.executeQuery()) {
-                boolean ok = rs.next() && rs.getBoolean(1);
-                result.add(new PrecheckItem("REPLICATION", "REPLICATION(또는 superuser)",
-                        ok, ok ? "보유" : "누락", true));
+        try (Connection conn = open(source)) {
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "SELECT rolreplication OR rolsuper FROM pg_roles WHERE rolname = current_user")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    boolean ok = rs.next() && rs.getBoolean(1);
+                    result.add(new PrecheckItem("REPLICATION", "REPLICATION(또는 superuser)",
+                            ok, ok ? "보유" : "누락", true));
+                }
+            }
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "SELECT has_database_privilege(current_user, current_database(), 'CREATE')")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    boolean ok = rs.next() && rs.getBoolean(1);
+                    result.add(new PrecheckItem("CREATE ON DATABASE",
+                            "CREATE ON DATABASE (publication 자동 생성에 필요)", ok,
+                            ok ? "보유" : "누락 — GRANT CREATE ON DATABASE " + currentDatabase(conn)
+                                    + " TO " + source.username() + ";",
+                            true));
+                }
             }
             return result;
         } catch (SQLException e) {
             throw new SourceDictionary.DictionaryException("권한 점검 실패: " + e.getMessage(), e);
+        }
+    }
+
+    private static String currentDatabase(Connection conn) throws SQLException {
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT current_database()")) {
+            rs.next();
+            return rs.getString(1);
         }
     }
 

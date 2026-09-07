@@ -51,6 +51,11 @@ import org.springframework.stereotype.Component;
  * |                          | 추가(누락돼 있었음) — 종료 플래그를 poll() 시작에서 확인해
  * |                          | 스케줄러 스레드와의 경합 없이 즉시 반환하게 함
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | PG 소스 실 배선 스모크 수정: recordChange가 ddl_text에 요약+
+ * |                          | 초안을 세미콜론과 함께 섞어 넣어 승인 시 그대로 실행돼
+ * |                          | ORA-00900이 났다(실측 ddl_events id=39) — ddl_text는 실행
+ * |                          | 가능한 단일 문장(또는 빈 문자열)만, 요약은 note로 분리
+ * --------------------------------------------------
  */
 @Component
 @ConditionalOnProperty(name = "deltazium.fingerprint-poller.enabled", havingValue = "true", matchIfMissing = true)
@@ -177,18 +182,34 @@ public class SchemaFingerprintPoller {
             return;
         }
         DbConnection target = connections.get(t.targetConnectionId());
-        String draftDdl = SchemaFingerprint.draftDdl(target.dbType(), t.targetSchema(), t.targetTable(), changes);
-        String summary = SchemaFingerprint.summarize(changes);
-        String ddlText = draftDdl != null ? summary + " — 초안:\n" + draftDdl
-                : summary + " (자동 초안 없음 — 확인 후 수동 DDL 필요)";
-        // 초안이 있으면 승인 대기(DETECTED), 없으면 정보성(SNAPSHOT — 기존 DdlPanel이 승인 버튼을
-        // 숨기는 상태를 그대로 재사용, 실행 가능한 DDL이 없어 승인 자체가 무의미하기 때문).
-        String state = draftDdl != null ? "DETECTED" : "SNAPSHOT";
+        EventPayload payload = buildEventPayload(changes, target.dbType(), t.targetSchema(), t.targetTable());
         long id = ddlEvents.insertFingerprintEvent(System.currentTimeMillis(),
-                t.schemaName(), t.tableName(), ddlText, state);
+                t.schemaName(), t.tableName(), payload.ddlText(), payload.state(), payload.note());
         registrations.updateFingerprint(t.id(), newFingerprint, SchemaFingerprint.toJson(newFields));
         log.info("스키마 지문 변경 — {}.{} (ddl_event id={}, state={})",
-                t.schemaName(), t.tableName(), id, state);
+                t.schemaName(), t.tableName(), id, payload.state());
+    }
+
+    /** ddl_events에 저장할 (ddl_text, note, state) — 순수 조립만 분리해 단위 테스트로 검증한다. */
+    record EventPayload(String ddlText, String note, String state) {
+    }
+
+    /**
+     * ddl_text는 승인 시 그대로 실행되는 **단일 문장**만 담는다(초안이 없으면 빈 문자열 —
+     * ddl_events.ddl_text는 NOT NULL). 요약·안내 문구는 note에만 쓴다 — 2026-09-07 수정:
+     * 이전엔 요약과 초안을 세미콜론과 함께 한 컬럼에 섞어 넣어 승인 시 그대로 실행되며
+     * ORA-00900이 났다(실측 ddl_events id=39, 타깃 Oracle). 초안이 있으면 승인 대기
+     * (DETECTED), 없으면 정보성(SNAPSHOT — 기존 DdlPanel이 승인 버튼을 숨기는 상태를 그대로
+     * 재사용, 실행 가능한 DDL이 없어 승인 자체가 무의미하기 때문).
+     */
+    static EventPayload buildEventPayload(List<SchemaFingerprint.FieldChange> changes, String targetDbType,
+                                          String targetSchema, String targetTable) {
+        String draftDdl = SchemaFingerprint.draftDdl(targetDbType, targetSchema, targetTable, changes);
+        String summary = SchemaFingerprint.summarize(changes);
+        String ddlText = draftDdl != null ? draftDdl : "";
+        String note = draftDdl != null ? summary : summary + " (자동 초안 없음 — 확인 후 수동 DDL 필요)";
+        String state = draftDdl != null ? "DETECTED" : "SNAPSHOT";
+        return new EventPayload(ddlText, note, state);
     }
 
     /** 파티션의 마지막 메시지부터 최대 MAX_BACKTRACK건 거슬러 tombstone이 아닌 첫 값을 찾는다. */

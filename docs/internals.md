@@ -386,6 +386,81 @@ TypeScript로 다시 구현했는데, 이건 기존에도 `suffix()` 계산이 �
 집계 SQL(예: `md5(string_agg(...))`)이 추가로 필요하다 — TODO ②의 "PG 소스 실 배선
 스모크" 검증 항목에는 있지만 이 구현 범위에서 다루지 않았다(결정 필요 사항).
 
+## PG 소스 실 배선 스모크 결과 (2026-09-07)
+
+TODO ②의 실 배선 검증에서 드러난 설정 결함·확정치 기록. 코드 수정은 커넥터 템플릿·
+RegistrationService·deploy/connect 설정에 이미 반영돼 있다(f703b7d) — 여기는 "왜"만 남긴다.
+
+**FINGERPRINT ddl_text에 요약과 초안을 섞어 넣은 것이 승인 시 그대로 실행돼 ORA-00900을
+냈다.** `SchemaFingerprintPoller.recordChange`가 처음엔 `"추가: col(type) — 초안:\nALTER
+TABLE ... ADD (...);"` 형태로 diff 요약과 실행문을 세미콜론과 개행으로 이어붙여
+`ddl_text`에 저장했다. `DdlEventService.approve`는 이 컬럼을 그대로 `Statement.execute()`에
+넘기므로(SCHEMA_TOPIC 기원도 마찬가지 — 애초에 이 컬럼은 "그대로 실행 가능한 문장"이라는
+불변식을 전제한다) 요약 문구·개행·세미콜론이 섞인 문자열을 실행하려다 실패했다(실측
+ddl_events id=39, 타깃 Oracle). 수정: `SchemaFingerprint.draftDdl`이 항상 **세미콜론 없는
+단일 ALTER TABLE 문**만 반환하도록(ADD·DROP이 함께 있으면 Oracle은 `ADD (...) DROP (...)`
+절을 한 문장에 나열, PostgreSQL은 액션을 쉼표로 나열), diff 요약은 `note` 컬럼으로 분리했다.
+초안이 없는(타입 변경만 있는) 경우 `ddl_text`는 빈 문자열, `state`는 SNAPSHOT으로 남겨
+애초에 승인 자체가 불가능하게 만들었다(DdlPanel이 SNAPSHOT엔 승인 버튼을 안 보여줌).
+`approve()`는 origin=FINGERPRINT면 `rewriteForTarget`(SCHEMA_TOPIC 전용 이름 치환)을 타지
+않고 `ddl_text`를 그대로 실행한다 — 초안이 이미 `t.targetSchema()/targetTable()`로 조립돼
+있어 다시 치환하면 오매칭 위험만 생기기 때문. 회귀 방지: `SchemaFingerprintPollerTest`가
+`buildEventPayload`(순수 조립 로직만 뽑아낸 package-private 메서드)의 출력에 세미콜론이
+없는지 직접 검증한다.
+
+**PostgreSQL 캡처 롤에 database CREATE 권한이 없으면 publication 자동 생성이 실패한다.**
+`publication.autocreate.mode=filtered`는 커넥터가 `table.include.list`의 테이블만 묶은
+publication을 스스로 만든다. 테이블 소유권만 있으면 될 것 같지만, 실측 결과 **publication
+객체 자체를 만드는 데 database 수준 CREATE 권한이 별도로 필요**했다 — 없으면 source task가
+`Unable to create filtered publication dz_pg`로 죽는다. `GRANT CREATE ON DATABASE`로
+해결을 확인한 뒤 `PostgresDictionaryService.privilegeChecks`에 blocking 항목으로 추가했고
+(`has_database_privilege(current_user, current_database(), 'CREATE')`), `deploy/
+pg-source-setup.sh`의 캡처 롤 준비 단계에도 같은 GRANT를 넣었다 — 사전 점검과 준비
+스크립트가 같은 요구사항을 두 번 다른 형태로 표현하는 셈이라, 둘 중 하나만 고치면
+어긋나므로 향후 수정 시 함께 볼 것.
+
+**use.reduction.buffer=true — 같은 배치 안 같은 PK의 연속 변경이 Oracle MERGE를 깨뜨린다.**
+Debezium JDBC sink의 Oracle dialect는 upsert를 MERGE INTO로 구현하는데, 한 poll 배치
+안에 같은 PK의 INSERT+UPDATE(또는 반복 UPDATE)가 함께 들어오면 MERGE가 그 배치를
+한 번에 평가하다 중복 키로 `ORA-00001`을 낸다. PG 소스는 초기 스냅샷 직후 같은 행이
+여러 번 빠르게 바뀌는 트래픽에서 이 문제를 실제로 재현했다. `use.reduction.buffer=true`는
+sink가 배치 안에서 같은 키의 이벤트를 하나로 합쳐(reduce) MERGE에 넘겨 이 충돌을 없앤다
+— jdbc-sink·recovery-sink 템플릿 모두에 켰다(connectors/README.md).
+
+**iceberg.control 토픽을 소스별로 나누지 않으면 커밋 응답이 수 분 늦어진다.** Iceberg
+Kafka Connect sink의 코디네이터-태스크 프로토콜은 기본적으로 `control-iceberg`라는 고정
+이름 토픽을 쓴다. 소스가 둘이 되어 iceberg-sink 인스턴스가 두 개가 되면, 나중에 배포되는
+인스턴스의 태스크가 이 공유 토픽을 처음부터 재생하며 **먼저 배포된 소스의 옛 control
+메시지 백로그**까지 다 읽고 나서야 자기 몫에 응답한다 — 실측으로 첫 커밋 응답이 수 분
+지연됐다. 데이터 토픽과 같은 원칙(소스별 격리, 4절)을 control 토픽에도 적용해
+`control-iceberg-<prefix>`로 나눴다(`RegistrationService.deploySource`).
+
+**offset.flush.interval.ms 기본값(60초)이 유휴 sink의 changelog 커밋을 막는다.** Kafka
+Connect sink task는 다음 offset flush 시각까지 `consumer.poll()`에 머물다가 그 시점에만
+`put()`이 호출된다. Iceberg sink는 `put()` 호출 안에서 코디네이터의 커밋 요청(control
+토픽)을 확인하는데, 트래픽이 없는(유휴) 테이블은 기본 60초 주기로만 `put()`이 불려
+코디네이터의 커밋 타임아웃(30초, `iceberg.control.commit.interval-ms`와는 별개 값)을
+번번이 넘겨 changelog 커밋이 실패로 남았다. 워커 설정 `offset.flush.interval.ms=10000`으로
+줄여 트리클 트래픽에서도 2~3초 내 커밋되는 것을 실측했다(`deploy/connect/
+connect-distributed.properties`).
+
+**PostgreSQL `timestamp without time zone`은 Debezium이 UTC로 해석한다(정보, 수정 아님).**
+소스 컬럼이 `timestamp without time zone`이면 Debezium PostgreSQL 커넥터는 그 값을
+"UTC 벽시계 값"으로 취급해 그대로(타임존 변환 없이) 전달한다 — 소스 서버의 실제 로컬
+타임존이 UTC가 아니어도 마찬가지다. 그래서 타깃(Oracle) 컬럼에는 소스에 찍힌 벽시계
+숫자가 그대로 들어간다(예: 소스에서 `2026-09-07 13:00:00 KST`로 입력됐어도 타깃엔
+`2026-09-07 13:00:00`으로 들어가지 "10:00:00 UTC 환산값"이 들어가지 않는다). 이 프로젝트는
+`TIMESTAMP WITH TIME ZONE`을 쓰지 않는 한 별도 처리가 필요 없지만, 소스·타깃 서버의
+타임존이 다른 배선에서 값이 "안 변한 것처럼" 보이는 이유가 이것이라 기록해 둔다.
+
+**스키마 지문 감지 실 배선 결과.** `cdc_src.test_table_01`에 컬럼을 하나 추가(`ALTER TABLE
+... ADD COLUMN memo2 VARCHAR(100)`)한 뒤 관찰한 결과: 첫 지문 저장(이벤트 없음) →
+다음 1분 주기에 지문 변경 감지 → `ddl_events`에 origin=FINGERPRINT, state=DETECTED로
+`ALTER TABLE "TGT"."TEST_TABLE_01" ADD ("MEMO2" VARCHAR2(4000))` 초안이 정확히 한 주기
+지연으로 나타났다 — 설계대로 동작함을 확인. `VARCHAR2(4000)`은 소형 매핑표의 고정폭이라
+실제 컬럼 폭(100)보다 넉넉하게 잡힌다(타입 매핑이 폭까지 보존하지 않는다는 한계, 기존
+기록과 동일 — mapType은 정밀도·길이를 다루지 않는다).
+
 ## 개발 환경 특이사항
 
 - vite dev 서버는 `usePolling` (vite.config.ts): 이 서버에서 inotify 감시가 변경을

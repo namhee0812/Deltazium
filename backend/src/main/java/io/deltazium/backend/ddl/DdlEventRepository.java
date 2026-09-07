@@ -23,6 +23,10 @@ import org.apache.ibatis.annotations.Param;
  * |                          | schema change topic이 없는 소스의 스키마 지문 diff 기록용
  * |                          | (Kafka offset이 없어 insertIfAbsent 경로를 쓰지 않는다)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | PG 소스 실 배선 스모크 수정: insertFingerprintEvent에 note
+ * |                          | 파라미터 추가 — diff 요약을 note에, ddl_text는 실행 가능한
+ * |                          | 단일 문장(또는 초안 없으면 빈 문자열)만 담게 분리(ORA-00900 수정)
+ * --------------------------------------------------
  */
 @Mapper
 public interface DdlEventRepository {
@@ -60,17 +64,24 @@ public interface DdlEventRepository {
         public String table;
         public String ddl;
         public String state;
+        public String note;
     }
 
     void insertFingerprintEventRow(InsertFingerprintRow row);
 
-    default long insertFingerprintEvent(long tsMs, String schema, String table, String ddl, String state) {
+    /**
+     * @param ddl  타깃에서 그대로 실행 가능한 단일 DDL 문(세미콜론 없음), 초안이 없으면 빈 문자열
+     * @param note 사람이 읽는 diff 요약 — 승인 시 실행되지 않는다
+     */
+    default long insertFingerprintEvent(long tsMs, String schema, String table, String ddl, String state,
+                                        String note) {
         InsertFingerprintRow row = new InsertFingerprintRow();
         row.tsMs = tsMs;
         row.schema = schema;
         row.table = table;
         row.ddl = ddl;
         row.state = state;
+        row.note = note;
         insertFingerprintEventRow(row);
         return row.id;
     }

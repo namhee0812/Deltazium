@@ -23,10 +23,13 @@ https://debezium.io/documentation/reference/stable/connectors/postgresql.html
 
 - `plugin.name=pgoutput`: PostgreSQL 10+ 네이티브 논리 복제 플러그인 — 별도 서버 확장 설치 불필요.
 - `publication.autocreate.mode=filtered`: `table.include.list`에 있는 테이블만 묶은 publication을
-  커넥터가 자동 생성한다. 연결 계정이 해당 테이블 소유자이거나 그에 준하는 권한이 있어야 한다
-  (deploy/pg-source-setup.sh가 준비하는 `dz_capture` 롤 기준으로 검증 예정 — 8절 사전 점검은
-  REPLICATION 권한까지만 확인하고 publication 생성 권한은 확인하지 않는다, 알려진 갭).
-  `slot.name`·`publication.name`은 `dz_<topic.prefix>`로 소스별로 겹치지 않게 한다.
+  커넥터가 자동 생성한다. **2026-09-07 PG 소스 실 배선 스모크로 확정**: 테이블 소유권과는
+  별개로 연결 계정에 **database CREATE 권한**이 있어야 한다 — 없으면 source task가
+  `Unable to create filtered publication dz_pg`로 죽는다(`GRANT CREATE ON DATABASE`로 해결).
+  `PostgresDictionaryService.privilegeChecks`가 `has_database_privilege(..., 'CREATE')`로
+  이 항목을 blocking 사전 점검에 포함하고, `deploy/pg-source-setup.sh`가 캡처 롤에
+  `GRANT CREATE ON DATABASE`를 부여한다. `slot.name`·`publication.name`은
+  `dz_<topic.prefix>`로 소스별로 겹치지 않게 한다.
   `topic.prefix`가 소스 식별자이므로 슬롯·publication 충돌은 사실상 없다.
   Debezium은 `snapshot.mode` 값(initial/no_data/initial_only/never)을 Oracle 커넥터와 공유하는
   이름으로 지원해 backend가 두 템플릿에 같은 값("initial"/"no_data")을 넘길 수 있다.
@@ -65,6 +68,19 @@ https://debezium.io/documentation/reference/stable/connectors/postgresql.html
 - `iceberg.tables.route-field=_pos.topic` (**2026-09-05 변경, 종전 `source.table`**): 토픽 이름
   기준 라우팅으로 전환 — 동명 테이블이 다른 스키마에 있어도(=다른 토픽) 충돌하지 않는다.
   라우팅과 위치 컬럼 부착을 같은 SMT(`transforms.pos`)가 제공한다.
+- `use.reduction.buffer=true` (jdbc-sink·recovery-sink, **2026-09-07 PG 소스 스모크에서 실측
+  추가**): Debezium JDBC sink의 MERGE 기반 upsert(Oracle dialect)는 한 배치를 통째로 평가해
+  MERGE를 세우는데, 같은 PK의 INSERT+UPDATE(또는 INSERT+INSERT)가 한 배치에 같이 들어오면
+  중복 키로 `ORA-00001`이 난다. `use.reduction.buffer=true`는 배치 안에서 같은 키의 이벤트를
+  하나로 합쳐(reduce) MERGE에 넘기므로 이 충돌을 없앤다(Debezium JDBC sink 문서의 MERGE
+  dialect 주의사항). PK가 짧은 주기로 여러 번 바뀌는 트래픽(초기 스냅샷 직후 몰아치는 갱신
+  등)에서 특히 중요 — 토이 볼륨에서도 실제로 발생을 확인했다.
+- `iceberg.control.topic=control-iceberg-<prefix>` (iceberg-sink, **2026-09-07 PG 소스 스모크에서
+  실측 추가**, 기본값은 고정 이름 `control-iceberg`): 코디네이터-태스크 간 커밋 프로토콜이
+  쓰는 내부 토픽이다. 소스가 여러 개인데 이 토픽을 공유하면, 새로 배포되는 인스턴스의 태스크가
+  **다른 소스의 옛 control 메시지 백로그까지 처음부터 재생**하느라 첫 커밋 응답이 수 분
+  늦어진다(실측). `RegistrationService.deploySource`가 소스 topic.prefix로 이름을 나눠 배포한다
+  — control 토픽도 데이터 토픽과 같은 원칙(소스별 격리, 4절)을 따른다.
 
 ## 미결 (마일스톤 2·3에서 실배선으로 확정)
 

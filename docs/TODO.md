@@ -45,14 +45,19 @@
     - 기존 등록 테이블 해제·재등록 절차 (operations.md에 기록)
     - 확인: 소스 토픽 파티션 수(브로커 기본값) — 1이면 `_pos.partition`은 항상 0, 컬럼은 유지
   - [ ] **② 두 번째 소스·타깃: PostgreSQL** — 캡처 층 분기 증명 (2026-09-07 구체화·위임)
-    - **진행 상태 (2026-09-07)**: 코드 구현 완료(feature/pg-source 브랜치, 153건 단위·통합
-      테스트 통과, `cd ui && npx tsc -b && npm run build` 통과, rule-check.sh 통과). 남은 것:
-      메인 세션 병합 후 (1) backend 재기동으로 topic_prefix·등록 키 마이그레이션 적용,
-      (2) 기존 등록 테이블 4개 해제·재등록(커넥터 이름 전환, changelog는 보존·재사용 —
-      절차는 operations.md "커넥터 이름 전환 재등록"), (3) PostgreSQL 소스 준비
-      (`deploy/pg-source-setup.sh` 실행, `debezium-connector-postgres` 플러그인 설치 후 Connect
-      재시작 — 절차는 operations.md "PostgreSQL 소스 준비"), (4) PG 소스 실 배선 스모크
-      (PG→Oracle 타깃 + changelog `_pos`, SRC/TGT 정합 검증).
+    - **진행 상태 (2026-09-07)**: 코드 구현 완료(feature/pg-source 병합, main). 라이브 전환
+      완료 — backend 재기동·기존 등록 테이블 4개 해제·재등록·PostgreSQL 소스 준비까지
+      메인 세션이 수행. **PG 소스 실 배선 스모크 실행** — PG→Oracle 타깃 적재, changelog
+      `_pos`, 스키마 지문 감지(ADD COLUMN → 다음 주기 DETECTED, 초안 정확)까지 동작 확인.
+      스모크 중 드러난 결함 3건은 feature/pg-source-fix에서 수정: ① FINGERPRINT ddl_text에
+      요약+초안이 섞여 승인 시 ORA-00900(ddl_events id=39) — ddl_text는 실행문 전용,
+      요약은 note로 분리. ② PG 캡처 롤에 database CREATE 권한이 없으면 publication 자동
+      생성이 실패(`Unable to create filtered publication`) — 사전 점검·준비 스크립트에
+      GRANT 추가. ③ 설정 3건(use.reduction.buffer, iceberg.control 토픽 소스별,
+      offset.flush.interval.ms=10000)은 f703b7d로 이미 반영, 근거는 connectors/README.md·
+      docs/internals.md "PG 소스 실 배선 스모크 결과"에 기록. 남은 것: 메인 세션이
+      feature/pg-source-fix 병합 후 재감지(기존 잘못 저장된 ddl_events 행은 다음 지문
+      변경 시 정상 형식으로 갱신됨, 별도 마이그레이션 없음) + 정합 검증(SRC/TGT).
       결정 필요로 남은 것: RecoveryService.verify()의 체크섬(ORA_HASH)이 Oracle 전용이라
       PostgreSQL 소스의 SRC측 체크섬 검증은 아직 미지원(docs/internals.md 기록) — PG 소스
       복구 리허설에서 정합 검증을 어떻게 할지 결정 필요.

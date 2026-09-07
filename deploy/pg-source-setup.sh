@@ -53,6 +53,11 @@ if [ -z "$ROLE_EXISTS" ]; then
 else
   echo "[ok] $CAPTURE_ROLE 이미 존재"
 fi
+# publication.autocreate.mode=filtered가 publication을 만들려면 테이블 소유권과는 별개로
+# database CREATE 권한이 필요하다 — 없으면 source task가 "Unable to create filtered
+# publication ..."로 죽는다(2026-09-07 PG 소스 실 배선 스모크에서 실측, Debezium PostgreSQL
+# 커넥터 문서의 publication 자동 생성 권한 절 근거). 테이블 소유권만으로는 부족하다.
+run "GRANT CREATE ON DATABASE $ADMIN_DB TO $CAPTURE_ROLE;"
 
 echo "=== 3. 테스트 스키마 cdc_src + PK 테이블 2개 ==="
 run "CREATE SCHEMA IF NOT EXISTS cdc_src AUTHORIZATION $CAPTURE_ROLE;"
@@ -68,8 +73,9 @@ run "CREATE TABLE IF NOT EXISTS cdc_src.test_table_02 (
      );"
 run "ALTER TABLE cdc_src.test_table_01 OWNER TO $CAPTURE_ROLE;"
 run "ALTER TABLE cdc_src.test_table_02 OWNER TO $CAPTURE_ROLE;"
-# $CAPTURE_ROLE이 스키마·테이블 소유자라 publication.autocreate.mode=filtered(테이블을 publication에
-# 추가)에 필요한 권한을 스스로 갖는다 — 별도 GRANT 불필요 (connectors/README.md 근거 참고).
+# 테이블 소유권(publication에 테이블을 추가하는 데 필요) + 위 2단계의 database CREATE
+# 권한(publication 객체 자체를 만드는 데 필요) 둘 다 있어야 한다 — 하나만으로는 부족함을
+# 2026-09-07 스모크에서 실측 (connectors/README.md 근거 참고).
 
 echo
 echo "=== 완료 — 다음 값으로 DB 연결(SOURCE·POSTGRESQL)을 등록할 것 ==="
