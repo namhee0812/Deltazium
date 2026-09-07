@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,6 +14,7 @@ import io.deltazium.backend.registration.RegisteredTableRepository;
 import io.deltazium.backend.registry.DbConnection;
 import io.deltazium.backend.registry.DbConnectionService;
 import io.deltazium.backend.registry.DbType;
+import jakarta.annotation.PreDestroy;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -45,6 +47,10 @@ import org.springframework.stereotype.Component;
  * --------------------------------------------------
  * 26. 09. 07.       | 최남희  | 최초 생성 — 다중 소스·다중 타깃 ②
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 리뷰 반영: @PreDestroy로 backend 종료 시 consumer를 닫도록
+ * |                          | 추가(누락돼 있었음) — 종료 플래그를 poll() 시작에서 확인해
+ * |                          | 스케줄러 스레드와의 경합 없이 즉시 반환하게 함
+ * --------------------------------------------------
  */
 @Component
 @ConditionalOnProperty(name = "deltazium.fingerprint-poller.enabled", havingValue = "true", matchIfMissing = true)
@@ -60,8 +66,11 @@ public class SchemaFingerprintPoller {
     private final DdlEventRepository ddlEvents;
     private final String bootstrap;
     /** 상주 consumer — @Scheduled(fixedDelay)는 이전 실행이 끝나야 다음이 시작되므로
-     * 항상 스케줄러의 같은 스레드 하나에서만 이 필드를 건드린다. */
+     * 항상 스케줄러의 같은 스레드 하나에서만 이 필드를 건드린다(@PreDestroy 예외). */
     private KafkaConsumer<String, String> consumer;
+    /** backend 종료 신호 — poll()이 시작 시 이 값을 보고 즉시 반환해 @PreDestroy의 close()와
+     * 스케줄러 스레드가 consumer를 동시에 건드리지 않게 한다. */
+    private final AtomicBoolean shuttingDown = new AtomicBoolean(false);
 
     public SchemaFingerprintPoller(RegisteredTableRepository registrations,
                                    DbConnectionService connections,
@@ -76,6 +85,9 @@ public class SchemaFingerprintPoller {
     @Scheduled(fixedDelayString = "${deltazium.fingerprint-poller.interval-ms:60000}",
             initialDelayString = "${deltazium.fingerprint-poller.interval-ms:60000}")
     public void poll() {
+        if (shuttingDown.get()) {
+            return;
+        }
         List<RegisteredTable> targets = fingerprintTargets();
         if (targets.isEmpty()) {
             return;
@@ -229,5 +241,20 @@ public class SchemaFingerprintPoller {
             consumer = new KafkaConsumer<>(props);
         }
         return consumer;
+    }
+
+    /**
+     * backend 종료 시 consumer를 닫는다. shuttingDown을 먼저 세워 poll()이 시작 시점에
+     * 즉시 반환하게 한 뒤 close하므로, fixedDelay 스케줄러(다음 실행은 이전 실행이 끝나야
+     * 시작됨)와 이 스레드가 consumer를 동시에 쓰지 않는다.
+     */
+    @PreDestroy
+    void shutdown() {
+        shuttingDown.set(true);
+        KafkaConsumer<String, String> c = consumer;
+        if (c != null) {
+            c.close(Duration.ofSeconds(5));
+            consumer = null;
+        }
     }
 }
