@@ -215,6 +215,14 @@ Snowflake·Databricks에는 Debezium JDBC sink의 dialect가 없고, 행 단위 
 4. **재개**: 정리 후 [재개] → 토픽 복원 → 밀린 것부터 캐치업. **정지 중에도 changelog는 Kafka·Iceberg에 계속 축적**되므로 데이터 유실 없음. retention 초과분은 6.3절 재발행 경로로 캐치업.
 
 - Iceberg sink 쪽은 스키마 진화를 자동 수용 (ADD COLUMN 등) — 정지 대상은 jdbc-sink만.
+- **감지 입구는 소스 타입별 (2026-09-07 결정).** schema change topic을 발행하는 소스(Oracle·MySQL·
+  SQL Server)는 위 1번 그대로. 발행하지 않는 소스(PostgreSQL)는 **스키마 지문 비교**: backend의
+  상주 consumer 하나가 group 가입 없이(`assign`) 감시 대상 파티션을 전부 붙들고 1분마다 파티션별
+  마지막 메시지 1건만 읽어(seek end-1) value.schema의 after struct 지문을 테이블별 저장값과
+  비교한다. 다른 consumer group의 offset과 무관하고 트래픽을 다시 읽지 않는다. 얻는 것은 DDL
+  문장이 아니라 결과 스키마의 차이(추가·삭제·타입 변경)이므로 타깃 DDL은 초안으로 생성해 승인을
+  받는다. no-kafka 모드(10절)에서는 이벤트 핸들러가 Schema 객체 동일성으로 같은 지문을 인라인
+  비교하며, 지문 저장·diff·승인·타깃 적용은 두 모드가 공유한다.
 - UI 표현은 ui-reference v3의 DDL 타임라인 패턴 (ADD=자동 승인 후보, DROP/TRUNCATE=승인 대기).
 
 ## 8. 테이블 등록과 사전 점검

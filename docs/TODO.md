@@ -44,9 +44,40 @@
     - rule-check.sh: recovery-job·backend 수렴/복구 코드의 `source.scn` 등 참조 차단 (코드 전환과 동시에)
     - 기존 등록 테이블 해제·재등록 절차 (operations.md에 기록)
     - 확인: 소스 토픽 파티션 수(브로커 기본값) — 1이면 `_pos.partition`은 항상 0, 컬럼은 유지
-  - [ ] **② 두 번째 소스·타깃: PostgreSQL** — 캡처 층 분기 증명
-    - 등록 키 (source_id, schema, table) 전환, connections의 db_type별 사전 점검 목록(8절)
-    - Debezium PostgreSQL source 템플릿, JDBC sink PostgreSQL 타깃
+  - [ ] **② 두 번째 소스·타깃: PostgreSQL** — 캡처 층 분기 증명 (2026-09-07 구체화·위임)
+    - **소스 식별자를 커넥션 속성으로**: `db_connections.topic_prefix`(소스 커넥션 필수, 유일,
+      `[a-z][a-z0-9_]*`, 기본값 = 이름 슬러그). 전역 `deltazium.topic-prefix` 제거. 기존 소스
+      커넥션(orcl225)은 마이그레이션으로 `dz` 유지
+    - **커넥터 이름**: `dz-source-<prefix>` · `dz-iceberg-<prefix>` · `dz-jdbc-sink-<prefix>-<suffix>` ·
+      `dz-recovery-sink-<prefix>-<suffix>`. changelog namespace `changelog_<prefix>`(①과 동일).
+      KafkaMetricsService consumer group 이름 동기화. **기존 `dz-source`·`dz-jdbc-sink-*`는 이름이
+      바뀌므로 해제·재등록으로 전환**(Debezium offset이 커넥터 이름에 묶임 — 절차 operations.md)
+    - **등록 키** `registered_tables` UNIQUE → (source_connection_id, schema_name, table_name).
+      기동 시 멱등 마이그레이션
+    - **DbType 분기**: POSTGRESQL 활성화, `jdbcUrl()` 타입별, 식별자 정규화(Oracle 대문자 / PG 그대로).
+      딕셔너리·사전 점검을 `SourceDictionary` 인터페이스 + Oracle·PostgreSQL 구현으로.
+      PG 점검: `wal_level=logical`, 캡처 롤 REPLICATION(또는 superuser)·테이블 SELECT, PK 존재,
+      REPLICA IDENTITY FULL(미설정 시 ALTER 문 보여주고 승인 후 적용 — supp.log와 같은 UX),
+      publication 자동 생성 권한. 항목·SQL은 Debezium PostgreSQL 문서로 확정
+    - **source 템플릿 분리**: `source-oracle.json.tmpl`(현행 이동), `source-postgresql.json.tmpl`
+      (PostgresConnector, pgoutput, slot/publication 이름 `dz_<prefix>`, autocreate filtered,
+      snapshot.mode·notification·transaction metadata는 Oracle과 동일 구성). 설정 키는 공식 문서 확인
+    - **DDL 감지 — 스키마 지문 비교** (PG는 schema change topic이 없음, 7절 개정): backend 상주
+      consumer 1개(`assign`, group 없음)가 1분마다 감시 대상 파티션의 마지막 메시지 1건(tombstone이면
+      최대 20건 거슬러)을 읽어 value.schema의 after struct 지문(필드명·타입·optional·파라미터 정렬
+      해시)을 `registered_tables.schema_fingerprint`와 비교. 첫 지문은 이벤트 없이 저장. 변경 시
+      ddl_events에 origin=FINGERPRINT로 기록(diff: 추가/삭제/타입변경 컬럼) + 타깃 DDL 초안
+      (ADD/DROP COLUMN은 Debezium 타입→타깃 타입 소형 매핑으로 생성, 타입 변경은 초안 없이 확인만).
+      감지 대상은 schema change topic이 없는 소스 타입만(DbType 플래그). `DdlEventParser`의
+      `source.scn` 의존 제거(위치는 nullable 참고 문자열)
+    - **deploy**: install-runtime.sh에 debezium-connector-postgres 3.6.0.Final 추가.
+      PG 소스 준비 스크립트 `deploy/pg-source-setup.sh`(wal_level, 캡처 롤, 테스트 스키마
+      `cdc_src` + PK 테이블) — 작성만, 실행은 사용자 확인 후
+    - **UI**: 연결 카드 타입 선택(PG 필드 라벨), 위저드 사전 점검을 backend 점검 목록 기반 범용
+      렌더링, 토폴로지 소스 노드 소스별, 테이블 그리드에 소스 표기
+    - **docs**: architecture.md 4절 이름 규칙·7절 감지 방식·8절 PG 점검 확정치, operations.md
+      재등록(커넥터 이름 전환) 절차, internals.md 지문 감지 구현 판단
+    - 검증: 단위·통합 테스트, PG 소스 실 배선 스모크(사용자 실행 후) — PG→Oracle 타깃 + changelog `_pos`
   - [ ] **③ 저장소 프로파일: MinIO / R2** — R2 프로파일 = Cloudflare R2(10GB·egress 무료) +
         R2 Data Catalog(Iceberg REST)
     - `deploy/env.sh`·backend 설정을 프로파일화, R2 프로파일에서 MinIO·iceberg_catalog DB 미기동
