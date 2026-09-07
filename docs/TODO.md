@@ -45,6 +45,17 @@
     - 기존 등록 테이블 해제·재등록 절차 (operations.md에 기록)
     - 확인: 소스 토픽 파티션 수(브로커 기본값) — 1이면 `_pos.partition`은 항상 0, 컬럼은 유지
   - [ ] **② 두 번째 소스·타깃: PostgreSQL** — 캡처 층 분기 증명 (2026-09-07 구체화·위임)
+    - **진행 상태 (2026-09-07)**: 코드 구현 완료(feature/pg-source 브랜치, 153건 단위·통합
+      테스트 통과, `cd ui && npx tsc -b && npm run build` 통과, rule-check.sh 통과). 남은 것:
+      메인 세션 병합 후 (1) backend 재기동으로 topic_prefix·등록 키 마이그레이션 적용,
+      (2) 기존 등록 테이블 4개 해제·재등록(커넥터 이름 전환, changelog는 보존·재사용 —
+      절차는 operations.md "커넥터 이름 전환 재등록"), (3) PostgreSQL 소스 준비
+      (`deploy/pg-source-setup.sh` 실행, `debezium-connector-postgres` 플러그인 설치 후 Connect
+      재시작 — 절차는 operations.md "PostgreSQL 소스 준비"), (4) PG 소스 실 배선 스모크
+      (PG→Oracle 타깃 + changelog `_pos`, SRC/TGT 정합 검증).
+      결정 필요로 남은 것: RecoveryService.verify()의 체크섬(ORA_HASH)이 Oracle 전용이라
+      PostgreSQL 소스의 SRC측 체크섬 검증은 아직 미지원(docs/internals.md 기록) — PG 소스
+      복구 리허설에서 정합 검증을 어떻게 할지 결정 필요.
     - **소스 식별자를 커넥션 속성으로**: `db_connections.topic_prefix`(소스 커넥션 필수, 유일,
       `[a-z][a-z0-9_]*`, 기본값 = 이름 슬러그). 전역 `deltazium.topic-prefix` 제거. 기존 소스
       커넥션(orcl225)은 마이그레이션으로 `dz` 유지

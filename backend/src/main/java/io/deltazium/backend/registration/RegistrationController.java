@@ -31,6 +31,10 @@ import org.springframework.web.bind.annotation.RestController;
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 사전 점검을 PrecheckItem 목록 응답으로
+ * |                          | 전환, supplemental-logging → capture-setup/preview·apply로
+ * |                          | 교체, GET 목록을 RegisteredTableView(소스 topicPrefix 포함)로
+ * --------------------------------------------------
  */
 @RestController
 @RequestMapping("/api/registrations")

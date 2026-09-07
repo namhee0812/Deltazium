@@ -28,6 +28,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 26. 09. 05.       | 최남희  | 다중 소스·다중 타깃 ①: namespace를 topic-prefix 계산값
  * |                          | (changelog_probe)으로, _pos 필드 검증 추가 (5.1절)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: topicPrefix를 생성자 인자에서 메서드
+ * |                          | 인자로 전환(ChangelogTableService 시그니처 변경 반영)
+ * --------------------------------------------------
  */
 @EnabledIfSystemProperty(named = "integration", matches = "true")
 class ChangelogTableServiceIT {

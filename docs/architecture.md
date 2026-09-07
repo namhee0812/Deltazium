@@ -73,12 +73,19 @@ MySQL   ─Debezium MySQL─┘        (topic.prefix = 소스 식별자)   (5절
 ## 4. 토픽·커넥터 구성
 
 - Debezium 기본대로 **테이블당 토픽 1개** (`<prefix>.<schema>.<table>`). 이 구성이 DDL 워크플로의 "테이블 단위 정지"(7절)를 가능하게 하는 전제다.
-- 커넥터 템플릿 4종 (`connectors/`, backend가 렌더링·배포). 인스턴스 수는 소스·타깃에 비례한다 (2026-09-05):
-  1. **source**: 소스당 1개. `table.include.list`가 등록 테이블 목록. 트랜잭션 메타데이터·schema change topic 활성화. `topic.prefix`가 소스 식별자.
+- 커넥터 템플릿 5종 (`connectors/`, backend가 렌더링·배포). 인스턴스 수는 소스·타깃에 비례한다 (2026-09-05, 소스 템플릿 분리는 2026-09-07):
+  1. **source-oracle / source-postgresql**: 소스 커넥션당 1개. `table.include.list`가 그 소스의 등록 테이블 목록. `topic.prefix`(= `db_connections.topic_prefix`, SOURCE 전용 필수·유일 값, `^[a-z][a-z0-9_]*$`)가 소스 식별자. 소스 종류별로 설정 키가 달라 템플릿을 분리한다(연결의 `dbType`으로 backend가 선택) — Oracle은 트랜잭션 메타데이터·schema change topic·schema history 활성화, PostgreSQL은 pgoutput·`publication.autocreate.mode=filtered`(schema history 없음, 7절 감지 방식이 다른 이유). 근거는 `connectors/README.md`.
   2. **jdbc-sink**: OLTP 타깃 테이블당 1개. PK 기반 upsert, delete 처리 활성화.
-  3. **iceberg-sink**: **소스당 1개** (단일 인스턴스에서 전환 — 소스 하나의 실패 레코드·설정 변경이 다른 소스의 changelog를 멈추지 않게). 그 소스의 토픽만 구독, append 모드, 토픽 이름 기준 라우팅으로 소스 테이블당 changelog 테이블 1개. **복구 토픽은 구독하지 않는다**(6.2).
+  3. **iceberg-sink**: **소스 커넥션당 1개** (단일 인스턴스에서 전환 — 소스 하나의 실패 레코드·설정 변경이 다른 소스의 changelog를 멈추지 않게). 그 소스의 토픽만 구독, append 모드, 토픽 이름 기준 라우팅으로 소스 테이블당 changelog 테이블 1개. **복구 토픽은 구독하지 않는다**(6.2).
   4. **recovery-sink**: jdbc-sink와 동일 설정에 구독 토픽만 복구 토픽. 평시 정지 상태, 복구 시에만 기동.
   - DW 타깃에는 커넥터가 없다 (6.5).
+- **커넥터·컨슈머 그룹 이름 규칙** (`ConnectorNames`, 단일 진원지, 2026-09-07): `dz-source-<prefix>` ·
+  `dz-iceberg-<prefix>` · `dz-jdbc-sink-<prefix>-<suffix>` · `dz-recovery-sink-<prefix>-<suffix>`
+  (`<suffix>` = `<schema>_<table>` 소문자). consumer group은 Connect 기본 규칙(`connect-<커넥터명>`)을
+  그대로 따른다. `<prefix>`가 반드시 들어가야 소스가 여러 개일 때 이름이 충돌하지 않는다 —
+  이 클래스 밖에서 문자열을 직접 조립하지 않는다(backend·UI 공통 규칙, UI는 backend가 내려주는
+  `sourceTopicPrefix`로 같은 규칙을 재구성). 기존 소스 커넥션(orcl225)은 이름이 `dz-source`→
+  `dz-source-dz` 등으로 바뀌므로 해제·재등록으로 전환한다(절차: docs/operations.md).
 - 초기 스냅샷: Debezium `initial` 그대로 (스냅샷 레코드 op='r'도 Iceberg에 쌓임 — 초기 상태+변경분이 한 테이블에 완결). 대형 테이블 incremental snapshot은 미결(10절).
 
 ## 5. Iceberg changelog 테이블 스펙 (고정 — 임의 변경 금지)
@@ -215,15 +222,22 @@ Snowflake·Databricks에는 Debezium JDBC sink의 dialect가 없고, 행 단위 
 4. **재개**: 정리 후 [재개] → 토픽 복원 → 밀린 것부터 캐치업. **정지 중에도 changelog는 Kafka·Iceberg에 계속 축적**되므로 데이터 유실 없음. retention 초과분은 6.3절 재발행 경로로 캐치업.
 
 - Iceberg sink 쪽은 스키마 진화를 자동 수용 (ADD COLUMN 등) — 정지 대상은 jdbc-sink만.
-- **감지 입구는 소스 타입별 (2026-09-07 결정).** schema change topic을 발행하는 소스(Oracle·MySQL·
-  SQL Server)는 위 1번 그대로. 발행하지 않는 소스(PostgreSQL)는 **스키마 지문 비교**: backend의
-  상주 consumer 하나가 group 가입 없이(`assign`) 감시 대상 파티션을 전부 붙들고 1분마다 파티션별
-  마지막 메시지 1건만 읽어(seek end-1) value.schema의 after struct 지문을 테이블별 저장값과
-  비교한다. 다른 consumer group의 offset과 무관하고 트래픽을 다시 읽지 않는다. 얻는 것은 DDL
-  문장이 아니라 결과 스키마의 차이(추가·삭제·타입 변경)이므로 타깃 DDL은 초안으로 생성해 승인을
-  받는다. no-kafka 모드(10절)에서는 이벤트 핸들러가 Schema 객체 동일성으로 같은 지문을 인라인
-  비교하며, 지문 저장·diff·승인·타깃 적용은 두 모드가 공유한다.
+- **감지 입구는 소스 타입별 (2026-09-07 결정, 구현 완료).** schema change topic을 발행하는 소스
+  (Oracle·MySQL·SQL Server, `DbType.hasSchemaChangeTopic()`)는 위 1번 그대로(`DdlEventPoller`,
+  origin=SCHEMA_TOPIC). 발행하지 않는 소스(PostgreSQL)는 **스키마 지문 비교**
+  (`SchemaFingerprintPoller`, origin=FINGERPRINT): backend의 상주 consumer 하나가 group 가입
+  없이(`assign`) 감시 대상 파티션을 전부 붙들고 1분마다 파티션별 마지막 메시지 1건만 읽어
+  (tombstone이면 최대 20건 거슬러) value.schema의 after struct 지문(필드명·타입·optional·
+  parameters 정렬 SHA-256, `registered_tables.schema_fingerprint`)을 테이블별 저장값과 비교한다.
+  다른 consumer group의 offset과 무관하고 트래픽을 다시 읽지 않는다. 얻는 것은 DDL 문장이 아니라
+  결과 스키마의 차이(추가·삭제·타입 변경)이므로 타깃 DDL은 ADD/DROP COLUMN만 초안으로 생성해
+  승인을 받는다(타입 변경은 초안 없이 정보성 기록만, `SchemaFingerprint.draftDdl`). 지문(해시)만
+  으로는 diff를 복원할 수 없어 직전 after struct 필드 목록도 `registered_tables.schema_fields_json`
+  에 함께 보관한다(2026-09-07 구현 판단 — docs/internals.md). no-kafka 모드(10절)에서는 이벤트
+  핸들러가 Schema 객체 동일성으로 같은 지문을 인라인 비교하며, 지문 저장·diff·승인·타깃 적용은
+  두 모드가 공유한다.
 - UI 표현은 ui-reference v3의 DDL 타임라인 패턴 (ADD=자동 승인 후보, DROP/TRUNCATE=승인 대기).
+  origin 배지로 SCHEMA_TOPIC/FINGERPRINT를 구분 표시한다.
 
 ## 8. 테이블 등록과 사전 점검
 
@@ -248,8 +262,24 @@ Snowflake·Databricks에는 Debezium JDBC sink의 dialect가 없고, 행 단위 
   `CREATE TABLE`(+quota, LOG_MINING_FLUSH 테이블용).
 - 통과 시: source의 `table.include.list` 갱신 + sink 토픽 목록 갱신을 Connect REST로 배포.
 
-**PostgreSQL 소스 (예정 — 항목은 구현 시 Debezium 문서로 확정):** `wal_level=logical`, 테이블
-REPLICA IDENTITY(before 이미지 필요 시 FULL), replication·publication 권한, 슬롯 존재.
+**PostgreSQL 소스 (2026-09-07 확정 — Debezium PostgreSQL 커넥터 3.6/stable 문서 기준,
+`PostgresDictionaryService`):**
+
+- `wal_level=logical` — DB 레벨 점검(`pg_settings`), 미충족이면 등록 거부(필수). 값을 바꾸려면
+  PostgreSQL 재시작이 필요해 배포 전 사전 준비 단계(`deploy/pg-source-setup.sh`)에서 다룬다 —
+  등록 API가 대신 적용해주지 않는다(재시작이 다른 소스·메타데이터 DB에도 영향을 주는 작업이라
+  승인 UX로 감당할 수 없음, Oracle supp.log와의 차이).
+- 캡처 계정 권한: `REPLICATION`(또는 superuser) + `LOGIN`(접속 성공이 곧 증명) — 계정 스스로
+  부여 불가라 Oracle과 같은 방식으로 DBA GRANT 안내(`ALTER ROLE <user> REPLICATION;`).
+- 테이블 레벨: PK 존재(공통 규칙) + `REPLICA IDENTITY FULL` — 미설정 시 DDL을 보여주고
+  **"적용하겠습니까?" 승인 후에만 적용**(Oracle supplemental logging과 동일 UX, `SourceTableInfo.
+  captureReady`로 소스 중립 표현).
+- publication 자동 생성(`publication.autocreate.mode=filtered`)에 필요한 테이블 소유권 등은
+  등록 API가 점검하지 않는다(알려진 갭) — 권한 부족 시 커넥터 배포 후 Connect task trace로
+  드러난다. `deploy/pg-source-setup.sh`가 캡처 롤을 테스트 스키마 소유자로 만들어 이 갭을
+  회피한다.
+- 통과 시: 그 소스의 `source-postgresql` 커넥터 `table.include.list` 갱신 + sink 토픽 목록
+  갱신을 Connect REST로 배포(4절 이름 규칙).
 
 **MySQL 소스 (예정):** `binlog_format=ROW`, `binlog_row_image=FULL`, REPLICATION SLAVE/CLIENT 권한, GTID 여부.
 

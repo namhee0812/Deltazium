@@ -187,6 +187,57 @@ route-field가 `source.table`에서 `_pos.topic`으로 전환). 이런 배포 �
 재등록 사이 구간은 캡처가 잠시 끊기지만, 재등록이 스냅샷부터 다시 시작하므로 그 구간의
 변경분은 스냅샷 시점 데이터에 포함돼 유실 없이 복원된다(평시 재스냅샷과 같은 원리).
 
+### 커넥터 이름 전환 재등록 (다중 소스·다중 타깃 ②, 2026-09-07)
+
+`db_connections.topic_prefix` 도입으로 커넥터 이름 규칙이 `dz-source` → `dz-source-<prefix>`,
+`dz-jdbc-sink-<suffix>` → `dz-jdbc-sink-<prefix>-<suffix>`로 바뀐다(architecture.md 4절).
+기존 소스 커넥션(orcl225, id=2)은 마이그레이션으로 `topic_prefix=dz`를 그대로 받으므로
+**토픽 이름·changelog namespace(`changelog_dz`)는 바뀌지 않는다** — ①의 `_pos` 도입 때와
+달리 이번엔 changelog 스키마·라우팅이 그대로다. 하지만 **Kafka Connect의 offset·consumer
+group은 커넥터 이름에 묶여 있어** 이름이 바뀌면 새 커넥터는 offset을 잃는다:
+
+- source(`dz-source`→`dz-source-dz`): offset 리셋 → 재기동 시 등록된 snapshot_mode(보통
+  INITIAL)로 **새 초기 스냅샷**을 다시 뜬다. 캡처 토픽(`dz.<schema>.<table>`)은 그대로라
+  스냅샷 레코드(op='r')가 changelog에 추가로 쌓인다(중복이지만 PK upsert 멱등이라 재생
+  결과에는 영향 없음, 6.2절) — 다만 대형 테이블이면 이 재스냅샷 자체가 부담일 수 있다.
+- jdbc-sink(`dz-jdbc-sink-<suffix>`→`dz-jdbc-sink-dz-<suffix>`): consumer group이 바뀌어
+  새 group은 토픽 처음부터(또는 워커 기본 `auto.offset.reset`) 다시 읽는다 — PK upsert라
+  중복 재적용은 안전하다.
+- iceberg-sink(`dz-iceberg-dz`, 사실은 이번에도 이름이 우연히 같다 — prefix가 원래 `dz`
+  였으므로): **이름이 바뀌지 않으므로 이 커넥터는 그대로 둬도 된다.**
+
+절차 (사용자 확인 후 메인 세션이 수행 — 라이브 커넥터 변경):
+1. backend를 재기동해 마이그레이션(topic_prefix 채움, 등록 키 전환)을 적용한다.
+   (`./deploy/dzadmin backend restart` — schema.sql은 기동 시 항상 재실행되며 멱등이다.)
+2. 현재 등록된 테이블 4개(NH_CDC_TEST_4/5, NH_MIX_TABLE_01/02)를 UI에서 해제한다 —
+   **changelog 보존(기본값)을 유지**, dropChangelog는 체크하지 않는다. 마지막 테이블
+   해제 시 `dz-source`·(있다면) 구버전 `dz-jdbc-sink-*`가 정리된다.
+3. 같은 테이블들을 다시 등록한다. 대형 테이블이면 재스냅샷 부담을 피하기 위해
+   snapshot.mode=NO_DATA로 등록하는 것을 검토할 것(그동안의 변경분은 이미 changelog에
+   있으므로 유실은 없다 — 단, NO_DATA는 등록 시점 이후 변경만 잡으므로 등록 공백 구간의
+   변경은 놓친다. 정확한 정합이 필요하면 INITIAL로 재스냅샷 후 SRC/TGT 정합 검증을 돌릴 것).
+4. 새 커넥터 이름(`dz-source-dz`, `dz-jdbc-sink-dz-<suffix>`)이 Connect에 배포됐는지,
+   changelog(`changelog_dz.*`)에 새 레코드가 계속 쌓이는지 확인한다.
+
+### PostgreSQL 소스 준비 (다중 소스·다중 타깃 ②)
+
+두 번째 소스(PostgreSQL)를 실 배선하기 전 준비 절차 — `deploy/pg-source-setup.sh`(작성만,
+미실행)를 참고해 사용자가 직접 실행:
+
+1. `wal_level=logical` 확인·적용(스크립트가 `ALTER SYSTEM`까지는 하지만 **PostgreSQL 재시작은
+   별도로 사용자가 판단해 수행** — 메타데이터·Iceberg 카탈로그를 같은 인스턴스가 서비스
+   중이므로 재시작 시점을 신중히 잡을 것).
+2. 캡처 롤 `dz_capture`(REPLICATION + LOGIN), 테스트 스키마 `cdc_src` + PK 테이블 2개를
+   스크립트로 준비한다.
+3. `debezium-connector-postgres` 플러그인 설치(`deploy/install-runtime.sh` 갱신됨) 후
+   **Kafka Connect 재시작 필요**(새 플러그인은 워커 재시작 후에만 인식됨).
+4. UI DB 연결 등록 화면에서 PostgreSQL SOURCE 연결을 추가 — host/port/database=위 값,
+   topicPrefix는 원하는 소스 식별자(예: `pgsrc`)로 지정.
+5. CDC 등록 위저드에서 `cdc_src.*` 패턴으로 조회 → 사전 점검(wal_level·REPLICATION 권한·
+   REPLICA IDENTITY FULL) 통과 후 등록.
+6. changelog(`changelog_pgsrc.*`)에 `_pos`가 채워지는지, PG→Oracle 타깃 적재가 정상인지
+   확인 — 이게 통과해야 "두 번째 소스가 실제로 동작한다"고 말할 수 있다(TODO ② 검증 기준).
+
 ### DDL 변경
 소스 DDL은 자동으로 수집돼 DDL 이력 탭에 쌓인다.
 - 승인 → 타깃 이름(스키마·테이블)이 다르면 치환해서 타깃에 실행 후 재개

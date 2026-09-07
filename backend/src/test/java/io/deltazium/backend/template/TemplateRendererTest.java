@@ -27,6 +27,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * --------------------------------------------------
  * 26. 07. 24.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: source 템플릿 분리(source-oracle·
+ * |                          | source-postgresql) 반영해 리포 템플릿 5종 렌더링 검증
+ * --------------------------------------------------
  */
 class TemplateRendererTest {
 

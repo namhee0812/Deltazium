@@ -27,6 +27,9 @@ import org.springframework.stereotype.Service;
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: jdbc-sink 커넥터명에 소스 topicPrefix
+ * |                          | 반영(ConnectorNames.jdbcSink) — DbConnectionService 의존 추가
+ * --------------------------------------------------
  */
 @Service
 public class DdlEventService {

@@ -63,6 +63,10 @@ import static org.mockito.Mockito.when;
  * |                          | 소스별 인스턴스·토픽 이름 정확 일치 기준으로 갱신, 동명 테이블
  * |                          | 거부 테스트를 성공 케이스로 전환 (5.1절 제약 해소)
  * --------------------------------------------------
+ * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 커넥터 이름에 소스 topicPrefix 반영,
+ * |                          | source 템플릿을 source-oracle로, 다중 소스 격리(소스별 독립
+ * |                          | 배포·해제) 테스트 추가
+ * --------------------------------------------------
  */
 @EnableConfigurationProperties(IcebergProperties.class)
 class RegistrationServiceTest {
