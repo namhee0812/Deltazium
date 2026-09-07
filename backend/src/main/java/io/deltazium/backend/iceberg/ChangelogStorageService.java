@@ -4,6 +4,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.iceberg.HasTableOperations;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
@@ -26,6 +27,9 @@ import org.springframework.stereotype.Service;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 09. 07.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ * 26. 09. 08.       | 최남희  | 데이터 경로 접근 확인을 table.location()(접두라 S3 exists 항상
+ * |                          | false)에서 현재 metadata.json 오브젝트 존재 확인으로 교정
  * --------------------------------------------------
  */
 @Service
@@ -97,7 +101,10 @@ public class ChangelogStorageService {
             List<TableIdentifier> ids = cat.listTables(ns);
             if (!ids.isEmpty()) {
                 Table table = cat.loadTable(ids.get(0));
-                boolean exists = table.io().newInputFile(table.location()).exists();
+                // table.location()은 오브젝트가 아니라 접두(prefix)라 S3에서 exists()가 항상 false다.
+                // 실제로 존재하는 오브젝트인 현재 metadata.json으로 접근을 확인한다.
+                String metadataFile = ((HasTableOperations) table).operations().current().metadataFileLocation();
+                boolean exists = table.io().newInputFile(metadataFile).exists();
                 return exists ? " · 데이터 경로 접근 확인(" + table.name() + ")"
                         : " · 데이터 경로 접근 실패(" + table.name() + ")";
             }

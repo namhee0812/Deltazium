@@ -128,9 +128,12 @@
     - **진행 상태(2026-09-07, feature/storage-profile)**: 코드 구현·단위 테스트·문서 반영
       완료(속성 단일 진원지, sink extraConfig 주입, recovery-job `catalog.<key>` 인자,
       deploy 분기 5종, UI changelog 저장소 카드+API). iceberg-open-api REST 픽스처는
-      의존성 비용 과다로 보류(사유 internals.md) — 대체로 단위 테스트만 존재. **미검증**:
-      minio 프로파일 라이브 무변경 재기동 확인, R2 실 계정 스모크(버킷·카탈로그 활성화·
-      토큰 준비 필요) — 메인 세션 확인 필요.
+      의존성 비용 과다로 보류(사유 internals.md) — 대체로 단위 테스트만 존재.
+      **2026-09-08 병합(59a9b30)·라이브 확인**: minio 프로파일 무변경 재기동 — 커넥터 10개 RUNNING,
+      changelog 조회(CatalogUtil 경로) 정상, 저장소 카드 API 비밀값 없음, 연결 테스트 OK(데이터
+      경로 확인을 metadata.json 존재로 교정). **남은 것**: R2 실 계정 스모크 — 사용자가
+      버킷·카탈로그 활성화·토큰을 `deploy/env.local.sh`에 준비하면 operations.md "저장소
+      프로파일 전환 절차"로 진행(등록 해제→전환 기동→재등록→커밋 시간 실측).
   - [ ] **④ DW 계열: Snowflake · Databricks** (설계 문서 v2:
         https://claude.ai/code/artifact/581e7a1e-b7ca-4e0b-b6d6-556d8464c3cc — 단, 증분 기준
         "SCN 워터마크"와 복구 "재발행 → 중복 append"는 2026-09-05 논의로 `_pos` 워터마크·되감기로 대체됨)
