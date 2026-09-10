@@ -45,16 +45,16 @@
 </head>
 <body>
 
-<h1>Deltazium — Oracle CDC 파이프라인 구축·운영 기록</h1>
+<h1>Deltazium — CDC 파이프라인 구축·운영 기록</h1>
 <p class="subtitle">Debezium + Kafka 기반 변경 데이터 캡처, changelog 보관·복구(replay) 아키텍처, 웹 제어 콘솔</p>
 <p class="meta">최남희 · 단독 설계·개발 · 2026.07 – 08 · 상용 CDC 솔루션 개발 경험 기반의 검증 프로젝트</p>
 <hr class="headrule">
 
 <h2>1. 개요</h2>
 <p>
-Oracle의 변경(CDC)을 LogMiner로 캡처해 같은 스트림을 두 갈래로 병행 적재한다.
-타깃 Oracle에는 현재 상태를(실적재), Iceberg/S3에는 모든 변경 이력을(append-only changelog) 쌓는다.
-changelog는 미러링이 아니라 특정 SCN 시점부터의 복구(replay)를 위한 원본이며, 이 복구 아키텍처가
+소스 DB의 변경(CDC)을 Debezium으로 캡처해 같은 스트림을 두 갈래로 병행 적재한다(검증 시점의 소스·타깃은 Oracle,
+캡처는 LogMiner). 타깃 DB에는 현재 상태를(실적재), Iceberg/S3에는 모든 변경 이력을(append-only changelog) 쌓는다.
+changelog는 미러링이 아니라 특정 시점부터의 복구(replay)를 위한 원본이며, 이 복구 아키텍처가
 실제 배선에서 성립하는지 증명하는 것이 프로젝트의 목적이었다. 그 위에 테이블 등록·사전 점검·DDL 승인·복구를
 담당하는 제어면(Spring Boot + React)을 얹었고, 운영 중 실제 발생한 장애들을 계기로 장애 감지 → 원인 표시 →
 단계형 복구, 그리고 로그·상태를 스스로 조회해 원인을 짚는 AI 진단 어시스턴트까지 운영 사이클을 확장했다.
