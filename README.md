@@ -119,13 +119,14 @@ Oracle은 별도 준비 필요 — ARCHIVELOG 모드, 캡처 계정 권한은 �
 2. **두 번째 소스·타깃: PostgreSQL** — 캡처 층 분기(커넥터 템플릿·사전 점검·스냅샷)와
    등록 키 (source_id, schema, table) 전환을 가장 싸게 증명. Iceberg sink는 소스별 1개
    (장애 격리·설정 변경 범위), 카탈로그는 하나.
-3. **changelog 스토리지·카탈로그 이전** — 내부 MinIO + JDBC 카탈로그는 SaaS DW가 읽을 수
-   없다. 클라우드 오브젝트 스토리지(Cloudflare R2 후보) + Iceberg REST 카탈로그로 전환.
-   sink·recovery-job·backend는 catalog 설정 변경만.
-4. **DW 타깃: Snowflake · Databricks** — 별도 랜딩 경로 없이 changelog를 랜딩으로 겸용.
-   DW가 외부 Iceberg 카탈로그로 changelog를 읽어 1분 주기 집합 MERGE(PK별 최신 1건)로
-   수렴. 복구는 재발행이 아니라 MERGE 워터마크 되감기. 검증 순서: 벤더 지원 현황 확인
-   → DW 읽기 배선 → MERGE 멱등 증명 → 복구 리허설 DW판 → backend 등록 분기·lag 화면.
+3. **저장소 프로파일** — changelog 저장소를 번들 MinIO(개발·PoC) / 외부 S3 호환 엔드포인트
+   (프로덕션, 고객 운영 스토리지)로 고르는 설치 프로파일. 카탈로그 접속 속성을 한 곳에서 만들어
+   sink·recovery-job·backend가 공유. (완료 — 2026-09-08)
+4. **DW 타깃: Snowflake · Databricks — 푸시 모델** — 자체 DW apply 워커가 Kafka에서 마이크로
+   배치를 모아 DW 내부 스테이징에 bulk 적재하고 MERGE(PK별 최신 1건)까지 실행. DW는 우리 쪽에
+   접근하지 않고 고객은 DW 자격만 준다(상용 CDC 도구의 공통 관행). 복구는 OLTP와 같은 재발행.
+   데이터 경로 "기성 커넥터만" 규칙의 유일한 예외. 순서: Snowflake 어댑터(내부 스테이지) →
+   MERGE 멱등 증명 → 복구 리허설 DW판 → Databricks 어댑터(UC Volume) → 등록 분기·lag 통합.
 
 범위 밖으로 둔 것: 여러 소스를 타깃 테이블 하나로 합치는 fan-in(소스 간 PK 충돌 규칙 필요),
 DW 스키마 전파(DDL 워크플로 확장 — 별도 설계). 그 외 백로그(incremental snapshot, 컬럼 리네임

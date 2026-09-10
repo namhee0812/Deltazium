@@ -20,6 +20,14 @@ Debezium + Kafka로 Oracle CDC를 캡처하고, 같은 토픽에서 두 갈래�
 > 세우고(5절), 소스별 분기는 캡처 층(8절)에, 타깃별 분기는 수렴 층(6절)에 가둔다.** 이 개정으로
 > 5·6절이 바뀌었다. 현재 구현은 Oracle 1 → Oracle 1이며, 아래 서술 중 "현행"은 그 상태를 뜻한다.
 
+> **2026-09-10 개정 — DW 계열은 푸시 모델.** DW가 우리 changelog를 직접 읽는 당김 모델(2026-09-05
+> 6.5 초안)을 폐기하고, **우리 DW apply 워커가 DW 내부 스테이징에 배치를 밀어 넣고 MERGE까지
+> 실행하는 stage-and-merge**로 확정했다. 근거: 상용 CDC 도구(Qlik Replicate·GoldenGate·Striim)의
+> 공통 관행이고, DW 컴퓨트가 고객 온프레미스 스토리지로 들어오는 구성은 운영·보안상 허용되지
+> 않는다. 이로써 changelog는 복구 원본이라는 본래 역할로 돌아가고(DW 랜딩 겸용 삭제), 저장소는
+> 인터넷에 있을 필요가 없어졌으며(R2 전제 삭제), DW 복구도 OLTP와 같은 재발행으로 통일된다.
+> 데이터 경로 "기성 커넥터만" 규칙에 DW apply 워커 예외가 생긴다(6.5).
+
 ## 2. 아키텍처
 
 ```
@@ -39,7 +47,7 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 | 컴포넌트 | 역할 | 보존 |
 |---|---|---|
 | Kafka | 짧은 버퍼, fan-out | retention 짧게 (수 시간~1일). 이력 보관은 Kafka 책임이 아님 |
-| Iceberg changelog | 장기 이력, 복구 원본, **DW 계열의 랜딩 겸용**(6.5절) | 파티션 drop으로 보존 정책 관리. "며칠 전까지 복구 가능한가"를 결정하는 명시적 파라미터. DW MERGE는 최신 워터마크 이후만 읽으므로 보존 정책은 복구 요건이 계속 지배 |
+| Iceberg changelog | 장기 이력, 복구 원본 (모든 타깃 계열 공통) | 파티션 drop으로 보존 정책 관리. "며칠 전까지 복구 가능한가"를 결정하는 명시적 파라미터. 읽는 주체는 우리 코드(recovery-job·backend)뿐 — 외부 엔진이 읽지 않는다(2026-09-10) |
 | 타깃 DB | 현재 상태 | — |
 
 ### 2.2 다중 소스·다중 타깃 구조 (2026-09-05)
@@ -48,8 +56,8 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 [캡처 층 — 소스별 분기]        [changelog 층 — 중립 계약]         [수렴 층 — 타깃 계열별 분기]
 Oracle  ─Debezium Oracle─┐                                    ┌─ JDBC sink(행 upsert) ─▶ OLTP 타깃 (Oracle·PG…)
 PG      ─Debezium PG────┼─▶ Kafka ─▶ Iceberg sink(소스별) ─▶ changelog ─┤
-MySQL   ─Debezium MySQL─┘        (topic.prefix = 소스 식별자)   (5절)   └─ 타깃 컴퓨트의 집합 MERGE ─▶ DW 타깃 (Snowflake·Databricks)
-복구: OLTP = recovery-job 재발행(6.1) · DW = 워터마크 되감기(6.5). 복구 원본은 changelog 하나.
+MySQL   ─Debezium MySQL─┘        (topic.prefix = 소스 식별자)   (5절)   └─ DW apply 워커(배치 stage-and-merge) ─▶ DW 타깃 (Snowflake·Databricks)
+복구: 두 계열 모두 recovery-job 재발행(6.1) → 각 계열의 동일 apply 경로. 복구 원본은 changelog 하나.
 ```
 
 - 소스 식별자 = Debezium `topic.prefix`(커넥터당 고유). 토픽 이름과 envelope `source.name`에 박히므로 별도 태깅 없이 소스를 구분한다.
@@ -63,15 +71,16 @@ MySQL   ─Debezium MySQL─┘        (topic.prefix = 소스 식별자)   (5절
 |---|---|---|
 | 소스 캡처 | Debezium source connector — 소스 종류별 (현행 Oracle/LogMiner, 예정 PostgreSQL·MySQL) | Oracle은 처리량·LOB 제약이 최대 리스크 (9절) |
 | OLTP 적재 | Debezium JDBC sink | envelope을 이해하고 upsert/delete 변환. PK upsert 멱등 |
-| DW 수렴 | 타깃 컴퓨트의 집합 MERGE (Snowflake Task / Databricks Job) | 커넥터 0개. changelog를 외부 Iceberg 카탈로그로 읽는다 (6.5절) |
+| DW 적재 | **자체 DW apply 워커** (Kafka 소비 → 배치 → DW 스테이징 bulk 적재 → MERGE) | 기성 커넥터 규칙의 유일한 예외(6.5절). Snowflake는 내부 스테이지(PUT+COPY), Databricks는 UC Volume 또는 고객 클라우드 버킷 스테이징 |
 | changelog 적재 | Apache Iceberg Kafka Connect sink — **소스별 인스턴스 1개** | append 모드 (upsert 미사용 — 지원도 안 됨). 플러그인 설치는 1회 |
-| 스토리지 | **설치 프로파일**: MinIO(온프레미스, 현행) / Cloudflare R2(SaaS DW 타깃 시) | SaaS DW의 컴퓨트가 사내 MinIO에 닿을 수 없어 R2가 DW 계열의 전제. 프로파일 전환은 changelog 이전이 따르는 설치 작업 |
-| Iceberg 카탈로그 | 프로파일에 따름: JDBC(PostgreSQL, MinIO 프로파일) / Iceberg REST(R2 Data Catalog, R2 프로파일) | **설치당 카탈로그 1개, 소스별 namespace**(5.1). 카탈로그를 소스별로 쪼개지 않는다 |
+| 스토리지 | **설치 프로파일**: 번들 MinIO(개발·PoC·단일 노드, 현행) / 외부 S3 호환 엔드포인트(프로덕션 — 고객이 이미 운영하는 S3·GCS·ADLS·StorageGRID·Ceph 등) | 계약은 S3 API. 제품이 스토리지를 운영하지 않는다(BYO). 인터넷 노출 요건 없음(2026-09-10). 프로파일 전환은 changelog 이전이 따르는 설치 작업 |
+| Iceberg 카탈로그 | JDBC(메타데이터 PostgreSQL 재활용) 기본. REST는 외부 엔진이 changelog를 읽어야 할 때만 선택 | **설치당 카탈로그 1개, 소스별 namespace**(5.1). 카탈로그를 소스별로 쪼개지 않는다 |
 | converter | JSON (schemas.enabled=true) | Avro/Schema Registry는 미결 (10절) — 컴포넌트 수 절약 |
 | 인프라 | docker-compose | Kafka는 KRaft 단일 노드, Connect는 단일 워커 |
 
 **프로파일 설정 위치 (2026-09-07, TODO ③)**: `deploy/env.sh`의 `DZ_STORAGE_PROFILE`(기본
-minio) + `deploy/env.local.sh`(git-ignore, R2 전환 시 오버라이드) → backend
+minio) + `deploy/env.local.sh`(git-ignore, 외부 S3 엔드포인트·자격 오버라이드 — 코드상 프로파일명은
+`r2`이나 의미는 "외부 S3 호환 저장소"다) → backend
 `deltazium.iceberg.*`(`IcebergProperties.catalogProperties()`가 단일 진원지) → iceberg-sink
 배포·recovery-job 기동 인자가 그 맵을 그대로 공유한다. 절차: docs/operations.md
 "저장소 프로파일 전환 절차".
@@ -163,15 +172,15 @@ op/before/after/키/`_pos`/ts_ms만 읽는다. `source` 내부 필드 참조는 
 
 Iceberg는 테이블 포맷일 뿐 엔진이 아니다. 읽기는 **iceberg-data(Java API) 단일 프로세스** — 카탈로그 조회→파티션 프루닝→parquet 디코딩까지 라이브러리가 처리한다. **Spark/Trino 도입 금지** (분산 SQL 분석 필요가 생기면 그때 별도 논의). 검증·탐색용으로 DuckDB/PyIceberg 사용은 무방.
 
-- SaaS DW가 외부 카탈로그로 changelog를 읽는 것(6.5)은 이 금지의 대상이 아니다 — 타깃 컴퓨트는 타깃의 일부다.
+- DW apply 워커(6.5)는 Iceberg를 읽지 않는다 — Kafka(라이브·복구 토픽)만 소비한다. changelog를 읽는 코드는 recovery-job·backend 둘로 유지.
 - 엔진이 필요해지는 경우는 셋뿐이며 전부 현재 범위 밖: small file compaction(Java API에 엔진 없는 rewrite가 없음), 온프레미스 lakehouse 타깃(Iceberg 최종 테이블을 우리 인프라에서 MERGE — Trino가 후보), 그때 재논의.
 
 ## 6. 복구 (replay) 설계
 
-### 6.1 방식: 복구 원본은 changelog 하나, 되돌리는 방식은 타깃 계열별 하나 (2026-09-05 개정)
+### 6.1 방식: 복구 원본은 changelog 하나, 되돌리는 방식은 재발행 하나 (2026-09-10 개정)
 
-- **OLTP 계열 — 재발행.** recovery-job은 **Iceberg scan → envelope 재조립 → 복구 토픽 발행**까지만 한다. apply는 recovery-sink(= 동일 JDBC sink 설정)가 담당.
-- **DW 계열 — 워터마크 되감기.** 랜딩이 곧 changelog라 재발행할 것이 없다. MERGE 워터마크를 과거로 되돌리고 다시 돌리면 그것이 복구다(6.5). 재발행하면 복구 토픽의 offset이 원본과 비교 불가라 `_pos`의 의미가 깨지므로 **DW 계열에 재발행을 쓰지 않는다.**
+- **재발행.** recovery-job은 **Iceberg scan → envelope 재조립 → 복구 토픽 발행**까지만 한다. apply는 각 계열의 라이브 경로가 그대로 담당한다 — OLTP는 recovery-sink(= 동일 JDBC sink 설정), DW는 동일 DW apply 워커가 복구 토픽을 추가 구독(6.5).
+- (2026-09-05 초안의 "DW = 워터마크 되감기"는 changelog를 DW 랜딩으로 겸용하던 당김 모델의 산물이라 푸시 모델 확정과 함께 폐기.)
 - 원칙: **계열 안에서 라이브와 복구는 같은 경로.** 복구 결과가 live 적재와 미묘하게 달라지는 사고를 원천 차단한다. (종전 "apply 시맨틱 단일 경로"의 일반화)
 - recovery-job의 타깃 직접 apply(A안)는 만들지 않는다. 단, 스키마 불변식(5.1)이 유지되는 한 나중에 추가 가능하도록 닫아두지 않는다 (Kafka 자체 장애까지 커버해야 할 때의 카드).
 
@@ -193,32 +202,42 @@ retention을 넘긴 과거 구간은 Kafka에 없다 — 그 구간의 유일한
 
 시나리오(OLTP): ① 타깃 테이블 훼손(행 삭제/절단) → ② UI에서 시각 지정 복구 트리거 → ③ recovery-job 재발행 → ④ recovery-sink apply → ⑤ SRC/TGT 정합 검증 스크립트(행 수 + 체크섬). 이 리허설이 통과해야 "복구 기능이 있다"고 말할 수 있다.
 
-시나리오(DW, 6.5 구현 후): ① 최종 테이블 훼손 → ② 워터마크를 시각 기준 `_pos`로 되감기 → ③ MERGE 재실행 → ④ 정합 검증. 추가로 **MERGE 멱등 증명**: 같은 이벤트를 두 번 append해도 최종 테이블은 1행.
+시나리오(DW, 6.5 구현 후): ① 최종 테이블 훼손 → ② UI에서 시각 지정 복구 트리거 → ③ recovery-job 재발행 → ④ DW apply 워커가 복구 토픽을 배치 stage-and-merge → ⑤ 정합 검증. 추가로 **MERGE 멱등 증명**: 같은 이벤트를 두 번 밀어 넣어도 최종 테이블은 1행.
 
-### 6.5 DW 계열 수렴 (2026-09-05 방향 — 세부는 docs/TODO.md)
+### 6.5 DW 계열 적재 — 푸시 모델 stage-and-merge (2026-09-10 확정, 세부는 docs/TODO.md ④)
 
 Snowflake·Databricks에는 Debezium JDBC sink의 dialect가 없고, 행 단위 upsert가 구조적으로
-비싸다(파일 재작성 단위 과금). 별도 랜딩 경로를 만들지 않고 **changelog를 랜딩으로 겸용**한다.
+비싸다(파일 재작성 단위 과금). 상용 CDC 도구의 공통 관행대로 **우리 DW apply 워커가 마이크로
+배치를 DW 내부 스테이징에 bulk 적재하고 MERGE까지 실행**한다. DW는 우리 쪽 어디에도 접근하지
+않고, 고객은 DW 자격만 준다. 연결은 전부 우리 서버에서 DW로 나가는 방향이다.
 
 | | OLTP 계열 | DW 계열 |
 |---|---|---|
-| 수렴 실행 주체 | JDBC sink (행 단위 upsert) | 타깃 컴퓨트의 집합 MERGE (Snowflake Task / Databricks Job) |
-| 멱등 책임 | sink의 PK upsert | MERGE 문 — PK별 최신 1건 선별(`_pos` 내림차순 ROW_NUMBER) 후 병합, op='d'는 DELETE |
-| 증분 기준 | Kafka offset | **파티션별 `_pos.offset` 워터마크** (ts_ms 파티션 프루닝 병행) |
-| 타깃 반영 지연 | 초 단위 | Iceberg 커밋 주기(60s) + MERGE 주기 **1분** + 카탈로그 동기화 → end-to-end 2분대 |
+| apply 실행 주체 | JDBC sink (행 단위 upsert) | **DW apply 워커** (자체 코드) — DW 타깃 커넥션당 1 프로세스 |
+| 입력 | 소스 토픽 | 소스 토픽 (+ 복구 시 복구 토픽) |
+| 적재 단위 | 행 | 마이크로 배치 (기본 1분 또는 N MB, 먼저 도달하는 쪽) |
+| 스테이징 | 없음 | Snowflake: 내부 스테이지 PUT + COPY INTO / Databricks: UC Volume(Files API) 또는 고객 클라우드 버킷 + COPY INTO. DW별 어댑터 |
+| 멱등 책임 | sink의 PK upsert | MERGE 문 — 스테이징에서 PK별 최신 1건 선별(`_pos` 내림차순 ROW_NUMBER) 후 병합, op='d'는 DELETE. 재시도·중복 도착 안전 |
+| 증분·진행 기준 | Kafka offset | Kafka offset — MERGE 성공 후에만 커밋(at-least-once) |
+| 타깃 반영 지연 | 초 단위 | 배치 주기 + bulk 적재 + MERGE → **1~2분** |
 | PK 필수 | 유지 | 유지 (MERGE ON 키) |
-| 복구 | 재발행 → 동일 sink | 워터마크 되감기 → MERGE 재실행 |
-| 커넥터 | jdbc-sink | 없음 |
+| 복구 | 재발행 → 동일 sink | 재발행 → 동일 워커 (6.1) |
+| MERGE 실행 여부 | 해당 없음 | 타깃 옵션: **MERGE까지**(기본) / **랜딩만**(고객이 DLT APPLY CHANGES 등으로 직접 수렴) |
 
-- 전제: 저장소 프로파일이 R2(3절). DW가 외부 Iceberg 카탈로그(REST)로 changelog namespace를 읽는다.
-- backend는 DW 자격(웨어하우스·토큰)만 받고, changelog 접속 정보는 설치 설정에서 꺼내 catalog
-  integration 생성 SQL에 채운다. DW에 주는 카탈로그 토큰은 읽기 전용으로 분리 발급.
-- DW lag = "마지막 MERGE 워터마크 `_pos` vs changelog 최신 `_pos`"로 정의해 기존 lag 화면에 통합.
+- **절대 규칙의 예외.** 데이터 경로에 자체 코드가 들어가는 유일한 곳이다. 이유: Snowflake는
+  기성 Kafka 커넥터(Snowpipe Streaming)로 스테이징까지 대체할 수 있으나 Databricks는 기성 Kafka
+  Connect sink가 없고(Confluent의 것은 S3 스테이징을 요구), 두 DW를 같은 방식으로 다루려면 워커가
+  필요하다. 워커의 경계: Kafka 소비 → 스테이징 적재 → MERGE → offset 커밋. **Iceberg를 읽지 않고,
+  소스 전용 필드(`source.*`)를 읽지 않는다**(5.1 불변식 2, rule-check 대상).
+- **워커는 무상태.** 진행 상태는 Kafka consumer group offset, 배치 중간 상태는 DW 스테이징 테이블.
+  프로세스가 죽으면 마지막 커밋 offset부터 다시 밀어 넣고 MERGE 멱등이 중복을 흡수한다.
+- 등록 시 backend가 DW에 최종 테이블·스테이징 테이블을 생성하고(DDL 초안은 사용자 승인), 워커를
+  기동한다. DW lag = "워커가 커밋한 offset vs 토픽 end offset"으로 기존 lag 화면에 그대로 통합.
+- changelog·저장소 프로파일과 무관하다. 저장소는 인터넷에 있을 필요가 없다.
 - 범위 밖: DW 스키마 전파(7절 워크플로 확장 — 별도 설계), 초 단위 신선도(테이블 단위로
-  Snowpipe Streaming 등 스트리밍 ingest 하이브리드 — 1분 합의가 유지되는 한 도입하지 않음).
-- 미확인(구현 전 공식 문서 확인): R2 Data Catalog 상태·한도, Snowflake catalog integration의
-  외부 REST 지원 범위·인증, Databricks(serverless 포함)의 Iceberg REST federation, Iceberg sink의
-  REST 카탈로그 인증 키·Kafka 메타데이터 SMT 설정 키.
+  Snowpipe Streaming 하이브리드 — 1~2분 합의가 유지되는 한 도입하지 않음), fan-in(10절).
+- 미확인(구현 전 공식 문서 확인): Snowflake JDBC PUT/COPY 사용법·내부 스테이지 권한, Databricks
+  Files API(UC Volume) 업로드 한도·COPY INTO 문법·SQL warehouse 자격, 무료/트라이얼 계정 제약.
 
 ## 7. DDL 승인 워크플로 (확정)
 
@@ -292,9 +311,10 @@ Snowflake·Databricks에는 Debezium JDBC sink의 dialect가 없고, 행 단위 
 **타깃 점검:**
 
 - OLTP: 접속·타깃 스키마 존재 (현행).
-- DW: **저장소 프로파일이 R2인지** — MinIO 프로파일이면 "changelog 저장소가 외부 접근 불가"로
-  거부(PK 거부와 같은 방식). 통과 시 DW 접속 + catalog integration이 changelog namespace를
-  실제로 조회할 수 있는지까지 확인. R2 접속 정보는 여기서 받지 않는다(설치 설정, 6.5).
+- DW (2026-09-10): DW 접속·대상 스키마 존재 + 스테이징 경로 권한 — Snowflake는 내부 스테이지
+  생성·PUT 권한과 웨어하우스 사용 권한, Databricks는 UC Volume 쓰기(또는 고객 버킷 접근)와
+  SQL warehouse 실행 권한. 저장소 프로파일과는 무관(6.5). 통과 시 최종·스테이징 테이블 DDL
+  초안을 보여주고 승인 후 생성.
 
 ## 9. 리스크와 검증 순서
 
@@ -312,3 +332,8 @@ Snowflake·Databricks에는 Debezium JDBC sink의 dialect가 없고, 행 단위 
 - Avro/Schema Registry 도입 (envelope 스키마 진화 관리에 유리, 토이 단계는 JSON으로 충분)
 - 모니터링·알람·DLQ 정책 — 운영 제약은 나중에
 - Kafka 경량화 옵션 (Redpanda, standalone Connect) — 온프레미스 포장 시
+- **배포 형태 (2026-09-10 방향)**: docker-compose(개발·PoC, 번들 MinIO·PostgreSQL·KRaft) → Helm
+  차트(프로덕션). 프로덕션에서 제품은 무상태 컨테이너(제어면 API·워커·UI)만 배포하고, 상태 저장
+  의존(오브젝트 스토리지·메타데이터 DB·Kafka)은 고객이 운영하는 것을 접속 정보(Secret)로 받는다
+  — 운영 조직의 표준 요구(BYO). 번들 MinIO는 프로덕션 차트에서 기본 off. 이 방향이 성립하려면
+  제어면의 API·워커 분리(무상태 경계)가 선행돼야 한다.

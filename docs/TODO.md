@@ -119,7 +119,8 @@
     - **UI**: 연결 화면에 읽기 전용 "changelog 저장소" 카드 — `GET /api/system/changelog-storage`
       (profile·catalogType·catalogUri 호스트·warehouse/버킷·externallyReachable=profile==r2, 비밀값 없음)
       + `POST .../test`(namespace 목록 조회 + 데이터 파일 경로 접근). DW 타깃 사전 점검(8절)이 같은
-      externallyReachable을 쓴다(④에서 연결)
+      externallyReachable을 쓴다(④에서 연결) — **2026-09-10: 푸시 모델 확정으로 이 연결은 불필요.
+      externallyReachable은 카드 표시용 정보로만 남긴다**
     - **검증**: 단위 테스트(프로파일별 속성 맵), minio 프로파일 통합 테스트 회귀, REST 프로파일은
       `org.apache.iceberg:iceberg-open-api` 테스트 픽스처(RESTCatalogServer, test scope)로 통합 테스트
       시도(불가 시 사유 기록), recovery-job 왕복 테스트. **R2 실 스모크는 사용자 계정 준비 후**:
@@ -131,18 +132,35 @@
       의존성 비용 과다로 보류(사유 internals.md) — 대체로 단위 테스트만 존재.
       **2026-09-08 병합(59a9b30)·라이브 확인**: minio 프로파일 무변경 재기동 — 커넥터 10개 RUNNING,
       changelog 조회(CatalogUtil 경로) 정상, 저장소 카드 API 비밀값 없음, 연결 테스트 OK(데이터
-      경로 확인을 metadata.json 존재로 교정). **남은 것**: R2 실 계정 스모크 — 사용자가
-      버킷·카탈로그 활성화·토큰을 `deploy/env.local.sh`에 준비하면 operations.md "저장소
-      프로파일 전환 절차"로 진행(등록 해제→전환 기동→재등록→커밋 시간 실측).
-  - [ ] **④ DW 계열: Snowflake · Databricks** (설계 문서 v2:
-        https://claude.ai/code/artifact/581e7a1e-b7ca-4e0b-b6d6-556d8464c3cc — 단, 증분 기준
-        "SCN 워터마크"와 복구 "재발행 → 중복 append"는 2026-09-05 논의로 `_pos` 워터마크·되감기로 대체됨)
-    - 사전 확인(미확인): R2 Data Catalog 상태·한도, Snowflake catalog integration 외부 REST 지원·인증,
-      Databricks(serverless 포함) Iceberg REST federation, 외부 Iceberg 테이블 증분 읽기(stream) 지원
-    - 남은 결정: MERGE 오브젝트 배포 주체(backend 렌더링·배포 vs SQL 제공 후 수동), DW용 읽기 전용
-      카탈로그 토큰 분리, "1분"의 정의(MERGE 주기 vs end-to-end)
-    - 순서: DW 읽기 배선 → MERGE 멱등 증명 → 복구 리허설 DW판(6.4) → backend 등록 분기(DW 자격만)·lag 통합
-    - 범위 밖: fan-in, DW 스키마 전파, 초 단위 스트리밍 ingest (10절·6.5)
+      경로 확인을 metadata.json 존재로 교정). **③ 완료.**
+    - **2026-09-10 재정의**: DW 푸시 모델 확정으로 "R2 = SaaS DW 전제"는 소멸. 프로파일의 의미는
+      "번들 MinIO(개발·PoC) / 외부 S3 호환 엔드포인트(프로덕션, 고객 운영 스토리지 BYO)"다. 코드상
+      `r2` 프로파일은 외부 S3의 한 사례로 남긴다. R2 실 스모크는 **선택**(외부 S3 경로·REST 카탈로그
+      검증용) — 계정 준비가 되면 하고, 안 해도 ④ 진행에 지장 없음. 프로파일명을 `external`로 일반화
+      하는 리네임은 Helm 패키징 때 함께.
+  - [ ] **④ DW 계열: Snowflake · Databricks — 푸시 모델 stage-and-merge** (2026-09-10 확정,
+        architecture.md 6.5 개정. 설계 문서 v2의 당김 모델은 폐기)
+    - **결정 근거**: 상용 CDC(Qlik Replicate·GoldenGate·Striim) 공통 관행 = 도구가 마이크로 배치를 DW
+      스테이징에 밀어 넣고 MERGE. DW 컴퓨트가 고객 온프레미스 스토리지로 들어오는 구성은 운영·보안상
+      불가. 고객은 DW 자격만 제공.
+    - **DW apply 워커**(자체 코드, 절대 규칙 예외 — CLAUDE.md 갱신): DW 타깃 커넥션당 1 프로세스
+      (recovery-job처럼 플레인 Java, backend가 기동·감시). Kafka 소비(소스 토픽 + 복구 토픽) → 배치
+      (1분 또는 N MB) → DW 어댑터로 스테이징 bulk 적재 → MERGE(PK별 최신 1건 `_pos` 순, op='d'
+      DELETE) → offset 커밋. Iceberg·`source.*` 미접근(rule-check 대상). 무상태.
+    - **DW 어댑터 인터페이스**: `stage(batch) → merge(stagingTable, targetTable, keys) → cleanup`.
+      Snowflake: 내부 스테이지 PUT(JDBC 드라이버) + COPY INTO 스테이징 + MERGE. Databricks: UC
+      Volume Files API 업로드 + COPY INTO + MERGE (고객 클라우드 버킷 스테이징은 후속 옵션).
+    - **타깃 옵션**: MERGE까지(기본) / 랜딩만(스테이징 테이블에 append, 고객이 DLT APPLY CHANGES 등으로
+      수렴 — Databricks 생태계 관행).
+    - **등록 분기**: DW 타깃 사전 점검(8절: 접속·스키마·스테이징 권한·warehouse 권한) → 최종·스테이징
+      테이블 DDL 초안 승인 → 생성 → 워커 기동. lag = 워커 커밋 offset vs 토픽 end offset(기존 화면 통합).
+    - **복구**: OLTP와 동일 재발행(6.1) — 워커가 복구 토픽을 추가 구독. 리허설(6.4 DW 시나리오) + MERGE
+      멱등 증명(같은 배치 2회 → 1행).
+    - **순서**: Snowflake 어댑터(트라이얼 계정) → 멱등 증명 → 복구 리허설 → Databricks 어댑터(무료
+      에디션, UC Volume) → 등록 분기·lag → docs. 사전 확인: Snowflake JDBC PUT/COPY 권한, Databricks
+      Files API 한도·COPY INTO, 무료 계정 제약.
+    - 범위 밖: fan-in, DW 스키마 전파, 초 단위 스트리밍 ingest(Snowpipe Streaming 하이브리드), 고객
+      클라우드 버킷 스테이징(Databricks 후속)
 - [ ] 테이블별 incremental snapshot (Kafka signal) — 기동 중 테이블 추가 시 초기적재,
       테이블 단위 reload(Qlik per-table reload에 해당). architecture.md 10절 미결
 - [ ] 컬럼 리네임의 적재 반영 방침 결정 — 스톡 sink 한계로 현재 저장만
@@ -152,5 +170,9 @@
 
 ## 운영
 
-- [ ] docker-compose 패키징 (베어메탈 안정화 후)
+- [ ] docker-compose 패키징 (베어메탈 안정화 후) — 개발·PoC용, 번들 MinIO·PostgreSQL·KRaft 포함
+- [ ] **Kubernetes(Helm) 배포** (2026-09-10 방향, architecture.md 10절) — compose 다음 단계.
+      제품은 무상태 컨테이너(제어면 API·워커·UI)만, 오브젝트 스토리지·메타데이터 DB·Kafka는 고객
+      운영 것을 Secret으로 받는 BYO. 번들 MinIO는 프로덕션 차트 기본 off. 선행: 제어면 API·워커
+      분리(무상태 경계), 저장소 프로파일명 `external` 일반화
 - [ ] UI 프로덕션 서빙 (vite build 산출물을 backend 정적 리소스 또는 nginx로)

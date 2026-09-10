@@ -253,8 +253,9 @@ Debezium 커넥터가 배포될 때 일어난다. 그래서 순서는:
 
 changelog 저장소는 **설치당 하나**(architecture.md 2.2·3절) — 테이블별로 나뉘지 않는다.
 프로파일을 바꾸면 카탈로그가 통째로 바뀌므로 기존 changelog와 새 changelog가 같은 카탈로그에
-섞이지 않는다(자동 이전 없음). SaaS DW 타깃(TODO ④)을 쓰려면 R2가 전제다 — 사내 MinIO에
-외부 컴퓨트가 닿지 못하기 때문.
+섞이지 않는다(자동 이전 없음). 프로파일의 의미는 "번들 MinIO(개발·PoC) / 외부 S3 호환 저장소
+(프로덕션, 고객 운영)"이며, R2는 외부 S3의 한 사례다. DW 타깃(TODO ④)은 푸시 모델이라 저장소
+위치와 무관하다(2026-09-10 — 종전 "SaaS DW는 R2 전제" 서술은 폐기).
 
 **준비 (R2로 전환하는 경우)**: `deploy/env.local.sh.example`의 안내대로 R2 버킷 생성 →
 R2 Data Catalog 활성화(카탈로그 URI·warehouse 표시값 확인) → API 토큰 발급(R2+Data Catalog,
