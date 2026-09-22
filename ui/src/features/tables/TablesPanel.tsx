@@ -45,6 +45,12 @@
  * |                          | 조립(dz-jdbc-sink-<prefix>-<suffix>), 캡처 장애 배너가 등록된
  * |                          | 모든 소스 커넥터를 확인하도록 확장(하드코딩 dz-source 제거)
  * --------------------------------------------------
+ * 26. 09. 22.       | 최남희  | "테이블" 컬럼을 소스([커넥션명] schema.table)·타깃([커넥션명]
+ * |                          | schema.table) 두 컬럼으로 분리 — 소스·타깃이 여러 개가 되면서 행만
+ * |                          | 봐서는 어느 DB 사이인지 알 수 없던 문제. 검색도 커넥션명·타깃명 포함.
+ * |                          | 지표 매칭 키를 schema.table → 토픽으로 교체(소스가 다른 동명 테이블
+ * |                          | 이 지표를 뒤섞던 잠재 결함)
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -72,6 +78,7 @@ import { Input } from '@/components/ui/input'
 import { StatusPill } from '@/components/ui/status-pill'
 import type { StatusPillVariant } from '@/components/ui/status-pill'
 import { api } from '@/lib/api'
+import type { DbConnection } from '@/features/connections/types'
 import { causeLine, effectiveState, traceOf } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
 import { ResnapshotDialog, RUN_ACTIVE } from './ResnapshotDialog'
@@ -95,6 +102,10 @@ interface RegisteredTable {
   id: number
   schemaName: string
   tableName: string
+  sourceConnectionId: number
+  targetConnectionId: number
+  targetSchemaName: string | null
+  targetTableName: string | null
   /** 소스 커넥션의 topic.prefix — 커넥터 이름 조립(dz-jdbc-sink-<prefix>-<suffix>)에 필요 */
   sourceTopicPrefix: string | null
 }
@@ -122,6 +133,11 @@ interface Row {
   schemaName: string
   tableName: string
   sourceTopicPrefix: string | null
+  /** 소스·타깃 커넥션 이름 — /api/connections 조회 전이거나 삭제된 커넥션이면 null */
+  sourceName: string | null
+  targetName: string | null
+  targetSchema: string
+  targetTable: string
   metrics: TableMetrics | null
 }
 
@@ -155,6 +171,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   const [registered, setRegistered] = useState<RegisteredTable[] | null>(null)
   const [metrics, setMetrics] = useState<TableMetrics[] | null>(null)
   const [connectors, setConnectors] = useState<ConnectorStates>({})
+  const [connections, setConnections] = useState<DbConnection[]>([])
   const [changelog, setChangelog] = useState<ChangelogInfo[] | null>(null)
   const [tableEvents, setTableEvents] = useState<TableEvent[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -187,6 +204,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         setError(METRICS_ERROR_PREFIX + e.message)
       })
     api<ConnectorStates>('/api/connectors').then(setConnectors).catch(() => {})
+    api<DbConnection[]>('/api/connections').then(setConnections).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -206,15 +224,22 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
 
   const rows = useMemo<Row[] | null>(() => {
     if (registered === null) return null
-    const byKey = new Map((metrics ?? []).map((m) => [`${m.schemaName}.${m.tableName}`, m]))
+    // 지표는 토픽(<prefix>.<schema>.<table>)으로 맞춘다 — schema.table만 쓰면 소스가 다른
+    // 같은 이름의 테이블이 서로의 지표를 가져간다(다중 소스)
+    const byTopic = new Map((metrics ?? []).map((m) => [m.topic, m]))
+    const nameOf = new Map(connections.map((c) => [c.id, c.name]))
     return registered.map((r) => ({
       id: r.id,
       schemaName: r.schemaName,
       tableName: r.tableName,
       sourceTopicPrefix: r.sourceTopicPrefix,
-      metrics: byKey.get(`${r.schemaName}.${r.tableName}`) ?? null,
+      sourceName: nameOf.get(r.sourceConnectionId) ?? null,
+      targetName: nameOf.get(r.targetConnectionId) ?? null,
+      targetSchema: r.targetSchemaName || r.schemaName,
+      targetTable: r.targetTableName || r.tableName,
+      metrics: byTopic.get(`${r.sourceTopicPrefix}.${r.schemaName}.${r.tableName}`) ?? null,
     }))
-  }, [registered, metrics])
+  }, [registered, metrics, connections])
 
   // 캡처 상태 — 행별 배지는 각 테이블의 jdbc-sink만 보므로, 소스 커넥터(dz-source-<prefix>,
   // 소스별 1개)가 죽으면 여기 배너로 알린다 (sink 초록 + lag 0 = 정상처럼 보이는 착시 방지).
@@ -341,11 +366,27 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     }),
     columnHelper.accessor((m) => `${m.schemaName}.${m.tableName}`, {
       id: 'table',
-      header: '테이블',
+      header: '소스',
       cell: ({ row }) => (
         <span className="font-mono text-[12px]">
+          <span className="mr-1.5 rounded bg-muted px-1 py-px text-[10.5px] text-ink-2">
+            {row.original.sourceName ?? '—'}
+          </span>
           <span className="text-ink-3">{row.original.schemaName}.</span>
           <b className="text-foreground">{row.original.tableName}</b>
+        </span>
+      ),
+    }),
+    columnHelper.accessor((m) => `${m.targetSchema}.${m.targetTable}`, {
+      id: 'target',
+      header: '타깃',
+      cell: ({ row }) => (
+        <span className="font-mono text-[12px]">
+          <span className="mr-1.5 rounded bg-muted px-1 py-px text-[10.5px] text-ink-2">
+            {row.original.targetName ?? '—'}
+          </span>
+          <span className="text-ink-3">{row.original.targetSchema}.</span>
+          <span className="text-foreground">{row.original.targetTable}</span>
         </span>
       ),
     }),
@@ -417,8 +458,11 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     onGlobalFilterChange: setGlobalFilter,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
-    globalFilterFn: (row, _col, value: string) =>
-      `${row.original.schemaName}.${row.original.tableName}`.toLowerCase().includes(value.toLowerCase()),
+    globalFilterFn: (row, _col, value: string) => {
+      const r = row.original
+      return `${r.sourceName ?? ''} ${r.schemaName}.${r.tableName} ${r.targetName ?? ''} ${r.targetSchema}.${r.targetTable}`
+        .toLowerCase().includes(value.toLowerCase())
+    },
   })
 
   const counts = useMemo(() => {
@@ -521,7 +565,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
             <Input
               value={globalFilter}
               onChange={(e) => setGlobalFilter(e.target.value)}
-              placeholder="스키마.테이블 검색"
+              placeholder="커넥션·스키마.테이블 검색"
               className="w-[280px]"
             />
             {(['all', 'ok', 'warn', 'stop'] as Bucket[]).map((b) => (
