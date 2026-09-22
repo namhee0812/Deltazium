@@ -56,6 +56,7 @@ import io.deltazium.backend.assist.OverviewService;
  * 26. 08. 12.       | 최남희  | 최초 생성
  * 26. 08. 13.       | 최남희  | prompt caching 적용, 모델 설정화(deltazium.chat.model), 왕복별 usage 로깅
  * 26. 08. 20.       | 최남희  | 시스템 프롬프트에 복구 레인 지식 추가 — recovery-job을 외부 시스템으로 오판한 답변의 재발 방지
+ * 26. 09. 23.       | 최남희  | 401(UnauthorizedException)은 raw JSON 대신 키 갱신 조치 문구로 — 만료 키로 "Claude 호출 실패"만 떠 원인을 못 찾던 것
  * --------------------------------------------------
  */
 @Service
@@ -170,7 +171,12 @@ public class ChatService {
             }
         } catch (Exception e) {
             log.warn("chat 처리 실패", e);
-            emitEvent(emitter, "error", Map.of("message", "Claude 호출 실패: " + e.getMessage()));
+            // 401은 운영자가 바로 조치할 수 있는 원인이라 raw JSON 대신 조치 방법을 보여준다
+            String message = e instanceof com.anthropic.errors.UnauthorizedException
+                    ? "Claude API 키가 유효하지 않습니다 — ~/deltazium-runtime/conf/secrets.env의 "
+                      + "ANTHROPIC_API_KEY를 갱신하고 backend를 재기동하세요 (docs/operations.md)"
+                    : "Claude 호출 실패: " + e.getMessage();
+            emitEvent(emitter, "error", Map.of("message", message));
         } finally {
             emitEvent(emitter, "done", Map.of());
             emitter.complete();

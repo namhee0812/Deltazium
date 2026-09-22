@@ -46,6 +46,9 @@
  * |                          | (보완) 스크린샷 리뷰 반영 — 노드 sub에서 DB 타입을 빼고 TopoNode에
  * |                          | typeTag(라벨 옆 작은 태그)로 전달하도록 소스/타깃 노드 조립 수정
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | 최근 이벤트 카드의 [전체 →]가 테이블 모니터링으로 가던 오류 —
+ * |                          | 이벤트 탭으로 (onNavigate에 'events' 추가)
+ * --------------------------------------------------
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
@@ -184,7 +187,7 @@ export function TopologyPanel({
 }: {
   /** "보기/검토" 액션 · KPI 링크 클릭 · 토폴로지 노드 클릭 시 해당 탭으로 이동
    * (App이 소유한 탭 상태를 바꾼다) */
-  onNavigate?: (view: 'tables' | 'ddl' | 'connections') => void
+  onNavigate?: (view: 'tables' | 'ddl' | 'connections' | 'events') => void
 }) {
   const [connectors, setConnectors] = useState<ConnectorStates | null>(null)
   const [connections, setConnections] = useState<DbConnection[]>([])
@@ -774,7 +777,7 @@ export function TopologyPanel({
               <CardTitle>최근 이벤트</CardTitle>
               <button
                 className="ml-auto flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                onClick={() => onNavigate?.('tables')}
+                onClick={() => onNavigate?.('events')}
               >
                 전체 <ArrowRight className="size-3" />
               </button>

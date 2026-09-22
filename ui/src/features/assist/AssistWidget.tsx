@@ -24,10 +24,11 @@
  * |                          | App이 계속 소유(open/onOpen/onClose) — 닫힘 시 FAB를 이 컴포넌트가
  * |                          | 그리고, 상단 바 아이콘은 제거. 09-02의 "플로팅이 테이블/복구 drawer
  * |                          | 하단 액션 바를 가림"은 알고 감수 — 겹치면 위젯을 닫으면 된다.
+ * |                          | 헤더의 X를 최소화(−)로 — 닫아도 대화가 유지되므로 의미상 최소화다.
  * --------------------------------------------------
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Maximize2, MessageCircle, Minimize2, X } from 'lucide-react'
+import { Loader2, Maximize2, MessageCircle, Minimize2, Minus } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
@@ -200,8 +201,8 @@ export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
           >
             {expanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
           </button>
-          <button className="text-rail-ink-2 hover:text-rail-ink" onClick={onClose} title="닫기">
-            <X className="size-4.5" />
+          <button className="text-rail-ink-2 hover:text-rail-ink" onClick={onClose} title="최소화" aria-label="최소화">
+            <Minus className="size-4.5" />
           </button>
         </div>
       </div>
