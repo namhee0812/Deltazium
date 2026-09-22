@@ -39,6 +39,10 @@
  * |                          | 가리던 문제 해결). 본문 컬럼에 relative 추가 — drawer가 그 안에서
  * |                          | absolute right-0 top-0 bottom-0으로 겹친다.
  * --------------------------------------------------
+ * 26. 09. 22.       | 최남희  | DB 연결 탭 래퍼에 h-full overflow-y-auto — 카드가 화면을 넘으면
+ * |                          | 페이지 전체가 스크롤돼 좌측 rail까지 밀리던 문제(다른 탭은 패널이
+ * |                          | 자체 스크롤을 갖는데 이 탭만 래퍼가 없었다)
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import {
@@ -204,8 +208,10 @@ function App() {
           {view === 'events' && <EventsPanel />}
           {view === 'recovery' && <RecoveryPanel />}
           {view === 'connections' && (
-            <div className="mx-auto max-w-6xl p-6">
-              <ConnectionsPanel />
+            <div className="h-full overflow-y-auto">
+              <div className="mx-auto max-w-6xl p-6">
+                <ConnectionsPanel />
+              </div>
             </div>
           )}
         </main>
