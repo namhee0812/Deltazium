@@ -28,6 +28,8 @@
  * |                          | 버리고 SVG 위 별도 툴바 행으로 이동. 노드 폭 200→240, sub에서 DB
  * |                          | 타입을 빼 host:port/db만 남기고(그래도 넘치면 clipPath+title) 타입은
  * |                          | 라벨 줄 오른쪽 끝 작은 태그로 — sub가 여전히 잘린다는 지적 반영
+ * |                          | (보완2) 노드 안 sub·meta·타입 태그·레인 주석이 흐려 안 보인다는
+ * |                          | 지적 — 색을 chart-dim(ink-3)에서 ink-2로, 글자 크기 1px씩 올림
  * --------------------------------------------------
  */
 import { useId, useRef, useState } from 'react'
@@ -190,16 +192,16 @@ function Node({
         <text x={x + 30} y={y + 22} fontSize="12.5" fontWeight="600" fill="var(--foreground)">{n.label}</text>
       </g>
       {n.typeTag && (
-        <text x={x + NW - 14} y={y + 21} fontSize="8.5" fontWeight="600" textAnchor="end" fill="var(--chart-dim)">
+        <text x={x + NW - 14} y={y + 21} fontSize="9" fontWeight="600" textAnchor="end" fill="var(--ink-2)">
           {n.typeTag}
         </text>
       )}
       <g clipPath={`url(#${clipId}-sub)`}>
-        <text x={innerLeft} y={y + 40} fontSize="9.5" fontFamily="monospace" fill="var(--chart-dim)">{n.sub}</text>
+        <text x={innerLeft} y={y + 40} fontSize="10.5" fontFamily="monospace" fill="var(--ink-2)">{n.sub}</text>
       </g>
       {n.meta && (
         <g clipPath={`url(#${clipId}-meta)`}>
-          <text x={innerLeft} y={y + 54} fontSize="8.5" fontFamily="monospace" fill="var(--chart-dim)">{n.meta}</text>
+          <text x={innerLeft} y={y + 54} fontSize="9.5" fontFamily="monospace" fill="var(--ink-2)">{n.meta}</text>
         </g>
       )}
     </g>
@@ -371,10 +373,10 @@ export function TopologySvg({
 
           {/* 레인 주석 */}
           {layout.targets[0] && (
-            <text x={layout.targets[0].x + 2} y={layout.targets[0].y - 8} fontSize="9" fill="var(--chart-dim)">실 적재 (현재 상태)</text>
+            <text x={layout.targets[0].x + 2} y={layout.targets[0].y - 8} fontSize="9.5" fill="var(--ink-2)">실 적재 (현재 상태)</text>
           )}
-          <text x={layout.iceberg.x + 2} y={layout.iceberg.y - 8} fontSize="9" fill="var(--chart-dim)">changelog (복구 원본)</text>
-          <text x={layout.recovery.x + 2} y={layout.recovery.y - 8} fontSize="9" fill="var(--chart-dim)">복구 재발행 (평시 정지)</text>
+          <text x={layout.iceberg.x + 2} y={layout.iceberg.y - 8} fontSize="9.5" fill="var(--ink-2)">changelog (복구 원본)</text>
+          <text x={layout.recovery.x + 2} y={layout.recovery.y - 8} fontSize="9.5" fill="var(--ink-2)">복구 재발행 (평시 정지)</text>
         </g>
       </svg>
     </div>
