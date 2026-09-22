@@ -35,6 +35,9 @@
  * |                          | 상태로 요약 표시(소스별 노드를 개별로 그리는 전체 동적 토폴로지는
  * |                          | 범위 밖으로 남김, UI 최소주의 판단)
  * --------------------------------------------------
+ * 26. 09. 22.       | 최남희  | 커넥터 KPI 카드 클릭 시 커넥터별 상태 목록 popover 추가
+ * |                          | (비정상 먼저 정렬, 기존 /api/connectors 폴링 재사용)
+ * --------------------------------------------------
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
@@ -45,6 +48,7 @@ import type { DbConnection } from '@/features/connections/types'
 import { CHART_SERIES_COLORS, LineChart } from '@/components/LineChart'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { GhostButton } from '@/components/ui/ghost-button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Segmented } from '@/components/ui/segmented'
 import { StatusPill } from '@/components/ui/status-pill'
 import type { StatusPillVariant } from '@/components/ui/status-pill'
@@ -269,6 +273,16 @@ export function TopologyPanel({
   // --- KPI 계산 (전부 이미 폴링 중인 API에서 파생 — 새 backend 엔드포인트 없음) ---
   const running = connectors ? Object.values(connectors).filter((c) => effectiveState(c) === 'RUNNING').length : 0
   const total = connectors ? Object.keys(connectors).length : 0
+  // 커넥터 카드 클릭 시 목록 — 비정상 상태 먼저, 이후 이름순
+  const connectorRows = connectors
+    ? Object.entries(connectors)
+        .map(([name, info]) => ({ name, state: effectiveState(info) }))
+        .sort((a, b) =>
+          (a.state === 'RUNNING' ? 1 : 0) - (b.state === 'RUNNING' ? 1 : 0) ||
+          a.name.localeCompare(b.name))
+    : []
+  const stateToPill = (s: string): StatusPillVariant =>
+    s === 'RUNNING' ? 'ok' : s === 'PAUSED' ? 'warn' : s === 'UNKNOWN' ? 'stop' : 'crit'
 
   // 버킷 값은 해상도 구간의 합 — ev/s로 환산해 표기. 마지막 버킷은 미완결이라 제외
   const bucketSec = { MIN: 60, HOUR: 3600, DAY: 86400 }[period.key]
@@ -320,21 +334,48 @@ export function TopologyPanel({
       <div className="flex flex-col gap-4 p-5">
         {/* KPI 4 */}
         <div className="grid grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="flex flex-col gap-1.5 py-3.5">
-              <div className="text-xs text-ink-2">커넥터</div>
-              <div className="text-2xl font-semibold leading-tight tracking-tight text-foreground">
-                {connectors === null ? '—' : running}
-                <small className="ml-1 text-[13px] font-medium text-ink-3">/ {total} running</small>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Card
+                role="button"
+                title="커넥터 목록 보기"
+                className="cursor-pointer text-left transition-shadow hover:shadow-[var(--shadow-card),inset_0_0_0_1px_var(--border)]"
+              >
+                <CardContent className="flex flex-col gap-1.5 py-3.5">
+                  <div className="text-xs text-ink-2">커넥터</div>
+                  <div className="text-2xl font-semibold leading-tight tracking-tight text-foreground">
+                    {connectors === null ? '—' : running}
+                    <small className="ml-1 text-[13px] font-medium text-ink-3">/ {total} running</small>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <StatusPill variant={STATUS_TO_PILL[topo.source.status]}>source</StatusPill>
+                    <StatusPill variant={STATUS_TO_PILL[topo.jdbcSink.status]}>jdbc</StatusPill>
+                    <StatusPill variant={STATUS_TO_PILL[topo.icebergSink.status]}>iceberg</StatusPill>
+                    <StatusPill variant={STATUS_TO_PILL[topo.recovery.status]}>recovery</StatusPill>
+                  </div>
+                </CardContent>
+              </Card>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-[28rem] p-2">
+              <div className="px-2 pb-1.5 pt-0.5 text-xs font-medium text-ink-2">
+                커넥터 {running}/{total} running
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                <StatusPill variant={STATUS_TO_PILL[topo.source.status]}>source</StatusPill>
-                <StatusPill variant={STATUS_TO_PILL[topo.jdbcSink.status]}>jdbc</StatusPill>
-                <StatusPill variant={STATUS_TO_PILL[topo.icebergSink.status]}>iceberg</StatusPill>
-                <StatusPill variant={STATUS_TO_PILL[topo.recovery.status]}>recovery</StatusPill>
-              </div>
-            </CardContent>
-          </Card>
+              {connectorRows.length === 0 ? (
+                <div className="px-2 py-1.5 text-xs text-ink-3">
+                  {connectors === null ? '엔진에 연결할 수 없습니다.' : '배포된 커넥터가 없습니다.'}
+                </div>
+              ) : (
+                <div className="flex max-h-72 flex-col gap-0.5 overflow-y-auto">
+                  {connectorRows.map((r) => (
+                    <div key={r.name} className="flex items-center justify-between gap-2 rounded px-2 py-1">
+                      <span className="truncate font-mono text-xs text-foreground" title={r.name}>{r.name}</span>
+                      <StatusPill variant={stateToPill(r.state)}>{r.state}</StatusPill>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
 
           <Card>
             <CardContent className="flex flex-col gap-1.5 py-3.5">
