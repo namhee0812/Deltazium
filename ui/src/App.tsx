@@ -43,6 +43,9 @@
  * |                          | 페이지 전체가 스크롤돼 좌측 rail까지 밀리던 문제(다른 탭은 패널이
  * |                          | 자체 스크롤을 갖는데 이 탭만 래퍼가 없었다)
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | AI 진단을 우측 drawer → 우하단 플로팅 위젯(AssistWidget)으로 복귀
+ * |                          | (사용자 요청). 상단 바 아이콘 제거, 열림 상태는 계속 App이 소유
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import {
@@ -50,7 +53,6 @@ import {
   Database,
   History,
   LayoutDashboard,
-  MessageCircle,
   Mountain,
   RotateCcw,
   Table2,
@@ -58,7 +60,7 @@ import {
 import { api } from '@/lib/api'
 import { effectiveState } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
-import { AssistDrawer } from '@/features/assist/AssistDrawer'
+import { AssistWidget } from '@/features/assist/AssistWidget'
 import { ConnectionsPanel } from '@/features/connections/ConnectionsPanel'
 import { DdlPanel } from '@/features/ddl/DdlPanel'
 import { EventsPanel } from '@/features/events/EventsPanel'
@@ -187,15 +189,6 @@ function App() {
             <Button size="sm" onClick={() => setWizardOpen(true)}>
               ＋ CDC 등록
             </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setAssistOpen((v) => !v)}
-              aria-label="AI 진단"
-              title="AI 진단"
-            >
-              <MessageCircle className="size-4" />
-            </Button>
             <ThemeToggle />
             <WarningCenter />
           </div>
@@ -216,7 +209,11 @@ function App() {
           )}
         </main>
 
-        <AssistDrawer open={assistOpen} onClose={() => setAssistOpen(false)} />
+        <AssistWidget
+          open={assistOpen}
+          onOpen={() => setAssistOpen(true)}
+          onClose={() => setAssistOpen(false)}
+        />
       </div>
 
       <RegistrationWizard

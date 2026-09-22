@@ -1,8 +1,8 @@
 /**
- * 파일명 : AssistDrawer.tsx
+ * 파일명 : AssistWidget.tsx
  * 작성일자 : 26. 08. 14.
  * 작성자 : 최남희
- * 설명 : AI 진단 채팅 — 우측 고정 drawer(440/720px, 마스크 없음·비차단). 질문을
+ * 설명 : AI 진단 채팅 — 우하단 플로팅 위젯(FAB + 패널 440/720px, 마스크 없음·비차단). 질문을
  * /api/chat(SSE)로 보내고 도구 진행 상황·최종 답변을 표시한다. 대화 히스토리는 화면
  * 표시용일 뿐 서버에는 매번 단일 질문만 보낸다(서버는 턴마다 독립 — ChatService 참고).
  * App.tsx 최상위에 탭 조건부 밖에서 항상 마운트되므로(열림 상태는 App이 소유해 prop으로
@@ -20,9 +20,14 @@
  * |                          | 옮겨 open/onClose prop으로 제어(FAB가 상단 바 버튼으로 이동했으므로).
  * |                          | 플로팅 상태의 테이블/복구 drawer 하단 액션 바 가림 문제 해결.
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | 우측 drawer → 다시 우하단 플로팅 FAB+패널(사용자 요청). 열림 상태는
+ * |                          | App이 계속 소유(open/onOpen/onClose) — 닫힘 시 FAB를 이 컴포넌트가
+ * |                          | 그리고, 상단 바 아이콘은 제거. 09-02의 "플로팅이 테이블/복구 drawer
+ * |                          | 하단 액션 바를 가림"은 알고 감수 — 겹치면 위젯을 닫으면 된다.
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Maximize2, Minimize2, X } from 'lucide-react'
+import { Loader2, Maximize2, MessageCircle, Minimize2, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
@@ -116,12 +121,13 @@ function MessageBubble({ msg }: { msg: Message }) {
   )
 }
 
-interface AssistDrawerProps {
+interface AssistWidgetProps {
   open: boolean
+  onOpen: () => void
   onClose: () => void
 }
 
-export function AssistDrawer({ open, onClose }: AssistDrawerProps) {
+export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
   const [expanded, setExpanded] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -164,13 +170,25 @@ export function AssistDrawer({ open, onClose }: AssistDrawerProps) {
     })
   }, [input, busy])
 
-  if (!open) return null
+  if (!open) {
+    return (
+      <button
+        onClick={onOpen}
+        aria-label="AI 진단 열기"
+        title="AI 진단"
+        className="fixed right-6 bottom-6 z-50 flex size-13 items-center justify-center rounded-full bg-primary text-white shadow-lg transition-transform hover:scale-105"
+      >
+        <MessageCircle className="size-6" />
+      </button>
+    )
+  }
 
   return (
     <div
-      className={`absolute top-0 right-0 bottom-0 z-40 flex flex-col border-l border-border bg-background shadow-[-12px_0_32px_rgba(16,24,40,.12)] transition-[width] ${
+      className={`fixed right-6 bottom-6 z-50 flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl transition-[width] ${
         expanded ? 'w-[720px]' : 'w-[440px]'
       }`}
+      style={{ height: 'min(70vh, 640px)' }}
     >
       <div className="flex items-center gap-1 bg-rail px-5 py-3.5 text-rail-ink">
         <span className="text-[15px] font-semibold">AI 진단</span>
