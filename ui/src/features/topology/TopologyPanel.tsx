@@ -38,22 +38,30 @@
  * 26. 09. 22.       | 최남희  | 커넥터 KPI 카드 클릭 시 커넥터별 상태 목록 popover 추가
  * |                          | (비정상 먼저 정렬, 기존 /api/connectors 폴링 재사용)
  * --------------------------------------------------
+ * 26. 09. 22.       | 최남희  | topo useMemo를 동적 배열(sources/targets)로 재작성 — TopologySvg의
+ * |                          | 고정 8노드 구조를 걷어낸 데 맞춰 소스·타깃 커넥션별 노드 데이터를
+ * |                          | 직접 조립. /api/registrations를 마운트 1회 조회에서 5초 폴링
+ * |                          | 그룹으로 이동, 노드 클릭 시 뜨는 정보 카드(커넥션·커넥터 상태·
+ * |                          | 등록 테이블 수) 추가
+ * |                          | (보완) 스크린샷 리뷰 반영 — 노드 sub에서 DB 타입을 빼고 TopoNode에
+ * |                          | typeTag(라벨 옆 작은 태그)로 전달하도록 소스/타깃 노드 조립 수정
+ * --------------------------------------------------
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
 import { api } from '@/lib/api'
-import { effectiveState } from '@/lib/connect'
+import { causeLine, effectiveState } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
 import type { DbConnection } from '@/features/connections/types'
 import { CHART_SERIES_COLORS, LineChart } from '@/components/LineChart'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { GhostButton } from '@/components/ui/ghost-button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Segmented } from '@/components/ui/segmented'
 import { StatusPill } from '@/components/ui/status-pill'
 import type { StatusPillVariant } from '@/components/ui/status-pill'
 import { TopologySvg } from './TopologySvg'
-import type { NodeStatus, TopoData } from './TopologySvg'
+import type { NodeStatus, TopoData, TopoNode } from './TopologySvg'
 
 interface Dashboard {
   throughput: { ts: string; publish: number; apply: number }[]
@@ -68,9 +76,17 @@ interface Ev {
   message: string
 }
 
-interface RegisteredTable {
+/** GET /api/registrations 응답 — backend RegisteredTableView와 필드명을 맞춘다 */
+interface Registration {
+  id: number
   schemaName: string
   tableName: string
+  sourceConnectionId: number
+  targetConnectionId: number
+  targetSchemaName: string | null
+  targetTableName: string | null
+  snapshotMode: string
+  sourceTopicPrefix: string | null
 }
 
 interface TableMetrics {
@@ -141,17 +157,40 @@ function byPrefixAggregate(states: ConnectorStates | null, prefix: string): { st
   return { status, count: matches.length }
 }
 
+/** 테이블별 커넥터·컨슈머 그룹 이름 접미사 — backend RegisteredTable.suffix()와 동일 규칙 */
+function suffixOf(schemaName: string, tableName: string): string {
+  return `${schemaName}_${tableName}`.toLowerCase()
+}
+
+/** 커넥터 이름 목록의 effectiveState 최악값. 이름이 없으면(테이블 미등록 등) 'none'. */
+function worstOf(states: ConnectorStates | null, names: string[]): NodeStatus {
+  if (names.length === 0) return 'none'
+  if (states === null) return 'crit'
+  const eff = names.map((n) => effectiveState(states[n]))
+  if (eff.some((s) => s !== 'RUNNING' && s !== 'PAUSED')) return 'crit'
+  if (eff.some((s) => s === 'PAUSED')) return 'warn'
+  return 'ok'
+}
+
+interface NodeInfo {
+  kind: 'source' | 'target'
+  connection: DbConnection
+  registeredCount: number
+  connectors: { name: string; state: string; cause: string | null }[]
+}
+
 export function TopologyPanel({
   onNavigate,
 }: {
-  /** "보기/검토" 액션 · KPI 링크 클릭 시 해당 탭으로 이동 (App이 소유한 탭 상태를 바꾼다) */
-  onNavigate?: (view: 'tables' | 'ddl') => void
+  /** "보기/검토" 액션 · KPI 링크 클릭 · 토폴로지 노드 클릭 시 해당 탭으로 이동
+   * (App이 소유한 탭 상태를 바꾼다) */
+  onNavigate?: (view: 'tables' | 'ddl' | 'connections') => void
 }) {
   const [connectors, setConnectors] = useState<ConnectorStates | null>(null)
   const [connections, setConnections] = useState<DbConnection[]>([])
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
   const [events, setEvents] = useState<Ev[]>([])
-  const [tables, setTables] = useState<RegisteredTable[]>([])
+  const [registrations, setRegistrations] = useState<Registration[]>([])
   const [tableMetrics, setTableMetrics] = useState<TableMetrics[] | null>(null)
   const [ddlEvents, setDdlEvents] = useState<DdlEvent[] | null>(null)
   const [period, setPeriod] = useState<(typeof PERIODS)[number]>(PERIODS[0])
@@ -160,20 +199,36 @@ export function TopologyPanel({
   const [tableOpen, setTableOpen] = useState(false)
   const comboRef = useRef<HTMLDivElement>(null)
 
+  // 토폴로지 노드 클릭 시 뜨는 정보 카드 — 컨테이너 기준 좌표(x,y)에 absolute 배치
+  const [selectedNode, setSelectedNode] = useState<{ id: string; x: number; y: number } | null>(null)
+  const topoWrapRef = useRef<HTMLDivElement>(null)
+  const infoCardRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     const load = () => {
       api<ConnectorStates>('/api/connectors').then(setConnectors).catch(() => setConnectors(null))
       api<DbConnection[]>('/api/connections').then(setConnections).catch(() => setConnections([]))
       api<TableMetrics[]>('/api/metrics/tables').then(setTableMetrics).catch(() => setTableMetrics(null))
       api<DdlEvent[]>('/api/ddl-events').then(setDdlEvents).catch(() => setDdlEvents(null))
+      api<Registration[]>('/api/registrations').then(setRegistrations).catch(() => {})
     }
     load()
     const id = setInterval(load, 5000)
     return () => clearInterval(id)
   }, [])
 
+  // 정보 카드 바깥 클릭·Esc로 닫기
   useEffect(() => {
-    api<RegisteredTable[]>('/api/registrations').then(setTables).catch(() => {})
+    const close = (e: MouseEvent) => {
+      if (infoCardRef.current && !infoCardRef.current.contains(e.target as Node)) setSelectedNode(null)
+    }
+    const closeOnEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelectedNode(null) }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', closeOnEsc)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', closeOnEsc)
+    }
   }, [])
 
   useEffect(() => {
@@ -198,60 +253,133 @@ export function TopologyPanel({
     return () => document.removeEventListener('mousedown', close)
   }, [])
 
+  // KPI 카드 요약 pill용 — 소스/jdbc/iceberg 전체 접두 집계(다중 소스·다중 타깃과 무관하게
+  // "커넥터 계열 전체가 정상인가"만 보는 값이라 개별 노드 집계와는 별도로 둔다)
+  const srcAgg = useMemo(() => byPrefixAggregate(connectors, 'dz-source-'), [connectors])
+  const jdbcAgg = useMemo(() => jdbcSinkAggregate(connectors), [connectors])
+  const iceAgg = useMemo(() => byPrefixAggregate(connectors, 'dz-iceberg-'), [connectors])
+
   const topo: TopoData = useMemo(() => {
-    const sources = connections.filter((c) => c.role === 'SOURCE')
-    const target = connections.find((c) => c.role === 'TARGET')
+    const sourceConns = connections.filter((c) => c.role === 'SOURCE')
+    const targetConns = connections.filter((c) => c.role === 'TARGET')
     const deployed = connectors !== null && Object.keys(connectors).length > 0
-    const jdbc = jdbcSinkAggregate(connectors)
-    const src = byPrefixAggregate(connectors, 'dz-source-')
-    const iceSink = byPrefixAggregate(connectors, 'dz-iceberg-')
+
+    const regCountBySource = new Map<number, number>()
+    const regsByTarget = new Map<number, Registration[]>()
+    for (const r of registrations) {
+      regCountBySource.set(r.sourceConnectionId, (regCountBySource.get(r.sourceConnectionId) ?? 0) + 1)
+      const arr = regsByTarget.get(r.targetConnectionId)
+      if (arr) arr.push(r)
+      else regsByTarget.set(r.targetConnectionId, [r])
+    }
+
+    const sources: TopoNode[] = sourceConns.length === 0
+      ? [{ id: 'source:none', label: 'SRC', sub: '연결 미등록', status: 'none' }]
+      : sourceConns.map((c) => {
+          const prefix = c.topicPrefix ?? ''
+          const connectorName = `dz-source-${prefix}`
+          const count = regCountBySource.get(c.id!) ?? 0
+          return {
+            id: `source:${c.id}`,
+            label: c.name,
+            typeTag: c.dbType,
+            sub: `${c.host}:${c.port}/${c.databaseName}`,
+            meta: `${connectorName} · 테이블 ${count}개`,
+            status: worstOf(connectors, prefix ? [connectorName] : []),
+            clickable: true,
+          }
+        })
+
+    const targets: TopoNode[] = targetConns.length === 0
+      ? [{ id: 'target:none', label: 'TGT', sub: '연결 미등록', status: 'none' }]
+      : targetConns.map((c) => {
+          const regs = regsByTarget.get(c.id!) ?? []
+          const sinkNames = regs
+            .filter((r) => r.sourceTopicPrefix)
+            .map((r) => `dz-jdbc-sink-${r.sourceTopicPrefix}-${suffixOf(r.schemaName, r.tableName)}`)
+          return {
+            id: `target:${c.id}`,
+            label: c.name,
+            typeTag: c.dbType,
+            sub: `${c.host}:${c.port}/${c.databaseName}`,
+            meta: `jdbc-sink ${regs.length}개`,
+            status: worstOf(connectors, sinkNames),
+            clickable: true,
+          }
+        })
+
     return {
-      srcDb: {
-        label: sources.length === 0 ? 'SRC' : sources.length === 1 ? sources[0].name : `소스 ${sources.length}개`,
-        sub: sources.length === 0
-          ? '연결 미등록'
-          : sources.length === 1
-            ? `${sources[0].host}:${sources[0].port}/${sources[0].databaseName}`
-            : sources.map((s) => s.dbType).join(' · '),
-        status: sources.length > 0 ? 'ok' : 'none',
-      },
-      source: {
-        label: sources.length <= 1 ? (sources[0] ? `dz-source-${sources[0].topicPrefix ?? ''}` : 'dz-source') : 'dz-source-*',
-        sub: sources.length > 1 ? `소스별 1개 · ${src.count}개 배포됨` : 'Debezium source',
-        status: src.status,
-      },
+      sources,
       kafka: {
+        id: 'kafka',
         label: 'Kafka',
         sub: 'KRaft · 테이블당 토픽 1개',
         status: connectors === null ? 'crit' : 'ok',
       },
-      jdbcSink: {
-        label: 'dz-jdbc-sink',
-        sub: jdbc.count > 0 ? `PK upsert · 테이블별 ${jdbc.count}개` : 'PK upsert · 실 적재',
-        status: jdbc.status,
-      },
-      targetDb: {
-        label: target ? target.name : 'Oracle TGT',
-        sub: target ? `${target.host}:${target.port}/${target.databaseName}` : '연결 미등록',
-        status: target ? 'ok' : 'none',
-      },
-      icebergSink: {
-        label: sources.length <= 1 ? (sources[0] ? `dz-iceberg-${sources[0].topicPrefix ?? ''}` : 'dz-iceberg') : 'dz-iceberg-*',
-        sub: sources.length > 1 ? `소스별 1개 · ${iceSink.count}개 배포됨` : 'append-only changelog',
-        status: iceSink.status,
-      },
+      targets,
       iceberg: {
+        id: 'iceberg',
         label: 'Iceberg / MinIO',
         sub: 'changelog · 복구 원본',
-        status: deployed ? 'ok' : 'none',
+        meta: `iceberg-sink ${iceAgg.count}개 · 소스별`,
+        status: deployed ? iceAgg.status : 'none',
       },
       recovery: {
+        id: 'recovery',
         label: 'recovery-job',
         sub: 'scan → 재발행 (평시 정지)',
         status: 'none',
       },
     }
-  }, [connectors, connections])
+  }, [connectors, connections, registrations, iceAgg])
+
+  const nodeInfo = (id: string): NodeInfo | null => {
+    const m = id.match(/^(source|target):(\d+)$/)
+    if (!m) return null
+    const kind = m[1] as 'source' | 'target'
+    const connectionId = Number(m[2])
+    const connection = connections.find((c) => c.id === connectionId)
+    if (!connection) return null
+
+    if (kind === 'source') {
+      const prefix = connection.topicPrefix ?? ''
+      const registeredCount = registrations.filter((r) => r.sourceConnectionId === connectionId).length
+      const name = `dz-source-${prefix}`
+      const info = connectors?.[name]
+      return {
+        kind,
+        connection,
+        registeredCount,
+        connectors: prefix ? [{ name, state: effectiveState(info), cause: causeLine(info) }] : [],
+      }
+    }
+
+    const regs = registrations.filter((r) => r.targetConnectionId === connectionId && r.sourceTopicPrefix)
+    return {
+      kind,
+      connection,
+      registeredCount: regs.length,
+      connectors: regs.map((r) => {
+        const name = `dz-jdbc-sink-${r.sourceTopicPrefix}-${suffixOf(r.schemaName, r.tableName)}`
+        const info = connectors?.[name]
+        return { name, state: effectiveState(info), cause: causeLine(info) }
+      }),
+    }
+  }
+
+  const handleNodeClick = (id: string, rect: DOMRect) => {
+    const wrap = topoWrapRef.current
+    if (!wrap) return
+    const wrapRect = wrap.getBoundingClientRect()
+    const cardW = 320
+    const estCardH = 260
+    let x = rect.left - wrapRect.left
+    let y = rect.bottom - wrapRect.top + 8
+    x = Math.min(Math.max(8, x), Math.max(8, wrapRect.width - cardW - 8))
+    if (y + estCardH > wrapRect.height) y = rect.top - wrapRect.top - estCardH - 8
+    y = Math.max(8, y)
+    setSelectedNode({ id, x, y })
+  }
 
   const toPoints = <T,>(rows: T[], ts: (r: T) => string, v: (r: T) => number) =>
     rows.map((r) => ({ ts: Date.parse(ts(r)), value: v(r) }))
@@ -267,7 +395,7 @@ export function TopologyPanel({
   const tableLabel = table === 'all'
     ? '전체 테이블'
     : table.replace(/^dz\./, '')
-  const filteredTables = tables.filter((t) =>
+  const filteredTables = registrations.filter((t) =>
     `${t.schemaName}.${t.tableName}`.toLowerCase().includes(tableQuery.toLowerCase()))
 
   // --- KPI 계산 (전부 이미 폴링 중인 API에서 파생 — 새 backend 엔드포인트 없음) ---
@@ -348,9 +476,9 @@ export function TopologyPanel({
                     <small className="ml-1 text-[13px] font-medium text-ink-3">/ {total} running</small>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
-                    <StatusPill variant={STATUS_TO_PILL[topo.source.status]}>source</StatusPill>
-                    <StatusPill variant={STATUS_TO_PILL[topo.jdbcSink.status]}>jdbc</StatusPill>
-                    <StatusPill variant={STATUS_TO_PILL[topo.icebergSink.status]}>iceberg</StatusPill>
+                    <StatusPill variant={STATUS_TO_PILL[srcAgg.status]}>source</StatusPill>
+                    <StatusPill variant={STATUS_TO_PILL[jdbcAgg.status]}>jdbc</StatusPill>
+                    <StatusPill variant={STATUS_TO_PILL[iceAgg.status]}>iceberg</StatusPill>
                     <StatusPill variant={STATUS_TO_PILL[topo.recovery.status]}>recovery</StatusPill>
                   </div>
                 </CardContent>
@@ -444,14 +572,91 @@ export function TopologyPanel({
             <CardHeader>
               <CardTitle>토폴로지</CardTitle>
               <span className="font-mono text-xs text-ink-3">
-                {tables.length} tables
+                {registrations.length} tables
               </span>
               <GhostButton className="ml-auto" onClick={() => onNavigate?.('tables')}>
                 테이블 전체
               </GhostButton>
             </CardHeader>
-            <div className="flex flex-1 items-center justify-center p-2" style={{ minHeight: 260 }}>
-              <TopologySvg data={topo} />
+            <div ref={topoWrapRef} className="relative flex flex-1 items-center justify-center p-2" style={{ minHeight: 260 }}>
+              <TopologySvg data={topo} onNodeClick={handleNodeClick} />
+              {selectedNode && (() => {
+                const info = nodeInfo(selectedNode.id)
+                if (!info) return null
+                return (
+                  <div
+                    ref={infoCardRef}
+                    className="absolute z-20"
+                    style={{ left: selectedNode.x, top: selectedNode.y, width: 320 }}
+                  >
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="truncate">{info.connection.name}</CardTitle>
+                        <button
+                          type="button"
+                          aria-label="닫기"
+                          className="ml-auto text-ink-3 hover:text-foreground"
+                          onClick={() => setSelectedNode(null)}
+                        >
+                          ×
+                        </button>
+                      </CardHeader>
+                      <CardContent className="flex flex-col gap-2.5">
+                        <div className="grid grid-cols-[64px_1fr] gap-x-2 gap-y-1 font-mono text-[11px]">
+                          <span className="text-ink-3">타입</span>
+                          <span className="text-foreground">{info.connection.dbType}</span>
+                          <span className="text-ink-3">주소</span>
+                          <span className="truncate text-foreground">
+                            {info.connection.host}:{info.connection.port}/{info.connection.databaseName}
+                          </span>
+                          <span className="text-ink-3">사용자</span>
+                          <span className="text-foreground">{info.connection.username}</span>
+                          {info.kind === 'source' && (
+                            <>
+                              <span className="text-ink-3">topic prefix</span>
+                              <span className="text-foreground">{info.connection.topicPrefix || '—'}</span>
+                            </>
+                          )}
+                        </div>
+                        <div className="border-t border-border pt-2">
+                          <div className="mb-1 text-[11px] text-ink-3">
+                            커넥터 상태 {info.connectors.length}개 · 등록 테이블 {info.registeredCount}개
+                          </div>
+                          {info.connectors.length === 0 ? (
+                            <div className="text-[11px] text-ink-3">배포된 커넥터 없음</div>
+                          ) : (
+                            <div className="flex max-h-40 flex-col gap-1 overflow-y-auto">
+                              {info.connectors.map((c) => (
+                                <div key={c.name} className="flex flex-col gap-0.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="truncate font-mono text-[11px] text-foreground" title={c.name}>
+                                      {c.name}
+                                    </span>
+                                    <StatusPill variant={stateToPill(c.state)}>{c.state}</StatusPill>
+                                  </div>
+                                  {c.cause && (
+                                    <div className="truncate text-[10.5px] text-crit" title={c.cause}>
+                                      {c.cause}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </CardContent>
+                      <CardFooter>
+                        <GhostButton
+                          className="ml-auto"
+                          onClick={() => { onNavigate?.('connections'); setSelectedNode(null) }}
+                        >
+                          DB 연결 탭으로
+                        </GhostButton>
+                      </CardFooter>
+                    </Card>
+                  </div>
+                )
+              })()}
             </div>
           </Card>
 
