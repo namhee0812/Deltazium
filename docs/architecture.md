@@ -308,6 +308,15 @@ Snowflake·Databricks에는 Debezium JDBC sink의 dialect가 없고, 행 단위 
 
 **MySQL 소스 (예정):** `binlog_format=ROW`, `binlog_row_image=FULL`, REPLICATION SLAVE/CLIENT 권한, GTID 여부.
 
+**타깃 이름 규칙 (2026-09-22 확정, PG 타깃 DDL 승인 502 결함 D1 수정):** 등록 시 저장하는
+타깃 스키마·테이블명은 **타깃 DbType이 unquoted 식별자를 접는 형태**로 폴딩한다 — Oracle은
+대문자, PostgreSQL은 소문자(`DbType.foldIdentifier`, 소스 딕셔너리 조회용
+`normalizeIdentifier`와는 별도). 기준은 소스가 아니라 **타깃** DbType이다(예: Oracle 소스
+`CDC.NH_TEST` → PostgreSQL 타깃이면 `cdc.nh_test`로 저장). 이 값이 JDBC sink
+`collection.name.format`·DDL 승인 초안(SchemaFingerprint)에 그대로 쓰이므로 폴딩이 어긋나면
+DDL 승인이 존재하지 않는 스키마를 찾아 실패한다. 사용자가 따옴표로 만든 mixed-case 타깃
+테이블은 범위 밖(제약) — 상세: docs/internals.md "PG 타깃 식별자 폴딩" 절.
+
 **타깃 점검:**
 
 - OLTP: 접속·타깃 스키마 존재 (현행).

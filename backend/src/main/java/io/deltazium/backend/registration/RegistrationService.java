@@ -73,6 +73,16 @@ import org.springframework.transaction.annotation.Transactional;
  * |                          | 접두로 extraConfig에 병합(템플릿의 catalog 블록 제거와 대응,
  * |                          | connectors/README.md)
  * --------------------------------------------------
+ * 26. 09. 22.       | 최남희  | PG 타깃 검증(2026-09-22)에서 발견한 결함 2건 수정.
+ * |                          | D1: 타깃 스키마·테이블명 저장을 upperOrNull(무조건 대문자)에서
+ * |                          | 타깃 커넥션 DbType.foldIdentifier로 전환(Oracle 대문자·PG
+ * |                          | 소문자) — PG 타깃 DDL 승인이 존재하지 않는 대문자 스키마를
+ * |                          | 찾아 502로 실패하던 결함(architecture.md 8절). 기존 등록 행은
+ * |                          | 마이그레이션하지 않음(재등록 절차, docs/operations.md).
+ * |                          | D2: REGISTERED 이벤트 키를 소스 원문(딕셔너리 조회 결과)으로
+ * |                          | 통일 — 기존엔 대문자로 저장돼 DdlEventService 등 다른 기록처와
+ * |                          | 달라 테이블 drawer 이벤트 목록에서 누락됐다.
+ * --------------------------------------------------
  */
 @Service
 public class RegistrationService {
@@ -185,6 +195,8 @@ public class RegistrationService {
         DbConnection source = requireRole(sourceConnectionId, "SOURCE");
         DbConnection target = requireRole(targetConnectionId, "TARGET");
         SourceDictionary dictionary = dictionaryRouter.forConnection(source);
+        DbType targetType = DbType.find(target.dbType())
+                .orElseThrow(() -> new IllegalArgumentException("알 수 없는 타깃 DB 종류: " + target.dbType()));
         if (specs == null || specs.isEmpty()) {
             throw new IllegalArgumentException("등록할 테이블이 없다");
         }
@@ -194,22 +206,25 @@ public class RegistrationService {
         }
 
         // 검증 후 저장 — 하나라도 실패하면 전체 롤백
+        List<SourceTableInfo> infos = new ArrayList<>();
         for (TableSpec spec : specs) {
             SourceTableInfo info = validateTable(source, dictionary, spec.source());
+            infos.add(info);
             List<TableColumn> sourceColumns = dictionary.listColumns(source, info.schema(), info.table());
             List<ColumnMapping> mappings = normalizeMappings(spec, sourceColumns);
 
             long tableId = repository.insert(info.schema(), info.table(),
                     sourceConnectionId, targetConnectionId,
-                    upperOrNull(spec.targetSchema()), upperOrNull(spec.targetTable()), mode);
+                    foldTargetIdentifier(targetType, spec.targetSchema(), info.schema()),
+                    foldTargetIdentifier(targetType, spec.targetTable(), info.table()), mode);
             columnRepository.insertAll(tableId, mappings);
         }
 
         deployConnectors();
-        for (TableSpec spec : specs) {
-            int dot = spec.source().indexOf('.');
-            events.info(spec.source().substring(0, dot).toUpperCase(Locale.ROOT),
-                    spec.source().substring(dot + 1).toUpperCase(Locale.ROOT),
+        for (SourceTableInfo info : infos) {
+            // 원문(딕셔너리 조회 결과) 그대로 — DdlEventService·커넥터 상태 모니터 등 다른
+            // 기록처와 같은 키를 쓰기 위함(대문자로 바꾸면 UI 정확 일치 필터에서 누락된다, D2)
+            events.info(info.schema(), info.table(),
                     "REGISTERED", "CDC 등록·커넥터 배포 (source: " + source.name()
                             + " → target: " + target.name() + ")");
         }
@@ -287,8 +302,15 @@ public class RegistrationService {
         return normalized;
     }
 
-    private static String upperOrNull(String s) {
-        return s == null || s.isBlank() ? null : s.trim().toUpperCase(Locale.ROOT);
+    /**
+     * 타깃 스키마·테이블명 저장값 — 명시 값이 없으면 소스 이름(원문)으로 대체한 뒤,
+     * 타깃 DbType의 폴딩 규칙(DbType.foldIdentifier, 8절)을 적용한다. 이 저장값 하나가
+     * registered_tables·jdbc-sink collection.name.format·DDL 승인 초안(SchemaFingerprint)·
+     * DDL 치환(DdlEventService.rewriteForTarget)에 공유된다 — 한 곳에서만 폴딩한다.
+     */
+    private static String foldTargetIdentifier(DbType targetType, String explicit, String sourceFallback) {
+        String raw = explicit == null || explicit.isBlank() ? sourceFallback : explicit.trim();
+        return targetType.foldIdentifier(raw);
     }
 
     /**

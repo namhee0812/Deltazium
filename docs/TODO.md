@@ -64,6 +64,25 @@
       결정 필요로 남은 것: RecoveryService.verify()의 체크섬(ORA_HASH)이 Oracle 전용이라
       PostgreSQL 소스의 SRC측 체크섬 검증은 아직 미지원(docs/internals.md 기록) — PG 소스
       복구 리허설에서 정합 검증을 어떻게 할지 결정 필요.
+    - **진행 상태 (2026-09-22, PG 타깃 검증)**: PostgreSQL을 **타깃**으로 등록해 데이터 경로
+      (스냅샷·DML upsert/delete·changelog)는 결함 없이 동작함을 확인
+      (`docs/experiments/2026-09-22-pg2pg-cdc.md`). 제어면 결함 2건은 feature/pg-target-identifier
+      에서 수정: **D1**(타깃 스키마·테이블명이 DbType 무관 대문자 저장 → PG 타깃 DDL 승인
+      502 `schema "..." does not exist`) — `DbType.foldIdentifier`로 타깃 DbType 기준
+      폴딩(Oracle 대문자·PG 소문자)으로 전환, architecture.md 8절·docs/internals.md 기록.
+      **D2**(REGISTERED 이벤트 키가 대문자 강제 → 테이블 drawer 이벤트 목록 누락) — 소스
+      원문 키로 통일. 단위 테스트(DbTypeTest·RegistrationServiceTest PG 타깃 케이스) 추가,
+      `./gradlew :backend:test` 통과.
+      남은 것(이번 브랜치 범위 밖): **D3** 새 소스 등록 후 스냅샷 notification 구독이
+      backend 재기동 전까지 안 보이는 한계(기존 기록, docs/internals.md "다중 소스·다중
+      타깃 ②" 절 — 소스·타깃 공통) / 타깃 테이블 생성 방침 — 현재는 사전 수동 생성이
+      전제(등록 흐름에 타깃 DDL 초안·자동 생성 없음, sink는 schema.evolution=none이라
+      만들지 않음) — 사전 점검에 "타깃 테이블 존재·컬럼 일치" 항목을 추가할지 결정 필요
+      (현재는 위저드가 타깃 컬럼 조회 실패로만 알려줌) / PG 체크섬 — `RecoveryService.
+      checksumSql`이 여전히 ORA_HASH 전용이라 PG 타깃(TGT측)도 체크섬 검증 미지원(위
+      SRC측 미지원과 같은 성격, PG용 `md5(string_agg(...))` 필요) / 미검증 항목: 사용자가
+      따옴표로 만든 mixed-case 타깃 테이블, 타입 매핑 경계(numeric 정밀도·bytea·array),
+      복구 재발행(recovery-sink)의 PG 타깃, 대량 배치.
     - **소스 식별자를 커넥션 속성으로**: `db_connections.topic_prefix`(소스 커넥션 필수, 유일,
       `[a-z][a-z0-9_]*`, 기본값 = 이름 슬러그). 전역 `deltazium.topic-prefix` 제거. 기존 소스
       커넥션(orcl225)은 마이그레이션으로 `dz` 유지
