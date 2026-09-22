@@ -32,7 +32,14 @@ web(vite)은 개발 도구이므로 감시 대상에서 제외한다.
 - 로그: `~/deltazium-runtime/logs/watchdog.log` — **정상일 때는 아무것도 기록하지 않는다**
   (5분 주기로 계속 도는 로그가 오염되지 않도록). DOWN 감지·재기동 시도·결과만 남는다.
 - 동시 실행은 `flock`으로 막는다(`/tmp/dz-watchdog.lock`) — 재기동이 다음 주기보다
-  오래 걸리는 경우 중복 실행 방지.
+  오래 걸리는 경우 중복 실행 방지. 재기동 명령은 락 fd를 닫고(`200>&-`) 실행한다 —
+  watchdog이 띄운 데몬이 fd를 상속하면 락이 영구 점유되어 이후 실행이 전부 무음
+  종료된다 ([26-09-15 장애](incidents/2026-09-15-watchdog-lock-leak.md)).
+- 리부트 후 기동은 watchdog이 아니라 `@reboot` 엔트리가 맡는다(web 포함, 2026-09-22 등록):
+  ```
+  @reboot sleep 30 && /home/nhchoi/deltazium/deploy/dzadmin all start >> /home/nhchoi/deltazium-runtime/logs/reboot-start.log 2>&1
+  ```
+  watchdog도 5분 내에 infra·backend를 살리지만 web(vite)은 감시 제외라 @reboot이 정식 경로다.
 - infra는 컴포넌트별로 이미 떠 있으면 건너뛰는 멱등 스크립트라, 일부만 죽어 있어도
   `dzadmin infra start` 한 번으로 죽은 것만 재기동된다.
 - 26-08-20 디스크 풀로 Kafka가 죽고 나흘간 미검출됐던 장애의 재발 방지 목적이다. 다만

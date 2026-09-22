@@ -29,7 +29,9 @@ else
   fi
   "$DZ_PG_BIN/pg_ctl" -D "$DZ_PG_DATA" -l "$DZ_LOG_DIR/pg.log" \
     -o "-p $DZ_PG_PORT -k /tmp -c listen_addresses=localhost" start
-  wait_port "$DZ_PG_PORT" PostgreSQL
+  # 120초: 리부트(비정상 종료) 직후 WAL crash recovery + 부팅 IO 경합으로
+  # listen까지 30초를 넘길 수 있다 (26-09-15 장애 — incidents 참고).
+  wait_port "$DZ_PG_PORT" PostgreSQL 120
   # 데이터베이스: 메타데이터(deltazium)는 프로파일 불문 항상 필요.
   # Iceberg JDBC 카탈로그(iceberg_catalog)는 minio 프로파일 전용 — r2는 R2 Data Catalog(REST)를
   # 쓰므로 이 DB가 필요 없다 (TODO ③, architecture.md 3절).

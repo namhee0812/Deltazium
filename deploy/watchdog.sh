@@ -43,7 +43,9 @@ fi
 if [ -n "$infra_down" ]; then
     log "WARN infra DOWN 감지: $(echo "$infra_down" | tr '\n' ' ')"
     log "재기동 시도: dzadmin infra start"
-    if OUT="$(./deploy/dzadmin infra start 2>&1)"; then
+    # 200>&- : 락 fd를 닫고 실행 — 재기동된 데몬(pg 등)이 fd를 상속해 락을 영구
+    # 점유하면 이후 watchdog이 전부 무음 종료된다 (26-09-15 리부트 장애 원인).
+    if OUT="$(./deploy/dzadmin infra start 200>&- 2>&1)"; then
         log "infra 재기동 완료"
     else
         log "ERROR infra 재기동 실패 — 출력: $(echo "$OUT" | tr '\n' ' ')"
@@ -53,7 +55,7 @@ fi
 if [ -n "$backend_down" ]; then
     log "WARN backend DOWN 감지"
     log "재기동 시도: dzadmin backend start"
-    if OUT="$(./deploy/dzadmin backend start 2>&1)"; then
+    if OUT="$(./deploy/dzadmin backend start 200>&- 2>&1)"; then
         log "backend 재기동 완료"
     else
         log "ERROR backend 재기동 실패 — 출력: $(echo "$OUT" | tr '\n' ' ')"
