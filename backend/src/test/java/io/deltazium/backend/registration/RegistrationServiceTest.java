@@ -71,6 +71,9 @@ import static org.mockito.Mockito.when;
  * |                          | 종전 템플릿의 iceberg.catalog.* 키·값이 그대로 들어가는지 검증
  * |                          | 추가(회귀 방지, 템플릿에서 backend 주입으로 이관됐기 때문)
  * --------------------------------------------------
+ * 26. 09. 22.       | 최남희  | PG 타깃 검증(2026-09-22) 결함 회귀 테스트 추가 — D1(타깃
+ * |                          | 이름 폴딩이 타깃 DbType 기준인지), D2(등록 이벤트 키가 원문인지)
+ * --------------------------------------------------
  */
 @EnableConfigurationProperties(IcebergProperties.class)
 class RegistrationServiceTest {
@@ -80,6 +83,9 @@ class RegistrationServiceTest {
 
     @Autowired
     DbConnectionService connections;
+
+    @Autowired
+    io.deltazium.backend.events.TableEventService events;
 
     @MockitoBean
     OracleDictionaryService dictionary;
@@ -190,6 +196,53 @@ class RegistrationServiceTest {
         verify(deploy).deploy(eq("jdbc-sink"), vars.capture(), extra.capture());
         assertThat(vars.getValue()).containsEntry("collection_name", "TGT_OWN.T1_COPY");
         assertThat(extra.getValue()).containsEntry("field.include.list", "ID,STATUS");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void PG_타깃으로_등록하면_이름이_소문자로_저장되고_jdbc_sink에도_소문자가_반영된다() {
+        // D1 회귀 방지: 타깃 DbType이 PostgreSQL이면 저장값도 폴딩(소문자)이어야 한다 —
+        // 무조건 대문자로 저장하면 DDL 승인 초안(SchemaFingerprint)의 따옴표 식별자가
+        // 존재하지 않는 스키마를 가리켜 502로 실패한다(architecture.md 8절).
+        long pgTgtId = connections.create(new DbConnection(null, "pgtgt", "POSTGRESQL", "TARGET",
+                "pghost", 5432, "target", "apply", "pw")).id();
+        mockTable("CDC.T1", true, true);
+
+        List<RegisteredTable> result = service.register(srcId, pgTgtId, List.of(
+                new RegistrationService.TableSpec("CDC.T1", "CDC_TMP", "ORDERS", null)));
+
+        RegisteredTable t = result.get(0);
+        assertThat(t.targetSchemaName()).isEqualTo("cdc_tmp");
+        assertThat(t.targetTableName()).isEqualTo("orders");
+        assertThat(t.targetQualified()).isEqualTo("cdc_tmp.orders");
+
+        ArgumentCaptor<Map<String, String>> jdbcVars = ArgumentCaptor.forClass(Map.class);
+        verify(deploy).deploy(eq("jdbc-sink"), jdbcVars.capture(), any());
+        assertThat(jdbcVars.getValue()).containsEntry("collection_name", "cdc_tmp.orders");
+    }
+
+    @Test
+    void PG_타깃_등록에서_타깃_이름을_생략하면_소스_이름을_타깃_DbType으로_폴딩한다() {
+        long pgTgtId = connections.create(new DbConnection(null, "pgtgt2", "POSTGRESQL", "TARGET",
+                "pghost", 5432, "target", "apply", "pw")).id();
+        mockTable("CDC.T1", true, true);
+
+        RegisteredTable t = service.register(srcId, pgTgtId, List.of(spec("CDC.T1"))).get(0);
+
+        assertThat(t.targetSchemaName()).isEqualTo("cdc");
+        assertThat(t.targetTableName()).isEqualTo("t1");
+    }
+
+    @Test
+    void 등록_이벤트_키는_대문자_강제_없이_소스_원문이다() {
+        // D2 회귀 방지: DdlEventService 등 다른 기록처와 같은 키(원문)를 써야
+        // 테이블 drawer의 이벤트 목록에서 누락되지 않는다.
+        mockTable("CDC.T1", true, true);
+        service.register(srcId, tgtId, List.of(spec("CDC.T1")));
+
+        assertThat(events.byTable("CDC", "T1", 10))
+                .extracting(io.deltazium.backend.events.TableEvent::eventType)
+                .contains("REGISTERED");
     }
 
     @Test

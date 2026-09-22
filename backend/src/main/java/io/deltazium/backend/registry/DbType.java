@@ -25,6 +25,11 @@ import java.util.Optional;
  * |                          | 비교로 감지) · normalizeIdentifier(8절 — Oracle 대문자,
  * |                          | PostgreSQL 원문 유지) 추가
  * --------------------------------------------------
+ * 26. 09. 22.       | 최남희  | PG 타깃 DDL 승인 502 결함(D1) 수정 — foldIdentifier 추가.
+ * |                          | normalizeIdentifier(소스 딕셔너리 조회용)와 분리 — 타깃 저장값은
+ * |                          | 항상 타깃 DbType의 unquoted 폴딩(Oracle 대문자·PG 소문자)이어야
+ * |                          | JDBC sink unquoted 실행·DDL 승인 초안 따옴표 식별자가 일치한다.
+ * --------------------------------------------------
  */
 public enum DbType {
     ORACLE("Oracle", true, true),
@@ -60,6 +65,27 @@ public enum DbType {
     /** 식별자 대소문자 정규화 — Oracle은 대문자, PostgreSQL은 원문 그대로 (architecture.md 8절). */
     public String normalizeIdentifier(String raw) {
         return this == ORACLE ? raw.toUpperCase(Locale.ROOT) : raw;
+    }
+
+    /**
+     * 타깃 식별자 폴딩 — 등록 시 타깃 스키마·테이블명을 저장할 때 쓴다(architecture.md 8절,
+     * 2026-09-22 결정: PG 타깃 DDL 승인 502 결함 D1 수정). 저장값은 **그 DB가 unquoted
+     * 식별자를 접는 형태**로 고정한다 — Oracle은 대문자, PostgreSQL은 소문자. 이 값 하나가
+     * {@code registered_tables}·JDBC sink {@code collection.name.format}·DDL 승인 초안의
+     * 따옴표 식별자({@code "schema"."table"})에 그대로 쓰이므로, 폴딩이 다르면 따옴표 식별자가
+     * 실제 카탈로그 값과 어긋난다(JDBC sink는 unquoted라 우연히 동작하지만 DDL 승인은 실패).
+     *
+     * <p>{@link #normalizeIdentifier(String)}와 목적이 다르다 — 그쪽은 **소스** 딕셔너리
+     * 조회용으로, mixed-case 소스 테이블을 실제 카탈로그 값과 맞추기 위해 PostgreSQL은
+     * 원문을 유지한다. foldIdentifier는 반대로 타깃 저장값을 항상 하나의 폴딩 규칙으로
+     * 고정한다 — 사용자가 따옴표로 만든 mixed-case 타깃 테이블은 범위 밖이다(제약,
+     * docs/operations.md).
+     */
+    public String foldIdentifier(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        return this == POSTGRESQL ? raw.toLowerCase(Locale.ROOT) : raw.toUpperCase(Locale.ROOT);
     }
 
     public static List<DbType> supportedTypes() {

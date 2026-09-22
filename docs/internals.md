@@ -461,6 +461,52 @@ connect-distributed.properties`).
 실제 컬럼 폭(100)보다 넉넉하게 잡힌다(타입 매핑이 폭까지 보존하지 않는다는 한계, 기존
 기록과 동일 — mapType은 정밀도·길이를 다루지 않는다).
 
+## PG 타깃 식별자 폴딩 — D1·D2 수정 (2026-09-22)
+
+PG 소스→PG 타깃 CDC 검증(`docs/experiments/2026-09-22-pg2pg-cdc.md`)에서 드러난 제어면
+결함 2건의 "왜 이렇게 고쳤는가" 기록.
+
+**D1: 타깃 이름 저장을 `upperOrNull`(무조건 대문자)에서 타깃 DbType 폴딩으로.**
+`RegistrationService.register()`가 타깃 스키마·테이블명을 DbType과 무관하게 대문자로
+저장하고 있었다. JDBC sink는 `collection.name.format`을 unquoted로 실행해 PostgreSQL이
+소문자로 접어 우연히 동작했지만, `SchemaFingerprint.draftDdl`의 DDL 승인 초안은
+`"CDC_TMP"."ORDERS"`처럼 따옴표를 쳐서 그 문자열 그대로 식별자가 된다 — PostgreSQL엔
+대문자 스키마가 없으니 승인이 `schema "CDC_TMP" does not exist`(HTTP 502)로 실패했다.
+Oracle 타깃은 대문자가 정답이라 이 결함이 드러나지 않았다.
+
+수정은 `DbType.foldIdentifier(String)` 하나를 추가해 `RegistrationService.
+foldTargetIdentifier()`(등록 시 스키마·테이블명 명시 값이 없으면 소스 이름으로 대체한 뒤
+타깃 DbType으로 접는다)에서만 쓴다. **기존 `normalizeIdentifier`를 고치지 않고 별도
+메서드를 추가한 이유** — 그 메서드는 소스 딕셔너리 조회(`DictionaryRouter` 하위 구현이
+카탈로그에서 테이블을 찾을 때)에 쓰여 mixed-case 소스 테이블 대응이 목적이고, PostgreSQL은
+원문을 유지해야 quoted 테이블도 찾는다. 타깃 저장값은 반대로 "그 DB가 unquoted 식별자를
+접는 형태" 하나로 고정해야 하는 별개 요구라 같은 메서드로 두 역할을 겸하면 한쪽을 고칠 때
+다른 쪽이 깨진다.
+
+`registered_tables.target_schema_name/target_table_name`은 등록 시점에 한 번 폴딩돼
+저장되고, `RegisteredTable.targetSchema()/targetTable()`을 거쳐 JDBC sink
+`collection.name.format`·DDL 승인 초안·`DdlEventService.rewriteForTarget`의 치환 대상에
+공유된다 — 저장 시점 한 곳만 고치면 하류가 전부 일관됐다(하류 코드 변경 없음).
+
+**기존 등록 행은 마이그레이션하지 않는다.** 이미 대문자로 저장된 PG 타깃 등록(예: 이번
+검증의 id 19·20)은 그대로 두고, 재등록이 전환 절차다(`docs/operations.md`). 사용자가
+따옴표로 만든 mixed-case 타깃 테이블(`"Cdc_Tmp"."Orders"`류)은 이 폴딩의 범위 밖 —
+unquoted 폴딩 규칙 하나로만 저장하므로 애초에 표현할 수 없다.
+
+**D2: 등록(REGISTERED) 이벤트 키도 소스 원문으로.** 같은 코드 경로가 이벤트 키도
+`toUpperCase`로 강제하고 있었다. `DdlEventService`·커넥터 상태 모니터 등 다른 기록처는
+전부 딕셔너리 조회 결과(원문, 예: PostgreSQL 소스면 소문자)를 키로 쓰므로, 등록 이벤트만
+대문자 키를 쓰면 같은 테이블인데 이벤트 종류별로 키가 갈라진다. UI의 테이블 drawer
+"최근 이벤트" 목록(`TablesPanel.tsx`)은 정확 일치로 필터링해서 REGISTERED 이벤트가
+누락되는 형태로 드러났다. 수정은 이벤트 발행에 쓰던 `spec.source()` 문자열 분해 대신
+검증 단계에서 이미 확보한 `SourceTableInfo.schema()/table()`(딕셔너리 조회 결과, 원문)을
+그대로 쓰는 것 — 별도 정규화를 추가하지 않고 이미 있던 값을 재사용했다.
+
+**미검증으로 남은 범위** (`docs/TODO.md` ② 참고): 새 소스 등록 후 스냅샷 notification
+구독이 backend 재기동 전까지 안 보이는 한계(이미 위 절에 기록됨, D3), PG 타깃의 체크섬
+검증(`RecoveryService.checksumSql`은 여전히 `ORA_HASH` 전용), mixed-case 타깃·타입 매핑
+경계·복구 재발행의 PG 타깃 실측.
+
 ## 다중 소스·다중 타깃 ③ 저장소 프로파일(MinIO/R2) 구현 판단 (2026-09-07)
 
 **속성 단일 진원지.** `IcebergProperties.catalogProperties()`가 Iceberg 카탈로그 속성
