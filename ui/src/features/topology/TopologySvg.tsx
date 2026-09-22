@@ -24,6 +24,10 @@
  * |                          | 다중 타깃이 실사용 단계에 들어가 더는 "범위 밖"으로 둘 수 없어
  * |                          | 26.09.07 판단(개별 노드는 범위 밖, 접두 집계로 요약)을 뒤집는다.
  * |                          | 소스DB+dz-source, 타깃DB+jdbc-sink는 1:1이라 노드는 그대로 합친다.
+ * |                          | (보완) 팬/줌 버튼이 타깃 열 첫 노드와 겹쳐 그림 위 absolute 배치를
+ * |                          | 버리고 SVG 위 별도 툴바 행으로 이동. 노드 폭 200→240, sub에서 DB
+ * |                          | 타입을 빼 host:port/db만 남기고(그래도 넘치면 clipPath+title) 타입은
+ * |                          | 라벨 줄 오른쪽 끝 작은 태그로 — sub가 여전히 잘린다는 지적 반영
  * --------------------------------------------------
  */
 import { useId, useRef, useState } from 'react'
@@ -35,6 +39,8 @@ export interface TopoNode {
   id: string
   label: string
   sub: string
+  /** 라벨 줄 오른쪽 끝의 작은 태그 — 예: "ORACLE"/"POSTGRESQL". sub에서 DB 타입을 빼는 대신 여기 둔다 */
+  typeTag?: string
   /** 노드 안 3번째 줄(작은 글씨) — 예: "dz-source-orcl225 · 5개 테이블", "jdbc-sink 3개" */
   meta?: string
   status: NodeStatus
@@ -57,7 +63,7 @@ const STATUS_COLOR: Record<NodeStatus, string> = {
 }
 
 // --- 레이아웃 상수 (viewBox는 소스·타깃 개수에 맞춰 동적 계산) ---
-const NW = 200
+const NW = 240
 const NH = 64
 const PAD = 24
 const VGAP = 18 // 같은 열에서 노드 사이 간격
@@ -153,6 +159,9 @@ function Node({
   const clickable = !!n.clickable && !!onClick
   const innerLeft = x + 16
   const textW = NW - 32
+  // 라벨 줄 오른쪽에 typeTag(ORACLE 등) 자리를 남겨둔다 — typeTag 없으면 라벨이 전체 폭을 쓴다
+  const typeTagW = n.typeTag ? 78 : 0
+  const labelW = NW - 30 - 10 - typeTagW
 
   return (
     <g
@@ -164,9 +173,9 @@ function Node({
       style={clickable ? { cursor: 'pointer' } : undefined}
       className={clickable ? 'topo-node-clickable' : undefined}
     >
-      <title>{`${n.label}\n${n.sub}${n.meta ? '\n' + n.meta : ''}`}</title>
+      <title>{`${n.label}${n.typeTag ? ' · ' + n.typeTag : ''}\n${n.sub}${n.meta ? '\n' + n.meta : ''}`}</title>
       <defs>
-        <clipPath id={`${clipId}-label`}><rect x={x + 30} y={y + 9} width={NW - 30 - 10} height={16} /></clipPath>
+        <clipPath id={`${clipId}-label`}><rect x={x + 30} y={y + 9} width={labelW} height={16} /></clipPath>
         <clipPath id={`${clipId}-sub`}><rect x={innerLeft} y={y + 30} width={textW} height={13} /></clipPath>
         <clipPath id={`${clipId}-meta`}><rect x={innerLeft} y={y + 44} width={textW} height={13} /></clipPath>
       </defs>
@@ -180,6 +189,11 @@ function Node({
       <g clipPath={`url(#${clipId}-label)`}>
         <text x={x + 30} y={y + 22} fontSize="12.5" fontWeight="600" fill="var(--foreground)">{n.label}</text>
       </g>
+      {n.typeTag && (
+        <text x={x + NW - 14} y={y + 21} fontSize="8.5" fontWeight="600" textAnchor="end" fill="var(--chart-dim)">
+          {n.typeTag}
+        </text>
+      )}
       <g clipPath={`url(#${clipId}-sub)`}>
         <text x={innerLeft} y={y + 40} fontSize="9.5" fontFamily="monospace" fill="var(--chart-dim)">{n.sub}</text>
       </g>
@@ -308,11 +322,23 @@ export function TopologySvg({
   edges.push({ d: ortho([kafkaR, [midX2, kafkaR[1]], [midX2, layout.iceberg.y + NH / 2], left(layout.iceberg)]), active: layout.iceberg.node.status === 'ok' })
 
   return (
-    <div className="relative h-full w-full">
+    <div className="flex h-full w-full flex-col">
+      {/* 팬/줌 툴바 — 그림 위에 겹치지 않는 별도 행 */}
+      <div className="flex shrink-0 justify-end gap-1 pb-1.5">
+        <button type="button" title="확대"
+          className="flex size-6 items-center justify-center rounded border border-line-2 bg-card text-xs font-semibold text-ink-2 hover:border-primary hover:text-primary"
+          onClick={() => zoomAtCenter(1.25)}>+</button>
+        <button type="button" title="축소"
+          className="flex size-6 items-center justify-center rounded border border-line-2 bg-card text-xs font-semibold text-ink-2 hover:border-primary hover:text-primary"
+          onClick={() => zoomAtCenter(1 / 1.25)}>−</button>
+        <button type="button" title="맞춤"
+          className="flex h-6 items-center justify-center rounded border border-line-2 bg-card px-1.5 text-[9px] font-semibold text-ink-2 hover:border-primary hover:text-primary"
+          onClick={() => setView(INITIAL_VIEW)}>맞춤</button>
+      </div>
       <svg
         ref={svgRef}
         viewBox={`0 0 ${vb.w} ${vb.h}`}
-        className="h-full w-full touch-none"
+        className="min-h-0 flex-1 w-full touch-none"
         style={{ cursor: dragging ? 'grabbing' : 'grab' }}
         onWheel={onWheel}
         onPointerDown={onPointerDown}
@@ -351,18 +377,6 @@ export function TopologySvg({
           <text x={layout.recovery.x + 2} y={layout.recovery.y - 8} fontSize="9" fill="var(--chart-dim)">복구 재발행 (평시 정지)</text>
         </g>
       </svg>
-
-      <div className="absolute right-2 top-2 flex flex-col gap-1">
-        <button type="button" title="확대"
-          className="flex size-6 items-center justify-center rounded border border-line-2 bg-card text-xs font-semibold text-ink-2 hover:border-primary hover:text-primary"
-          onClick={() => zoomAtCenter(1.25)}>+</button>
-        <button type="button" title="축소"
-          className="flex size-6 items-center justify-center rounded border border-line-2 bg-card text-xs font-semibold text-ink-2 hover:border-primary hover:text-primary"
-          onClick={() => zoomAtCenter(1 / 1.25)}>−</button>
-        <button type="button" title="맞춤"
-          className="flex size-6 items-center justify-center rounded border border-line-2 bg-card text-[9px] font-semibold text-ink-2 hover:border-primary hover:text-primary"
-          onClick={() => setView(INITIAL_VIEW)}>맞춤</button>
-      </div>
     </div>
   )
 }

@@ -43,6 +43,8 @@
  * |                          | 직접 조립. /api/registrations를 마운트 1회 조회에서 5초 폴링
  * |                          | 그룹으로 이동, 노드 클릭 시 뜨는 정보 카드(커넥션·커넥터 상태·
  * |                          | 등록 테이블 수) 추가
+ * |                          | (보완) 스크린샷 리뷰 반영 — 노드 sub에서 DB 타입을 빼고 TopoNode에
+ * |                          | typeTag(라벨 옆 작은 태그)로 전달하도록 소스/타깃 노드 조립 수정
  * --------------------------------------------------
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -280,7 +282,8 @@ export function TopologyPanel({
           return {
             id: `source:${c.id}`,
             label: c.name,
-            sub: `${c.dbType} · ${c.host}:${c.port}/${c.databaseName}`,
+            typeTag: c.dbType,
+            sub: `${c.host}:${c.port}/${c.databaseName}`,
             meta: `${connectorName} · 테이블 ${count}개`,
             status: worstOf(connectors, prefix ? [connectorName] : []),
             clickable: true,
@@ -297,7 +300,8 @@ export function TopologyPanel({
           return {
             id: `target:${c.id}`,
             label: c.name,
-            sub: `${c.dbType} · ${c.host}:${c.port}/${c.databaseName}`,
+            typeTag: c.dbType,
+            sub: `${c.host}:${c.port}/${c.databaseName}`,
             meta: `jdbc-sink ${regs.length}개`,
             status: worstOf(connectors, sinkNames),
             clickable: true,
