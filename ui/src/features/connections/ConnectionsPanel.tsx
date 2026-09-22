@@ -24,6 +24,10 @@
  * |                          | POST .../test) — 편집 불가, 비밀값 없음. DW 타깃(예정)이 changelog에
  * |                          | 닿을 수 있는지(externallyReachable)를 보여준다.
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | 카드의 "소스 식별자" 라벨을 topic prefix로 바꾸고 파생 토픽 패턴
+ * |                          | (<prefix>.<schema>.<table>)을 함께 표시 — 소스마다 prefix가 달라
+ * |                          | (dz·pg·nhtest) 토픽 이름 기준이 어디서 오는지 화면에서 안 보이던 것
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, MoreVertical, Plus } from 'lucide-react'
@@ -462,8 +466,11 @@ function ConnectionCard({
           </span>
           {c.role === 'SOURCE' && (
             <>
-              <span className="text-ink-3">소스 식별자</span>
-              <span className="truncate font-mono text-[12px]">{c.topicPrefix ?? '—'}</span>
+              <span className="text-ink-3">topic prefix</span>
+              <span className="truncate font-mono text-[12px]" title="토픽 = <prefix>.<schema>.<table>, changelog namespace = changelog_<prefix>">
+                {c.topicPrefix ?? '—'}
+                {c.topicPrefix && <span className="ml-1.5 text-ink-3">→ {c.topicPrefix}.&lt;schema&gt;.&lt;table&gt;</span>}
+              </span>
             </>
           )}
         </div>
