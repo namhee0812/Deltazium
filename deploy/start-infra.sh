@@ -5,7 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source deploy/env.sh
 
-is_up() { ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE ":$1\$"; }
+# bash 내장 /dev/tcp로 판정 (dzadmin port_status와 동일 방식) — ss는 /usr/sbin이라
+# cron 기본 PATH에서 안 잡혀 기동 판정이 전부 실패한다 (26-09-15 장애의 실원인).
+is_up() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 
 wait_port() { # port name timeout_sec
   local i
@@ -29,8 +31,7 @@ else
   fi
   "$DZ_PG_BIN/pg_ctl" -D "$DZ_PG_DATA" -l "$DZ_LOG_DIR/pg.log" \
     -o "-p $DZ_PG_PORT -k /tmp -c listen_addresses=localhost" start
-  # 120초: 리부트(비정상 종료) 직후 WAL crash recovery + 부팅 IO 경합으로
-  # listen까지 30초를 넘길 수 있다 (26-09-15 장애 — incidents 참고).
+  # 120초: 리부트(비정상 종료) 직후 WAL crash recovery + 부팅 IO 경합 여유분.
   wait_port "$DZ_PG_PORT" PostgreSQL 120
   # 데이터베이스: 메타데이터(deltazium)는 프로파일 불문 항상 필요.
   # Iceberg JDBC 카탈로그(iceberg_catalog)는 minio 프로파일 전용 — r2는 R2 Data Catalog(REST)를
