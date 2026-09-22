@@ -24,9 +24,9 @@
  * |                          | POST .../test) — 편집 불가, 비밀값 없음. DW 타깃(예정)이 changelog에
  * |                          | 닿을 수 있는지(externallyReachable)를 보여준다.
  * --------------------------------------------------
- * 26. 09. 23.       | 최남희  | 카드의 "소스 식별자" 라벨을 topic prefix로 바꾸고 파생 토픽 패턴
- * |                          | (<prefix>.<schema>.<table>)을 함께 표시 — 소스마다 prefix가 달라
- * |                          | (dz·pg·nhtest) 토픽 이름 기준이 어디서 오는지 화면에서 안 보이던 것
+ * 26. 09. 23.       | 최남희  | topic prefix = 이름 슬러그로 고정(4절 확정) — 위저드의 prefix 입력칸
+ * |                          | 제거(backend도 요청값 무시). 카드는 prefix가 현재 이름의 슬러그와
+ * |                          | 다를 때만(레거시 dz·pg·nhtest, 생성 후 이름 변경) 한 줄 표시
  * --------------------------------------------------
  */
 import { useCallback, useEffect, useState } from 'react'
@@ -367,18 +367,6 @@ export function ConnectionsPanel() {
                 onChange={(e) => set({ password: e.target.value })}
               />
             </div>
-            {form.role === 'SOURCE' && (
-              <div className="col-span-2 space-y-1">
-                <Label htmlFor="conn-prefix">소스 식별자 (topic prefix)</Label>
-                <Input
-                  id="conn-prefix"
-                  value={form.topicPrefix ?? ''}
-                  onChange={(e) => set({ topicPrefix: e.target.value })}
-                  placeholder="비워두면 이름에서 자동 생성 (예: orcl225, pgsrc)"
-                  className="font-mono"
-                />
-              </div>
-            )}
           </div>
 
           {formTest && (
@@ -403,6 +391,15 @@ export function ConnectionsPanel() {
 }
 
 /** 연결 카드 — 헤더 좌측 4px 액센트는 마지막 테스트 결과(성공 ok/실패 crit/미테스트 stop). */
+/** backend DbConnectionService.slug()와 같은 규칙 — 소스 커넥션의 topic prefix는 생성 시
+ * 이름 슬러그로 고정된다(architecture.md 4절). 카드는 현재 이름의 슬러그와 다를 때만 prefix를 보여준다. */
+function slugOf(name: string): string {
+  let s = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  if (s === '') s = 'src'
+  if (!/^[a-z]/.test(s)) s = 's_' + s
+  return s
+}
+
 function ConnectionCard({
   connection: c,
   tableCount,
@@ -464,12 +461,12 @@ function ConnectionCard({
           <span className="font-mono text-[12px]">
             {tableCount === null ? '—' : `${tableCount}개`}
           </span>
-          {c.role === 'SOURCE' && (
+          {c.role === 'SOURCE' && c.topicPrefix && c.topicPrefix !== slugOf(c.name) && (
             <>
               <span className="text-ink-3">topic prefix</span>
-              <span className="truncate font-mono text-[12px]" title="토픽 = <prefix>.<schema>.<table>, changelog namespace = changelog_<prefix>">
-                {c.topicPrefix ?? '—'}
-                {c.topicPrefix && <span className="ml-1.5 text-ink-3">→ {c.topicPrefix}.&lt;schema&gt;.&lt;table&gt;</span>}
+              <span className="truncate font-mono text-[12px]"
+                title={`이름 슬러그(${slugOf(c.name)})와 다름 — 토픽 ${c.topicPrefix}.<schema>.<table>, changelog_${c.topicPrefix}. 생성 시 값으로 고정되며 이름 변경을 따라가지 않는다`}>
+                {c.topicPrefix} <span className="text-ink-3">(이름과 다름)</span>
               </span>
             </>
           )}

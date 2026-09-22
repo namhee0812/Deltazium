@@ -25,6 +25,10 @@ import org.springframework.stereotype.Service;
  * |                          | 미입력 시 이름 슬러그로 기본값). update()가 dbType을 "ORACLE"로
  * |                          | 고정하던 버그 수정 — PostgreSQL 연결이 수정 후에도 유지되도록.
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | topicPrefix 요청값을 받지 않는다(4절 확정) — 생성 시 이름 슬러그로
+ * |                          | 고정, 수정 시 기존 값 유지. 소스마다 손으로 준 prefix(dz·pg·nhtest)가
+ * |                          | 규칙 없이 흩어져 토픽 이름 기준이 안 보이던 문제. 검증 정규식은 유지.
+ * --------------------------------------------------
  */
 @Service
 public class DbConnectionService {
@@ -95,7 +99,10 @@ public class DbConnectionService {
 
     /**
      * TARGET 연결은 topicPrefix를 강제로 비운다(값이 있어도 의미 없음 — SOURCE 전용, 2.2절).
-     * SOURCE 연결에서 비어 있으면 이름 슬러그로 기본값을 채운다(사용자가 그대로 저장 가능하도록).
+     * SOURCE 연결의 topicPrefix는 요청값을 받지 않는다(4절, 2026-09-23 확정): 생성 시 이름
+     * 슬러그로 고정하고, 이후 수정에서는 기존 값을 유지한다 — 토픽·changelog namespace·복제
+     * 슬롯 이름이 이 값에 묶여 있어 생성 후 바뀌면 안 되고, 이름은 표시용이라 바뀔 수 있다.
+     * 그래서 "이름 ≠ prefix"는 이름 변경 후에만 생기며, 화면은 그 경우에만 prefix를 보여준다.
      */
     private DbConnection normalizeTopicPrefix(DbConnection c, DbConnection existing) {
         if (c.role() == null || !"SOURCE".equals(c.role())) {
@@ -103,13 +110,10 @@ public class DbConnectionService {
                     : new DbConnection(c.id(), c.name(), c.dbType(), c.role(), c.host(), c.port(),
                             c.databaseName(), c.username(), c.password(), null);
         }
-        String prefix = c.topicPrefix();
-        if (prefix == null || prefix.isBlank()) {
-            prefix = existing != null && existing.topicPrefix() != null
-                    ? existing.topicPrefix() : slug(c.name());
-        }
+        String prefix = existing != null && existing.topicPrefix() != null
+                ? existing.topicPrefix() : slug(c.name());
         return new DbConnection(c.id(), c.name(), c.dbType(), c.role(), c.host(), c.port(),
-                c.databaseName(), c.username(), c.password(), prefix.trim().toLowerCase(Locale.ROOT));
+                c.databaseName(), c.username(), c.password(), prefix);
     }
 
     /** 이름 → topic_prefix 기본값 슬러그. 숫자로 시작하면 접두를 붙여 정규식을 만족시킨다. */

@@ -44,6 +44,18 @@ class DbConnectionServiceTest {
     }
 
     @Test
+    void topicPrefix는_이름_슬러그로_고정되고_요청값과_이름_변경을_무시한다() {
+        DbConnection req = new DbConnection(null, "Src-Dev 1", "ORACLE", "SOURCE",
+                "oracledev", 1521, "XEPDB1", "dbzuser", "secret", "custom");
+        DbConnection saved = service.create(req);
+        assertThat(saved.topicPrefix()).isEqualTo("src_dev_1");
+
+        DbConnection renamed = new DbConnection(saved.id(), "renamed", "ORACLE", "SOURCE",
+                "oracledev", 1521, "XEPDB1", "dbzuser", "secret", "another");
+        assertThat(service.update(saved.id(), renamed).topicPrefix()).isEqualTo("src_dev_1");
+    }
+
+    @Test
     void 등록_조회_삭제() {
         DbConnection saved = service.create(oracle("src-dev"));
         assertThat(saved.id()).isNotNull();
