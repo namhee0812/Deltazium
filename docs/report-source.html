@@ -248,6 +248,9 @@ WARN의 운영 이벤트 승격)
 <div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/dashboard.png">
 <p class="cap">그림 1. 대시보드 — KPI 카드(커넥터 14/14 running·처리량·최대 lag·미승인 DDL)·동적 토폴로지(소스 3·타깃 3)·주의 필요·처리량(발행 vs apply)·lag 시계열 (재스냅샷 진행 중 실측 — 처리량 1,220 ev/s, 최대 lag 430K대)</p></div>
 
+<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/dashboard-charts.png">
+<p class="cap">그림 1b. 대시보드 전체(스크롤 포함) — 하단의 처리량·lag 시계열(최근 6시간: 재스냅샷 구간에 발행(캡처)이 먼저 치솟고 apply(타깃)가 뒤따르는 형태)·sink lag 추이(JDBC lag가 스냅샷 종료 후 감소, Iceberg lag는 커밋 주기마다 짧게 튐)·컴포넌트 자원(CPU·RSS)·최근 이벤트(테이블별 SNAPSHOT_TABLE_COMPLETED → SNAPSHOT_COMPLETED). 재스냅샷 직후 실측 — 최대 lag 291,484건(NH_CDC_TEST_5, 206컬럼 upsert 적재 중)</p></div>
+
 <div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/wizard.png">
 <p class="cap">그림 2. 등록 위저드 — 소스 딕셔너리 조회: PK 없는 테이블 선택 차단(PK 없음 — 등록 불가)·캡처 사전조건 미설정 경고·행수</p></div>
 
