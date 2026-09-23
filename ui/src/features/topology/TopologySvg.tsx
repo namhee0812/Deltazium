@@ -31,8 +31,13 @@
  * |                          | (보완2) 노드 안 sub·meta·타입 태그·레인 주석이 흐려 안 보인다는
  * |                          | 지적 — 색을 chart-dim(ink-3)에서 ink-2로, 글자 크기 1px씩 올림
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | typeTag 옆에 DB 벤더 글리프(DbVendorLogo, simple-icons) 추가 —
+ * |                          | PostgreSQL만 아이콘 있음(simple-icons에 Oracle 미등재), Oracle은
+ * |                          | 텍스트만 유지
+ * --------------------------------------------------
  */
 import { useId, useRef, useState } from 'react'
+import { DbVendorLogo, hasVendorLogo } from '@/components/DbVendorLogo'
 
 export type NodeStatus = 'ok' | 'warn' | 'crit' | 'none'
 
@@ -161,8 +166,9 @@ function Node({
   const clickable = !!n.clickable && !!onClick
   const innerLeft = x + 16
   const textW = NW - 32
-  // 라벨 줄 오른쪽에 typeTag(ORACLE 등) 자리를 남겨둔다 — typeTag 없으면 라벨이 전체 폭을 쓴다
-  const typeTagW = n.typeTag ? 78 : 0
+  // 라벨 줄 오른쪽에 typeTag(ORACLE 등) 자리를 남겨둔다 — typeTag 없으면 라벨이 전체 폭을 쓴다.
+  // 벤더 글리프가 있는 타입(PostgreSQL)은 아이콘+간격만큼 조금 더 넓게 예약한다.
+  const typeTagW = n.typeTag ? (hasVendorLogo(n.typeTag) ? 92 : 78) : 0
   const labelW = NW - 30 - 10 - typeTagW
 
   return (
@@ -192,9 +198,12 @@ function Node({
         <text x={x + 30} y={y + 22} fontSize="12.5" fontWeight="600" fill="var(--foreground)">{n.label}</text>
       </g>
       {n.typeTag && (
-        <text x={x + NW - 14} y={y + 21} fontSize="9" fontWeight="600" textAnchor="end" fill="var(--ink-2)">
-          {n.typeTag}
-        </text>
+        <>
+          <DbVendorLogo dbType={n.typeTag} x={x + NW - typeTagW + 2} y={y + 11} />
+          <text x={x + NW - 14} y={y + 21} fontSize="9" fontWeight="600" textAnchor="end" fill="var(--ink-2)">
+            {n.typeTag}
+          </text>
+        </>
       )}
       <g clipPath={`url(#${clipId}-sub)`}>
         <text x={innerLeft} y={y + 40} fontSize="10.5" fontFamily="monospace" fill="var(--ink-2)">{n.sub}</text>

@@ -49,6 +49,8 @@
  * 26. 09. 23.       | 최남희  | 최근 이벤트 카드의 [전체 →]가 테이블 모니터링으로 가던 오류 —
  * |                          | 이벤트 탭으로 (onNavigate에 'events' 추가)
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | 노드 정보 카드 "타입" 행에 DB 벤더 글리프(DbVendorLogo) 추가
+ * --------------------------------------------------
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
@@ -63,6 +65,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Segmented } from '@/components/ui/segmented'
 import { StatusPill } from '@/components/ui/status-pill'
 import type { StatusPillVariant } from '@/components/ui/status-pill'
+import { DbVendorLogo } from '@/components/DbVendorLogo'
 import { TopologySvg } from './TopologySvg'
 import type { NodeStatus, TopoData, TopoNode } from './TopologySvg'
 
@@ -607,7 +610,10 @@ export function TopologyPanel({
                       <CardContent className="flex flex-col gap-2.5">
                         <div className="grid grid-cols-[64px_1fr] gap-x-2 gap-y-1 font-mono text-[11px]">
                           <span className="text-ink-3">타입</span>
-                          <span className="text-foreground">{info.connection.dbType}</span>
+                          <span className="flex items-center gap-1.5 text-foreground">
+                            <DbVendorLogo dbType={info.connection.dbType} />
+                            {info.connection.dbType}
+                          </span>
                           <span className="text-ink-3">주소</span>
                           <span className="truncate text-foreground">
                             {info.connection.host}:{info.connection.port}/{info.connection.databaseName}

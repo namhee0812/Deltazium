@@ -2,9 +2,11 @@ package io.deltazium.backend.metrics;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -34,6 +36,12 @@ import org.springframework.stereotype.Service;
  * 26. 08. 24.       | 최남희  | 최초 생성
  * 26. 08. 24.       | 최남희  | 커넥터 RUNNING인데 task 0개인 상태를 WARN으로 판정 (소비 정지 맹점)
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | severity 3단(CRITICAL/WARN/INFO) 도입 — 사람이 정지한 PAUSED
+ * |                          | 커넥터를 WARN에서 INFO로 분리하고 확인(ack) API를 추가했다.
+ * |                          | INFO 항목의 sinceMs는 system_warning_acks(DB)로 안정화해 backend
+ * |                          | 재기동 후에도 같은 정지 건에 대한 ack가 유지되게 한다(내부 판단
+ * |                          | 근거: docs/internals.md).
+ * --------------------------------------------------
  */
 @Service
 public class SystemWarningService {
@@ -48,22 +56,62 @@ public class SystemWarningService {
 
     private final KafkaMetricsService metrics;
     private final ConnectClient connect;
+    private final SystemWarningAckRepository acks;
     private final String runtimeDir;
     private final int diskWarnPct;
-    /** 경고 id → 최초 감지 시각(epoch ms). 해소되면 다음 조회에서 제거한다. backend 재기동 시 리셋됨. */
+    /** 경고 id → 최초 감지 시각(epoch ms). 해소되면 다음 조회에서 제거한다. backend 재기동 시 리셋됨.
+     *  INFO 항목은 이 값을 쓰지 않는다 — sinceMs 안정화는 system_warning_acks(DB)가 대신한다. */
     private final Map<String, Long> firstSeen = new ConcurrentHashMap<>();
+    /** 직전 조회에서 관측된 INFO 경고 id 집합 — 다음 조회에서 사라진 id는 해소된 것으로 보고
+     *  system_warning_acks 관측 행을 지운다(재정지 시 sinceMs를 새로 시작시키기 위함). */
+    private volatile Set<String> knownInfoIds = Set.of();
 
     public SystemWarningService(KafkaMetricsService metrics,
                                 ConnectClient connect,
+                                SystemWarningAckRepository acks,
                                 @Value("${deltazium.runtime-dir}") String runtimeDir,
                                 @Value("${deltazium.disk-warn-pct:85}") int diskWarnPct) {
         this.metrics = metrics;
         this.connect = connect;
+        this.acks = acks;
         this.runtimeDir = runtimeDir;
         this.diskWarnPct = diskWarnPct;
     }
 
+    /** ack되지 않은 경고만 — INFO 중 ack.sinceMs == 항목.sinceMs인 것은 제외한다. */
     public SystemWarningsResponse warnings() {
+        List<SystemWarning> active = computeActive();
+        List<SystemWarning> visible = active.stream()
+                .filter(w -> !isAcked(w))
+                .toList();
+        return new SystemWarningsResponse(visible);
+    }
+
+    /**
+     * 확인(ack) — INFO 등급만 허용한다. 대상 id가 현재 활성 목록에 없으면(이미 해소됐거나 존재한
+     * 적 없으면) 404에 해당하는 예외, INFO가 아니면 400에 해당하는 예외를 던진다.
+     */
+    public void ack(String id) {
+        SystemWarning target = computeActive().stream()
+                .filter(w -> w.id().equals(id))
+                .findFirst()
+                .orElseThrow(() -> new NoSuchElementException("해당 알림을 찾을 수 없습니다: " + id));
+        if (!"INFO".equals(target.severity())) {
+            throw new IllegalArgumentException("INFO 등급 알림만 확인 처리할 수 있습니다: " + id);
+        }
+        acks.ack(id);
+    }
+
+    private boolean isAcked(SystemWarning w) {
+        if (!"INFO".equals(w.severity())) {
+            return false;
+        }
+        return acks.findAll().stream()
+                .anyMatch(o -> o.id().equals(w.id()) && o.acked() && o.sinceMs() == w.sinceMs());
+    }
+
+    /** ack 필터 전 원시 활성 경고 목록 — INFO 항목의 sinceMs는 이미 DB로 안정화된 값이다. */
+    private List<SystemWarning> computeActive() {
         long now = System.currentTimeMillis();
         List<SystemWarning> active = new ArrayList<>();
 
@@ -87,7 +135,48 @@ public class SystemWarningService {
         Set<String> activeIds = active.stream().map(SystemWarning::id).collect(Collectors.toSet());
         firstSeen.keySet().retainAll(activeIds);
 
-        return new SystemWarningsResponse(active);
+        return stabilizeInfoSinceMs(active, now);
+    }
+
+    /**
+     * INFO 항목의 sinceMs를 system_warning_acks(DB)로 안정화한다 — 최초 관측 시 관측 행을 만들고,
+     * 이후엔 그 행의 since_ms를 그대로 쓴다(backend 재기동으로 in-memory firstSeen이 리셋돼도
+     * 같은 정지 건에 대한 ack 유효성이 깨지지 않게 하기 위함). 더 이상 활성이 아닌(재개된) INFO
+     * id의 관측 행은 지운다 — 같은 커넥터가 재개 후 다시 정지되면 sinceMs가 새로 시작된다.
+     */
+    private List<SystemWarning> stabilizeInfoSinceMs(List<SystemWarning> active, long now) {
+        boolean anyInfo = active.stream().anyMatch(w -> "INFO".equals(w.severity()));
+        if (!anyInfo && knownInfoIds.isEmpty()) {
+            return active;
+        }
+
+        Map<String, WarningObservation> observed = acks.findAll().stream()
+                .collect(Collectors.toMap(WarningObservation::id, o -> o));
+
+        List<SystemWarning> result = new ArrayList<>(active.size());
+        Set<String> currentInfoIds = new HashSet<>();
+        for (SystemWarning w : active) {
+            if (!"INFO".equals(w.severity())) {
+                result.add(w);
+                continue;
+            }
+            currentInfoIds.add(w.id());
+            WarningObservation obs = observed.get(w.id());
+            long sinceMs = obs != null ? obs.sinceMs() : now;
+            if (obs == null) {
+                acks.insertObserved(w.id(), now);
+            }
+            result.add(new SystemWarning(w.id(), w.severity(), w.title(), w.detail(), sinceMs));
+        }
+
+        Set<String> resolved = new HashSet<>(knownInfoIds);
+        resolved.removeAll(currentInfoIds);
+        if (!resolved.isEmpty()) {
+            acks.deleteIds(new ArrayList<>(resolved));
+        }
+        knownInfoIds = currentInfoIds;
+
+        return result;
     }
 
     /** 원래 스펙의 디스크 경고 API(GET /api/metrics/system)를 대체 — deltazium.runtime-dir 파일시스템 사용률. */
@@ -132,6 +221,11 @@ public class SystemWarningService {
             if ("FAILED".equals(state)) {
                 addWarning(out, now, "connector-failed:" + name, "CRITICAL",
                         name + " 실패", "커넥터 또는 태스크가 FAILED 상태입니다");
+            } else if ("PAUSED".equals(state)) {
+                // 사람이 직접 정지했거나(테이블 정지) DDL 거부로 apply만 멈춘 상태 — 고장이 아니라
+                // 확인 후 없앨 수 있는 알림(INFO)이다. changelog 축적은 계속된다.
+                addWarning(out, now, "connector-paused:" + name, "INFO",
+                        name + " 정지됨", "사용자 정지 또는 DDL 거부로 apply가 정지된 상태 — changelog 축적은 계속됩니다");
             } else if (!"RUNNING".equals(state)) {
                 addWarning(out, now, "connector-degraded:" + name, "WARN",
                         name + " 비정상 상태", "현재 상태: " + state);

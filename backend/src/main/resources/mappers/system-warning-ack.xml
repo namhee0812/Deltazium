@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.deltazium.backend.metrics.SystemWarningAckRepository">
+
+    <resultMap id="warningObservation" type="io.deltazium.backend.metrics.WarningObservation">
+        <constructor>
+            <idArg column="id" javaType="String"/>
+            <arg column="since_ms" javaType="_long"/>
+            <arg column="acked" javaType="boolean"/>
+        </constructor>
+    </resultMap>
+
+    <select id="findAll" resultMap="warningObservation">
+        SELECT id, since_ms, (acked_at IS NOT NULL) AS acked FROM system_warning_acks
+    </select>
+
+    <insert id="insertObserved">
+        INSERT INTO system_warning_acks (id, since_ms) VALUES (#{id}, #{sinceMs})
+    </insert>
+
+    <update id="ack">
+        UPDATE system_warning_acks SET acked_at = CURRENT_TIMESTAMP WHERE id = #{id}
+    </update>
+
+    <delete id="deleteIds">
+        DELETE FROM system_warning_acks WHERE id IN
+        <foreach collection="ids" item="i" open="(" separator="," close=")">#{i}</foreach>
+    </delete>
+
+</mapper>
