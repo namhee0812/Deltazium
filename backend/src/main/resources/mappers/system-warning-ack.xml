@@ -7,7 +7,7 @@
         <constructor>
             <idArg column="id" javaType="String"/>
             <arg column="since_ms" javaType="_long"/>
-            <arg column="acked" javaType="boolean"/>
+            <arg column="acked" javaType="_boolean"/>
         </constructor>
     </resultMap>
 
