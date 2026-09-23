@@ -18,6 +18,10 @@
  * --------------------------------------------------
  * 26. 08. 27.       | 최남희  | 하드코딩 hex를 CSS 변수로 교체 — 라이트 테마 대응
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | fill 프롭 추가 — 부모 컨테이너 높이를 ResizeObserver로 측정해
+ * |                          | 채우도록(카드 본문 공백 제거). y축 왼쪽 패딩을 가장 긴 눈금
+ * |                          | 문자열 폭 기준으로 동적 계산 — 6자리 이상 값의 앞자리 잘림 수정
+ * --------------------------------------------------
  */
 import { useMemo, useRef, useState } from 'react'
 
@@ -29,43 +33,53 @@ export interface ChartSeries {
   points: { ts: number; value: number }[]
 }
 
+/** 좌측 패딩은 y축 눈금 폭에 따라 동적으로 늘어난다 — 아래는 기본 하한값 */
 const PAD = { left: 44, right: 76, top: 10, bottom: 22 }
+/** fill 모드에서 범례 한 줄이 차지하는 높이(px) — 측정 대신 상수로 고정(레이아웃 단순화) */
+const LEGEND_H = 20
 
 export function LineChart({
   series,
   height = 180,
+  fill = false,
   format = (v: number) => v.toLocaleString(),
   timeFormat,
 }: {
   series: ChartSeries[]
   height?: number
+  /** true면 부모 컨테이너 높이를 채운다(ResizeObserver로 측정) — height는 최소 높이로만 쓰인다.
+   * 부모가 flex-1 min-h-0 등으로 실제 크기를 주는 경우에만 의미가 있다. */
+  fill?: boolean
   format?: (v: number) => string
-  /** x축·툴팁 시각 표기 (기본 HH:MM — 일 단위 등 긴 주기는 호출측이 지정) */
   timeFormat?: (ts: number) => string
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(560)
+  const [measuredHeight, setMeasuredHeight] = useState(height)
   const [hoverTs, setHoverTs] = useState<number | null>(null)
 
-  // 컨테이너 폭 추적 (ResizeObserver — 렌더 후 1회 + 리사이즈)
+  // 컨테이너 크기 추적 (ResizeObserver — 렌더 후 1회 + 리사이즈). 폭은 항상, 높이는 fill일 때만.
   useMemo(() => {
     if (typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver((es) => {
-      for (const e of es) setWidth(Math.max(320, e.contentRect.width))
+      for (const e of es) {
+        setWidth(Math.max(320, e.contentRect.width))
+        if (fill) setMeasuredHeight(Math.max(height, e.contentRect.height))
+      }
     })
     setTimeout(() => ref.current && ro.observe(ref.current), 0)
-  }, [])
+    return () => ro.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fill])
 
   const all = series.flatMap((s) => s.points)
   const w = width
-  const h = height
-  const iw = w - PAD.left - PAD.right
-  const ih = h - PAD.top - PAD.bottom
+  const h = fill ? Math.max(60, measuredHeight - LEGEND_H) : height
 
   if (all.length === 0) {
     return (
       <div ref={ref} className="flex items-center justify-center text-xs text-muted-foreground"
-        style={{ height }}>
+        style={fill ? { height: '100%', minHeight: height } : { height }}>
         수집된 샘플이 아직 없습니다 (1분 주기 수집)
       </div>
     )
@@ -74,7 +88,16 @@ export function LineChart({
   const t0 = Math.min(...all.map((p) => p.ts))
   const t1 = Math.max(...all.map((p) => p.ts))
   const vMax = Math.max(1, ...all.map((p) => p.value))
-  const x = (ts: number) => PAD.left + (t1 === t0 ? iw / 2 : ((ts - t0) / (t1 - t0)) * iw)
+
+  // y축 눈금 라벨 — 가장 긴 문자열 폭만큼 좌측 패딩을 늘려 잘림 방지(모노스페이스 10px ≈ 7px/자)
+  const gridY = [0.5, 1].map((f) => vMax * f)
+  const gridLabels = gridY.map(format)
+  const maxLabelLen = Math.max(0, ...gridLabels.map((s) => s.length))
+  const padLeft = Math.max(PAD.left, maxLabelLen * 7 + 12)
+
+  const ih = h - PAD.top - PAD.bottom
+  const iw = w - padLeft - PAD.right
+  const x = (ts: number) => padLeft + (t1 === t0 ? iw / 2 : ((ts - t0) / (t1 - t0)) * iw)
   const y = (v: number) => PAD.top + ih - (v / vMax) * ih
 
   const path = (pts: { ts: number; value: number }[]) =>
@@ -102,15 +125,13 @@ export function LineChart({
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
     const px = e.clientX - rect.left
-    if (px < PAD.left || px > w - PAD.right) return setHoverTs(null)
-    setHoverTs(t0 + ((px - PAD.left) / iw) * (t1 - t0))
+    if (px < padLeft || px > w - PAD.right) return setHoverTs(null)
+    setHoverTs(t0 + ((px - padLeft) / iw) * (t1 - t0))
   }
 
-  const gridY = [0.5, 1].map((f) => vMax * f)
-
   return (
-    <div ref={ref} className="relative">
-      <div className="mb-1 flex gap-4 text-[11px] text-muted-foreground">
+    <div ref={ref} className={fill ? 'relative flex h-full min-h-0 flex-col' : 'relative'}>
+      <div className="mb-1 flex shrink-0 gap-4 text-[11px] text-muted-foreground">
         {series.map((s) => (
           <span key={s.name} className="flex items-center gap-1.5">
             <span className="inline-block h-[3px] w-4 rounded" style={{ background: s.color }} />
@@ -119,17 +140,17 @@ export function LineChart({
         ))}
       </div>
       <svg width={w} height={h} onMouseMove={onMove} onMouseLeave={() => setHoverTs(null)}>
-        {gridY.map((v) => (
+        {gridY.map((v, i) => (
           <g key={v}>
-            <line x1={PAD.left} x2={w - PAD.right} y1={y(v)} y2={y(v)}
+            <line x1={padLeft} x2={w - PAD.right} y1={y(v)} y2={y(v)}
               stroke="var(--chart-grid)" strokeWidth="1" />
-            <text x={PAD.left - 6} y={y(v) + 3} textAnchor="end"
+            <text x={padLeft - 6} y={y(v) + 3} textAnchor="end"
               className="fill-muted-foreground" fontSize="10" fontFamily="monospace">
-              {format(v)}
+              {gridLabels[i]}
             </text>
           </g>
         ))}
-        <line x1={PAD.left} x2={w - PAD.right} y1={y(0)} y2={y(0)} stroke="var(--chart-grid)" />
+        <line x1={padLeft} x2={w - PAD.right} y1={y(0)} y2={y(0)} stroke="var(--chart-grid)" />
         {[t0, (t0 + t1) / 2, t1].map((t, i) => (
           <text key={i} x={x(t)} y={h - 6} textAnchor="middle"
             className="fill-muted-foreground" fontSize="10" fontFamily="monospace">

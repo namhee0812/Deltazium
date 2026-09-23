@@ -51,6 +51,13 @@
  * --------------------------------------------------
  * 26. 09. 23.       | 최남희  | 노드 정보 카드 "타입" 행에 DB 벤더 글리프(DbVendorLogo) 추가
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | 대시보드 보완 4건 — 테이블 콤보박스가 topic-prefix를 dz로
+ * |                          | 하드코딩하던 문제를 등록 정보의 sourceTopicPrefix로 수정(소스별
+ * |                          | prefix가 다르면 빈 차트가 되던 문제), 목록·선택 라벨에 소스명 표기.
+ * |                          | 처리량·lag 차트 제목·부제를 실제 표시 내용에 맞게 수정. 두 차트
+ * |                          | 카드가 옆 카드 높이에 맞춰 늘어나며 생기던 공백을 LineChart의
+ * |                          | fill 모드로 제거
+ * --------------------------------------------------
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
@@ -398,11 +405,24 @@ export function TopologyPanel({
         return period.key === 'DAY' ? md : `${md} ${String(d.getHours()).padStart(2, '0')}시`
       }
 
+  // 콤보박스 후보 — sourceTopicPrefix가 있어야 실제 캡처 토픽(<prefix>.<schema>.<table>)을
+  // 만들 수 있다(다중 소스 전제 — 등록 직후라 아직 캐시되지 않은 경우만 제외됨)
+  const topicOf = (t: Registration) => `${t.sourceTopicPrefix}.${t.schemaName}.${t.tableName}`
+  const connName = (id: number) => connections.find((c) => c.id === id)?.name ?? null
+
+  const filteredTables = registrations
+    .filter((t) => t.sourceTopicPrefix)
+    .filter((t) => `${t.schemaName}.${t.tableName}`.toLowerCase().includes(tableQuery.toLowerCase()))
+
+  const selectedReg = table === 'all' ? null : registrations.find((t) => t.sourceTopicPrefix && topicOf(t) === table)
   const tableLabel = table === 'all'
     ? '전체 테이블'
-    : table.replace(/^dz\./, '')
-  const filteredTables = registrations.filter((t) =>
-    `${t.schemaName}.${t.tableName}`.toLowerCase().includes(tableQuery.toLowerCase()))
+    : selectedReg
+      ? `${selectedReg.schemaName}.${selectedReg.tableName}`
+      : table
+  const tableSourceLabel = selectedReg
+    ? connName(selectedReg.sourceConnectionId) ?? selectedReg.sourceTopicPrefix
+    : null
 
   // --- KPI 계산 (전부 이미 폴링 중인 API에서 파생 — 새 backend 엔드포인트 없음) ---
   const running = connectors ? Object.values(connectors).filter((c) => effectiveState(c) === 'RUNNING').length : 0
@@ -709,7 +729,9 @@ export function TopologyPanel({
               className="w-56 rounded-md border border-line-2 bg-card px-3 py-1.5 text-left font-mono text-xs text-foreground hover:border-primary"
               onClick={() => setTableOpen((o) => !o)}
             >
-              {tableLabel} <span className="float-right text-ink-3">▾</span>
+              {tableLabel}
+              {tableSourceLabel && <span className="ml-1 text-[10px] text-ink-3">({tableSourceLabel})</span>}
+              <span className="float-right text-ink-3">▾</span>
             </button>
             {tableOpen && (
               <div className="absolute z-10 mt-1 w-72 rounded-md border border-border bg-card shadow-[var(--shadow-card)]">
@@ -730,14 +752,17 @@ export function TopologyPanel({
                     </button>
                   </li>
                   {filteredTables.map((t) => {
-                    const topic = `dz.${t.schemaName}.${t.tableName}`
+                    const topic = topicOf(t)
                     return (
                       <li key={topic}>
                         <button
-                          className="w-full px-3 py-1.5 text-left font-mono hover:bg-surface-2"
+                          className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left font-mono hover:bg-surface-2"
                           onClick={() => { setTable(topic); setTableOpen(false); setTableQuery('') }}
                         >
-                          {t.schemaName}.{t.tableName}
+                          <span className="truncate">{t.schemaName}.{t.tableName}</span>
+                          <span className="shrink-0 text-[10px] text-ink-3">
+                            {connName(t.sourceConnectionId) ?? t.sourceTopicPrefix}
+                          </span>
                         </button>
                       </li>
                     )
@@ -754,22 +779,24 @@ export function TopologyPanel({
 
         {/* 처리량 차트 + 최근 이벤트 */}
         <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0,1fr) 380px' }}>
-          <Card>
+          <Card className="flex flex-col">
             <CardHeader>
-              <CardTitle>처리량 · lag</CardTitle>
-              <span className="font-mono text-xs text-ink-3">{tableLabel} · {period.label}</span>
+              <CardTitle>처리량 (발행 · apply)</CardTitle>
+              <span className="font-mono text-xs text-ink-3">버킷당 이벤트 수 · {tableLabel} · {period.label}</span>
             </CardHeader>
-            <CardContent className="py-3">
+            <CardContent className="flex min-h-[220px] flex-1 flex-col py-3">
               <LineChart
+                fill
+                height={220}
                 timeFormat={timeFormat}
                 series={[
                   {
-                    name: '발행 (캡처)',
+                    name: '발행(캡처)',
                     color: CHART_SERIES_COLORS[0],
                     points: toPoints(dashboard?.throughput ?? [], (r) => r.ts, (r) => r.publish),
                   },
                   {
-                    name: 'apply (타깃)',
+                    name: 'apply(타깃)',
                     color: CHART_SERIES_COLORS[1],
                     points: toPoints(dashboard?.throughput ?? [], (r) => r.ts, (r) => r.apply),
                   },
@@ -823,15 +850,17 @@ export function TopologyPanel({
 
         {/* lag 차트 + 컴포넌트 자원 */}
         <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0,1fr) 380px' }}>
-          <Card>
+          <Card className="flex flex-col">
             <CardHeader>
-              <CardTitle>sink lag 추이</CardTitle>
+              <CardTitle>sink lag (JDBC · Iceberg)</CardTitle>
               <span className="font-mono text-xs text-ink-3">
-                {tableLabel} · {period.label}{period.key !== 'MIN' && ' · 구간 최대'}
+                미소비 이벤트 수 · {tableLabel} · {period.label}{period.key !== 'MIN' && ' · 구간 최대'}
               </span>
             </CardHeader>
-            <CardContent className="py-3">
+            <CardContent className="flex min-h-[220px] flex-1 flex-col py-3">
               <LineChart
+                fill
+                height={220}
                 timeFormat={timeFormat}
                 series={[
                   {
