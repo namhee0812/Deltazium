@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <style>
+
   @page {
     size: A4;
     margin: 20mm 18mm;
@@ -11,36 +12,69 @@
   * { box-sizing: border-box; }
   body {
     font-family: "Droid Sans", "Droid Sans Fallback", sans-serif;
-    font-size: 9.8pt; line-height: 1.7; color: #222; margin: 0;
+    font-size: 10.3pt; line-height: 1.74; color: #222; margin: 0;
   }
-  h1 { font-size: 17pt; margin: 0 0 1mm; color: #111; font-weight: bold; letter-spacing: -0.3px; }
-  .subtitle { font-size: 10.5pt; color: #444; margin: 0 0 1.5mm; }
-  .meta { font-size: 8.8pt; color: #666; margin: 0 0 2mm; }
-  .headrule { border: 0; border-top: 1.2pt solid #333; margin: 3mm 0 6mm; }
+  h1 { font-size: 18pt; margin: 0 0 1mm; color: #111; font-weight: bold; letter-spacing: -0.3px; }
+  .subtitle { font-size: 10.8pt; color: #444; margin: 0 0 1.5mm; }
+  .meta { font-size: 9pt; color: #666; margin: 0 0 2mm; }
+  .headrule { border: 0; border-top: 1.2pt solid #333; margin: 3mm 0 4mm; }
   h2 {
-    font-size: 12pt; margin: 9mm 0 2.5mm; color: #1c2e4a;
-    padding-bottom: 1mm; border-bottom: 0.5pt solid #aaa;
+    font-size: 13pt; margin: 9mm 0 3mm; color: #1c2e4a;
+    padding-bottom: 1mm; border-bottom: 0.7pt solid #1c2e4a;
   }
-  h3 { font-size: 10.2pt; margin: 5mm 0 1mm; color: #111; }
-  p { margin: 1.4mm 0; text-align: justify; }
-  table { border-collapse: collapse; width: 100%; margin: 2.5mm 0; font-size: 9pt; }
+  h3 { font-size: 10.8pt; margin: 6mm 0 1.6mm; color: #16233a; }
+  p { margin: 1.6mm 0; text-align: left; }
+  table { border-collapse: collapse; width: 100%; margin: 2.8mm 0; font-size: 9.3pt; }
   th { border-top: 1pt solid #333; border-bottom: 0.5pt solid #333; text-align: left;
-       padding: 1.4mm 2mm; font-size: 8.6pt; background: none; font-weight: bold; }
-  td { padding: 1.4mm 2mm; border-bottom: 0.4pt solid #ccc; vertical-align: top; }
-  pre.diagram {
-    background: #f6f7f8; color: #111; border: 0.5pt solid #bbb; padding: 3mm 3.5mm;
-    font-family: "DejaVu Sans Mono", monospace; font-size: 7.1pt; line-height: 1.6;
-    overflow: hidden; white-space: pre; margin: 2.5mm 0;
-  }
+       padding: 1.5mm 2mm; font-size: 8.8pt; background: none; font-weight: bold; }
+  td { padding: 1.5mm 2mm; border-bottom: 0.4pt solid #ccc; vertical-align: top; }
   ul { margin: 1.5mm 0 1.5mm 5mm; padding: 0; }
   li { margin: 1mm 0; }
-  code { font-family: "DejaVu Sans Mono", monospace; font-size: 8.6pt; }
-  .small { font-size: 8.6pt; color: #555; }
+  code { font-family: "DejaVu Sans Mono", monospace; font-size: 8.9pt; background:#f2f4f6; padding:0 0.6mm; }
+  .small { font-size: 8.8pt; color: #555; }
   .keep { page-break-inside: avoid; }
-  .fig { margin: 4mm 0; }
+  .pagebreak { page-break-before: always; }
+
+  /* 핵심 수치 박스 */
+  .stats { display: flex; flex-wrap: wrap; margin: 3.5mm 0 1mm; }
+  .stat { flex: 1 1 36mm; background: #f5f7fa; border: 0.4pt solid #ccd3dc;
+          border-left: 1.6pt solid #2f5a8a; padding: 2.1mm 2.8mm; margin: 0 2.4mm 2.4mm 0; }
+  .stat .n { display:block; font-size: 12.4pt; font-weight: bold; color: #1c2e4a; line-height:1.2; }
+  .stat .l { display:block; font-size: 7.6pt; color: #5b6472; margin-top: 0.4mm; }
+
+  /* 다이어그램: 도형 SVG + Korean HTML 라벨 오버레이 */
+  .diagram-wrap { position: relative; margin: 3.5mm auto; display:block; }
+  .diagram-wrap img { width: 100%; display: block; }
+  .dlabel { position: absolute; display: table; text-align: center; }
+  .dlabel .inner { display: table-cell; vertical-align: middle; text-align: center;
+                   font-size: 7pt; line-height: 1.24; color: #1c2e4a; padding: 0 1mm; }
+  .dlabel .t { display: block; font-weight: bold; }
+  .dlabel .s { display: block; font-size: 6.1pt; color: #54606e; font-weight: normal; }
+  .dcap { font-size: 8.4pt; color: #555; text-align:center; margin: 0.6mm 0 2mm; }
+
+  /* 절 옆/아래 스크린샷 */
+  .fig-side { margin: 2.8mm auto; }
+  .fig-side img { width: 100%; display: block; border: 0.4pt solid #999; }
+  .fig-side .cap { font-size: 8.1pt; color: #555; text-align: center; margin-top: 1.2mm; }
+  .fig-row { display: flex; align-items: flex-start; margin: 3.5mm 0; flex-wrap: wrap; }
+  .fig-row > div:first-child { margin-right: 5.5mm; }
+  .fig-row > div { flex: 1 1 auto; }
+
+  .cropbox { position: relative; overflow: hidden; border: 0.4pt solid #999; margin: 0 auto; }
+  .cropbox img { position: absolute; display: block; max-width:none; }
+
+  /* 웹콘솔 기능 절 썸네일 그리드 */
+  .thumbgrid { display: flex; flex-wrap: wrap; margin: 3.5mm 0; }
+  .thumbgrid figure { margin: 0 4.5mm 4.5mm 0; width: 80mm; }
+  .thumbgrid img { width: 100%; border: 0.4pt solid #999; display:block; }
+  .thumbgrid figcaption { font-size: 7.9pt; color: #555; margin-top: 1.2mm; text-align:center; }
+
+  /* 부록 */
+  .fig { margin: 4.5mm 0; }
   .fig img { width: 100%; border: 0.4pt solid #999; }
-  .fig .cap { font-size: 8.4pt; color: #555; text-align: center; margin-top: 1mm; }
-  .scope { font-size: 8.8pt; color: #555; margin: 2mm 0 0; }
+  .fig .cap { font-size: 8.7pt; color: #555; text-align: center; margin-top: 1.2mm; }
+  .scope { font-size: 9pt; color: #555; margin: 2mm 0 0; }
+
 </style>
 </head>
 <body>
@@ -55,145 +89,211 @@
 소스 DB의 변경(CDC)을 Debezium으로 캡처해 같은 스트림을 두 갈래로 병행 적재한다(소스·타깃은 Oracle·
 PostgreSQL, 캡처는 LogMiner·pgoutput). 타깃 DB에는 현재 상태를(실적재), Iceberg/S3에는 모든 변경 이력을
 (append-only changelog) 쌓는다. changelog는 미러링이 아니라 특정 시점부터의 복구(replay)를 위한 원본이며,
-이 복구 아키텍처가 실제 배선에서 성립하는지 증명하는 것이 프로젝트의 목적이었다. 그 위에 테이블 등록·사전
-점검·DDL 승인·복구를 담당하는 제어면(Spring Boot + React)을 얹었고, 운영 중 실제 발생한 장애들을 계기로
-장애 감지 → 원인 표시 → 단계형 복구, 그리고 로그·상태를 스스로 조회해 원인을 짚는 AI 진단 어시스턴트까지
-운영 사이클을 확장했다.
+이 복구 아키텍처가 실제 배선에서 성립하는지 증명하는 것이 프로젝트의 목적이었다.
 </p>
-<p class="scope">
-규모 — Java 9.9k · TypeScript 5.3k 라인, 자동화 테스트 136건, 실트래픽 CDC 이벤트 53만+,
-실장애 4건 전건 원인 확정 후 복구(유실 0).
+<p>
+그 위에 테이블 등록·사전 점검·DDL 승인·복구를 담당하는 제어면(Spring Boot + React)을 얹었고, 운영 중
+실제 발생한 장애들을 계기로 장애 감지 → 원인 표시 → 단계형 복구, 그리고 로그·상태를 스스로 조회해
+원인을 짚는 AI 진단 어시스턴트까지 운영 사이클을 확장했다.
 </p>
-<p class="scope">
-현재 배선 — 소스 3(Oracle 1 · PostgreSQL 2) · 타깃 3(Oracle 2 · PostgreSQL 1) · 커넥터 14/14 running ·
-등록 8 테이블.
+<div class="stats">
+  <div class="stat"><span class="n">2026.07 – 09</span><span class="l">작업 기간 · 최남희 단독 설계·개발</span></div>
+  <div class="stat"><span class="n">소스 3</span><span class="l">Oracle 1 · PostgreSQL 2</span></div>
+  <div class="stat"><span class="n">타깃 3</span><span class="l">Oracle 2 · PostgreSQL 1</span></div>
+  <div class="stat"><span class="n">등록 8 테이블</span><span class="l">changelog 테이블 8(1:1)</span></div>
+  <div class="stat"><span class="n">커넥터 14/14</span><span class="l">running · source·jdbc-sink·iceberg-sink</span></div>
+  <div class="stat"><span class="n">자동화 테스트 136건</span><span class="l">envelope 왕복·복구 스모크 포함</span></div>
+  <div class="stat"><span class="n">정합 검증 466,025행</span><span class="l">컬럼별 체크섬 전량 일치(재검증)</span></div>
+  <div class="stat"><span class="n">실장애 기록 6건</span><span class="l">원인 확정 후 대응 — docs/incidents/</span></div>
+</div>
+<p class="small" style="margin-top:2mm;">
+규모 — Java 9.9k · TypeScript 5.3k 라인, 실트래픽 CDC 이벤트 53만+, 실장애 4건 전건 원인 확정 후 복구(유실 0).
 </p>
 
 <h2>2. 아키텍처</h2>
-<pre class="diagram">Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─▶ Debezium JDBC sink ──▶ Oracle(TGT) · 실적재
-                                                          └─▶ Iceberg sink(append) ──▶ MinIO(S3) · changelog
+<p>
+Kafka는 짧은 버퍼로 fan-out만 담당하고(retention 24h, 이력 보관 책임 없음), 두 sink가 독립 consumer
+group으로 같은 토픽을 소비해 lag를 서로 격리한다. Iceberg/MinIO가 장기 이력·복구 원본(1일 파티션 drop이
+곧 보존 정책)을, Oracle 타깃이 현재 상태(PK upsert 멱등 apply)를 맡는다. 데이터 경로에는 기성 커넥터만
+쓰고 자체 코드는 제어면·복구·UI에만 둔다 — apply 시맨틱을 JDBC sink 단일 경로로 유지해, 복구 결과가
+라이브 적재와 달라지는 사고를 구조적으로 차단하기 위함이다.
+</p>
+<div class="diagram-wrap " style="width:172mm;"><img src="/home/nhchoi/deltazium/docs/images/diag-overview.svg"><div class="dlabel" style="left:2.33%;top:18.87%;width:17.44%;height:12.26%;"><div class="inner"><span class="t">Oracle</span><span class="s">SRC · LogMiner</span></div></div><div class="dlabel" style="left:2.33%;top:37.74%;width:17.44%;height:12.26%;"><div class="inner"><span class="t">PostgreSQL</span><span class="s">SRC · pgoutput</span></div></div><div class="dlabel" style="left:23.26%;top:26.42%;width:16.28%;height:14.15%;"><div class="inner"><span class="t">Debezium</span><span class="s">source connector</span></div></div><div class="dlabel" style="left:43.02%;top:26.42%;width:13.95%;height:14.15%;"><div class="inner"><span class="t">Kafka</span><span class="s">KRaft</span></div></div><div class="dlabel" style="left:60.47%;top:5.66%;width:15.12%;height:12.26%;"><div class="inner"><span class="t">Iceberg sink</span><span class="s">append</span></div></div><div class="dlabel" style="left:79.07%;top:5.66%;width:18.60%;height:12.26%;"><div class="inner"><span class="t">changelog</span><span class="s">Iceberg · MinIO(S3)</span></div></div><div class="dlabel" style="left:79.07%;top:24.53%;width:18.60%;height:12.26%;"><div class="inner"><span class="t">recovery-job</span><span class="s">scan · 재조립</span></div></div><div class="dlabel" style="left:60.47%;top:24.53%;width:15.12%;height:12.26%;"><div class="inner"><span class="t">복구 토픽</span><span class="s">Kafka</span></div></div><div class="dlabel" style="left:60.47%;top:62.26%;width:19.77%;height:14.15%;"><div class="inner"><span class="t">JDBC sink</span><span class="s">라이브 · 복구 공용</span></div></div><div class="dlabel" style="left:82.56%;top:62.26%;width:15.12%;height:14.15%;"><div class="inner"><span class="t">타깃 DB</span><span class="s">PK upsert</span></div></div><div class="dlabel" style="left:23.26%;top:84.91%;width:52.33%;height:12.26%;"><div class="inner"><span class="t">제어면 — backend(Spring Boot) + Web UI(React)</span></div></div></div>
+<p class="dcap">그림 A. 전체 아키텍처 — 캡처(소스별) → Kafka → 실적재(JDBC sink)·changelog(Iceberg sink) 병행,
+복구는 changelog → recovery-job → 복구 토픽 → 동일 JDBC sink로 합류. 점선은 제어면의 배포·관리 경로.</p>
 
-복구:  recovery-job ──(Iceberg scan · SCN 순서 복원 · envelope 재조립)──▶ 복구 토픽 ──▶ recovery-sink ──▶ Oracle(TGT)
-
-[Web UI(React)] ⇄ [backend(Spring Boot): 등록·사전 점검 · DDL 승인 · 복구 · 이벤트 이력 · 실측 메트릭 · AI 진단]</pre>
-
-<table>
-  <tr><th style="width:20%">컴포넌트</th><th>역할</th><th style="width:30%">보존/특성</th></tr>
-  <tr><td>Kafka (KRaft)</td><td>짧은 버퍼 · fan-out — 두 sink가 독립 consumer group으로 lag 격리</td><td>retention 24h, 이력 보관 책임 없음</td></tr>
-  <tr><td>Iceberg / MinIO</td><td>장기 이력 · 복구 원본 (envelope-as-is, append-only)</td><td>1일 파티션 drop이 곧 보존 정책</td></tr>
-  <tr><td>Oracle 타깃</td><td>현재 상태 (PK upsert 멱등 apply)</td><td>—</td></tr>
-</table>
-<p>데이터 경로에는 기성 커넥터만 쓰고 자체 코드는 제어면·복구·UI에만 둔다.
-apply 시맨틱을 JDBC sink 단일 경로로 유지해, 복구 결과가 라이브 적재와 달라지는 사고를 구조적으로 차단하기 위함이다.</p>
-
+<div class="fig-row keep">
+  <div class="fig-side" style="width:98mm;"><img src="/home/nhchoi/deltazium/docs/images/topology.png"><p class="cap">그림 B. 대시보드 동적 토폴로지(실제 화면) — 연결된 소스·타깃 수만큼 노드가 생성된다(소스 3·타깃 3). 위 SVG의 캡처·적재 구간을 실제로 배선한 화면.</p></div>
+  <div style="flex:1 1 70mm; font-size:8.7pt; color:#333;">
+    <p style="margin-top:0;"><b>설계 vs 실제.</b> 위 SVG가 데이터 경로의 설계도라면, 왼쪽은 그 설계가 실제
+    배선된 모습이다. 토폴로지는 정적 그림이 아니라 등록된 소스·타깃 연결 수에 맞춰 자체 SVG로 노드를
+    그린다(팬·줌·노드 클릭 정보 카드, 교차 없는 직교 라우팅). 노드를 클릭하면 접속 정보·배포된 커넥터
+    수 같은 실측 상태가 카드로 뜬다.</p>
+  </div>
+</div>
 <h2>3. 설계 판단</h2>
-
 <div class="keep">
 <h3>3.1 멱등 apply를 전제로 한 복구 단순화</h3>
-<p>전달 보장은 at-least-once로 두고, apply를 PK 기반 upsert(MERGE)로 통일해 몇 번을 재적용해도 결과가 같게 했다.
-복구 재생의 경계 중복을 정밀 절단 없이 흡수하는 근거이며, PK 없는 테이블은 등록 단계에서 거부한다.
-복구는 재발행 단일 경로 — recovery-job은 Iceberg를 읽어 복구 토픽에 재발행까지만 하고,
-apply는 라이브와 동일한 JDBC sink 설정이 담당한다.</p>
+<p>전달 보장은 at-least-once로 두고, apply를 PK 기반 upsert(MERGE)로 통일해 몇 번을 재적용해도 결과가
+같게 했다. 복구 재생의 경계 중복을 정밀 절단 없이 흡수하는 근거이며, PK 없는 테이블은 등록 단계에서
+거부한다. 복구는 재발행 단일 경로 — recovery-job은 Iceberg를 읽어 복구 토픽에 재발행까지만 하고, apply는
+라이브와 동일한 JDBC sink 설정이 담당한다.</p>
+<div class="diagram-wrap " style="width:145mm;"><img src="/home/nhchoi/deltazium/docs/images/diag-recovery-replay.svg"><div class="dlabel" style="left:2.00%;top:26.47%;width:16.00%;height:47.06%;"><div class="inner"><span class="t">changelog</span><span class="s">Iceberg·MinIO</span></div></div><div class="dlabel" style="left:22.00%;top:26.47%;width:17.33%;height:47.06%;"><div class="inner"><span class="t">recovery-job</span><span class="s">scan · 재조립</span></div></div><div class="dlabel" style="left:45.33%;top:26.47%;width:14.67%;height:47.06%;"><div class="inner"><span class="t">복구 토픽</span><span class="s">Kafka</span></div></div><div class="dlabel" style="left:65.33%;top:26.47%;width:17.33%;height:47.06%;"><div class="inner"><span class="t">JDBC sink</span><span class="s">동일 설정</span></div></div><div class="dlabel" style="left:88.00%;top:26.47%;width:10.67%;height:47.06%;"><div class="inner"><span class="t">타깃 DB</span><span class="s">PK upsert</span></div></div></div>
+<p class="dcap">그림 C. 복구 = 재발행. recovery-job은 재조립·발행까지만 하고, 타깃 apply는 라이브와 같은
+JDBC sink가 맡는다 — recovery-job이 타깃에 직접 쓰지 않는다.</p>
 </div>
 
 <div class="keep">
 <h3>3.2 changelog 스키마를 실측 실험으로 확정</h3>
-<p>원안(평탄화 스키마)이 기성 커넥터·SMT 조합으로 구현 불가함을 실험으로 증명하고
+<div class="fig-row">
+<div style="flex:2 1 95mm;">
+<p style="margin-top:0;">원안(평탄화 스키마)이 기성 커넥터·SMT 조합으로 구현 불가함을 실험으로 증명하고
 (스톡 SMT는 중첩 필드 승격 불가, 기존 변환 SMT는 before 이미지 소실 — 무손실 재조립 불변식 위반),
-envelope 구조 그대로 저장 + backend가 테이블 사전 생성 + 1일 파티션으로 설계를 개정했다.
-envelope 왕복 테스트(원본 → Iceberg 행 → 재조립 동등성)가 이 불변식의 회귀 방어선이다.</p>
+envelope 구조 그대로 저장 + backend가 테이블 사전 생성 + 1일 파티션으로 설계를 개정했다. envelope 왕복
+테스트(원본 → Iceberg 행 → 재조립 동등성)가 이 불변식의 회귀 방어선이다.</p>
+</div>
+<div style="flex:1 1 62mm;">
+<table style="font-size:7.9pt;">
+<tr><th>필드</th><th>내용</th></tr>
+<tr><td><code>op</code></td><td>c·u·d·r</td></tr>
+<tr><td><code>before</code></td><td>변경 전 이미지</td></tr>
+<tr><td><code>after</code></td><td>변경 후 이미지</td></tr>
+<tr><td><code>source</code></td><td>소스 메타(scn·lsn) — 하류 미참조</td></tr>
+<tr><td><code>ts_ms</code></td><td>처리 시각</td></tr>
+<tr><td><code>_pos</code></td><td>순서·증분 기준(중립)</td></tr>
+</table>
+<p class="cap" style="text-align:left;color:#555;font-size:7.6pt;">표 1. changelog 컬럼 — envelope-as-is + 위치 컬럼</p>
+</div>
+</div>
 </div>
 
 <div class="keep">
 <h3>3.3 캡처 장애의 재현·진단·전환 — 유실 0</h3>
-<p>공유 dev Oracle에서 LogMiner <code>redo_log_catalog</code> 전략이 ORA-1371(complete dictionary not found)
-재시도 루프에 빠져 커넥터는 RUNNING인데 캡처가 멈추는 장애를 재현했다. 딕셔너리 아카이브 존재를 확인해
-전략 자체의 취약점으로 진단하고 <code>online_catalog</code>로 전환(DDL 이벤트는 양 전략 모두 발행됨을 확인해
-승인 워크플로 유지), 소스 redo 재마이닝으로 밀린 9,673건을 전량 회수했다. 커넥터 삭제 후 재등록 시
-잔존 offset으로 스냅샷이 건너뛰어지는 함정도 실측으로 발견해 등록 해제 시 offset 정리를 자동화했다.</p>
+<div class="fig-row">
+<div style="flex:1.5 1 95mm;">
+<p style="margin-top:0;">공유 dev Oracle에서 LogMiner <code>redo_log_catalog</code> 전략이 ORA-1371(complete
+dictionary not found) 재시도 루프에 빠져 커넥터는 RUNNING인데 캡처가 멈추는 장애를 재현했다. 딕셔너리
+아카이브 존재를 확인해 전략 자체의 취약점으로 진단하고 <code>online_catalog</code>로 전환(DDL 이벤트는
+양 전략 모두 발행됨을 확인해 승인 워크플로 유지), 소스 redo 재마이닝으로 밀린 9,673건을 전량 회수했다.
+커넥터 삭제 후 재등록 시 잔존 offset으로 스냅샷이 건너뛰어지는 함정도 실측으로 발견해 등록 해제 시
+offset 정리를 자동화했다.</p>
+</div>
+<div class="fig-side" style="width:74mm;"><img src="/home/nhchoi/deltazium/docs/images/capture-banner.png"><p class="cap">그림 D. 캡처 장애 배너(실측) — RUNNING/FAILED 불일치·원인·trace.</p></div>
+</div>
 </div>
 
 <div class="keep">
 <h3>3.4 캡처 계정 최소 권한 8개 도출</h3>
 <p>Debezium 문서의 보수적 권한 목록(20여 개)을 실 배선의 권한 실패를 재현하며 8개로 압축했다.
 <code>SELECT ANY DICTIONARY</code>가 V$ 뷰 개별 grant를 대체함을 확인하고, <code>DBMS_LOGMNR_D</code>(딕셔너리
-전략 전용)·<code>FLASHBACK ANY TABLE</code>(초기 스냅샷 전용)의 용도를 구분해 문서화했다.
-사전 점검이 권한 누락 시 DBA용 GRANT 스크립트를 생성해 안내하고 배포를 차단한다.</p>
+전략 전용)·<code>FLASHBACK ANY TABLE</code>(초기 스냅샷 전용)의 용도를 구분해 문서화했다. 사전 점검이 권한
+누락 시 DBA용 GRANT 스크립트를 생성해 안내하고 배포를 차단한다.</p>
 </div>
 
 <div class="keep">
 <h3>3.5 운영 동작의 원칙화</h3>
 <p>jdbc-sink를 테이블별 커넥터로 분리해 타깃 이름 매핑과 테이블 단위 정지(DDL 거부 격리)를 가능하게 했고,
-recovery-sink는 apply 완료(consumer lag 소진)를 감지해 자동 정지한다(평시 정지 원칙).
-복구 트리거의 자동 재개 옵션으로 "정지 → S3 복구 → 라이브 복귀(go-live)"가 한 번의 조작으로 완결된다 —
-경계 중복은 전부 멱등이 흡수하므로 절단 시점 계산이 필요 없다.</p>
+recovery-sink는 apply 완료(consumer lag 소진)를 감지해 자동 정지한다(평시 정지 원칙). 복구 트리거의 자동
+재개 옵션으로 "정지 → S3 복구 → 라이브 복귀(go-live)"가 한 번의 조작으로 완결된다 — 경계 중복은 전부
+멱등이 흡수하므로 절단 시점 계산이 필요 없다.</p>
 </div>
 
 <div class="keep">
 <h3>3.6 실장애: connector RUNNING / task FAILED — 나흘 미감지의 해부와 복구</h3>
-<p>공유 dev Oracle의 archive log 정리로 재개 지점 SCN이 소실돼 캡처 task가 죽었는데,
-connector는 RUNNING·발행이 없으니 lag도 0 — 모든 지표가 "평온"을 가리키는 나흘이 흘렀다.
-Connect REST의 task trace로 원인을 확정하고 이 장애에서 기능을 파생시켰다:
-task 포함 상태 판정(최악값 집계), 장애 배너(감지 시각·원인·전체 trace), 행별 재시도,
-단계형 재스냅샷 워크플로. 최종 복구는 타깃 truncate 완전 재구축으로 10.5만 행을 50초에 go-live —
-갭 중 소스에서 삭제된 행(고아 +2,237)까지 정리했다. "lag 0은 따라잡음과 무소식을 구분하지 못한다"는
-교훈은 대시보드의 발행 vs apply 겹침 차트로 만들었다.</p>
+<div class="fig-row">
+<div style="flex:1.6 1 100mm;">
+<p style="margin-top:0;">공유 dev Oracle의 archive log 정리로 재개 지점 SCN이 소실돼 캡처 task가 죽었는데,
+connector는 RUNNING·발행이 없으니 lag도 0 — 모든 지표가 "평온"을 가리키는 나흘이 흘렀다. Connect REST의
+task trace로 원인을 확정하고 이 장애에서 기능을 파생시켰다: task 포함 상태 판정(최악값 집계), 장애 배너
+(감지 시각·원인·전체 trace), 행별 재시도, 단계형 재스냅샷 워크플로. 최종 복구는 타깃 truncate 완전
+재구축으로 10.5만 행을 50초에 go-live — 갭 중 소스에서 삭제된 행(고아 +2,237)까지 정리했다. "lag 0은
+따라잡음과 무소식을 구분하지 못한다"는 교훈은 대시보드의 발행 vs apply 겹침 차트로 만들었다.</p>
+</div>
+<div class="fig-side" style="width:74mm;"><div class="cropbox" style="width:74mm;height:87.18mm;"><img src="/home/nhchoi/deltazium/docs/images/dashboard.png" style="width:291.95mm;left:-213.89mm;top:-46.63mm;"></div><p class="cap">그림 E. 대시보드 "주의 필요" 목록(확대) — lag 초과 테이블을 원인 배지와 함께 즉시 노출.</p></div>
+</div>
 </div>
 
 <div class="keep">
 <h3>3.7 단계형 재스냅샷 — 승인·홀드가 있는 상태 기계</h3>
 <p>재스냅샷을 블랙박스 버튼이 아니라 관찰 가능한 단계로 만들었다: 유입 차단 → 파이프 잔량 소진(실시간 lag)
-→ 타깃 비우기 승인(시스템 실행은 권한 사전 점검, 직접 실행은 DBA 홀드 — 테이블별 count=0 폴링으로 자동 진행)
-→ 재기동 → 스냅샷 → go-live. 되돌릴 수 없는 지점(offset 삭제) 전까지는 취소·실패 시 원복이 보장되고,
+→ 타깃 비우기 승인(시스템 실행은 권한 사전 점검, 직접 실행은 DBA 홀드 — 테이블별 count=0 폴링으로 자동
+진행) → 재기동 → 스냅샷 → go-live. 되돌릴 수 없는 지점(offset 삭제) 전까지는 취소·실패 시 원복이 보장되고,
 스냅샷 진행률은 Debezium notification 채널을 소비해 추정이 아닌 실측으로 표시한다.</p>
+<div class="diagram-wrap " style="width:172mm;"><img src="/home/nhchoi/deltazium/docs/images/diag-resnapshot-states.svg"><div class="dlabel" style="left:1.74%;top:17.39%;width:11.63%;height:32.61%;"><div class="inner"><span class="t">요청</span><span class="s">UI 실행</span></div></div><div class="dlabel" style="left:16.22%;top:17.39%;width:11.63%;height:32.61%;"><div class="inner"><span class="t">유입 차단</span><span class="s">신규 이벤트 정지</span></div></div><div class="dlabel" style="left:30.70%;top:17.39%;width:11.63%;height:32.61%;"><div class="inner"><span class="t">잔량 소진</span><span class="s">실시간 lag=0</span></div></div><div class="dlabel" style="left:45.17%;top:17.39%;width:11.63%;height:32.61%;"><div class="inner"><span class="t">타깃 비우기</span><span class="s">승인/홀드 · TRUNCATE</span></div></div><div class="dlabel" style="left:59.65%;top:17.39%;width:11.63%;height:32.61%;"><div class="inner"><span class="t">재기동</span><span class="s">커넥터 재시작</span></div></div><div class="dlabel" style="left:74.13%;top:17.39%;width:11.63%;height:32.61%;"><div class="inner"><span class="t">스냅샷</span><span class="s">initial 스냅샷</span></div></div><div class="dlabel" style="left:88.60%;top:17.39%;width:11.63%;height:32.61%;"><div class="inner"><span class="t">go-live</span><span class="s">라이브 복귀</span></div></div><div class="dlabel" style="left:27.91%;top:69.57%;width:44.19%;height:21.74%;"><div class="inner"><span class="s">취소·실패 시 원복 보장 — offset 삭제(되돌릴 수 없는 지점) 전까지</span></div></div></div>
+<p class="dcap">그림 F. 재스냅샷 상태 기계 — 7단계, 점선 이전(잔량 소진까지)은 취소해도 원복 보장.</p>
+<div class="fig-side" style="width:124mm;"><img src="/home/nhchoi/deltazium/docs/images/resnapshot.png"><p class="cap">그림 G. 재스냅샷 실행 팝업(실장애 복구 run 실측) — 단계가 순서대로 표시되며 10.5만 행·50초에 go-live.</p></div>
 </div>
 
 <div class="keep">
 <h3>3.8 모니터링: 자체 경량 수집 → 2단 롤업</h3>
-<p>1분 샘플러(토픽 offset 델타·sink lag·pid 기반 /proc CPU·RSS)를 PostgreSQL에 적재하고,
-완결 구간만 대상으로 분(48h) → 시간(60일) → 일(1년) 롤업한다. NOT EXISTS 멱등이라 재실행 중복이 없고,
-집계는 지표 성격대로 처리량은 합, lag은 구간 최대로 스파이크를 보존한다.
-Prometheus/Grafana는 의도적으로 미도입(백로그) — 무엇을 보여줘야 하는가를 먼저 검증했다.</p>
+<div class="fig-row">
+<div style="flex:1.4 1 95mm;">
+<p style="margin-top:0;">1분 샘플러(토픽 offset 델타·sink lag·pid 기반 /proc CPU·RSS)를 PostgreSQL에
+적재하고, 완결 구간만 대상으로 분(48h) → 시간(60일) → 일(1년) 롤업한다. NOT EXISTS 멱등이라 재실행 중복이
+없고, 집계는 지표 성격대로 처리량은 합, lag은 구간 최대로 스파이크를 보존한다. Prometheus/Grafana는
+의도적으로 미도입(백로그) — 무엇을 보여줘야 하는가를 먼저 검증했다.</p>
+</div>
+<div class="fig-side" style="width:66mm;"><img src="/home/nhchoi/deltazium/docs/images/dashboard-charts.png"><p class="cap">그림 H. 처리량·lag·자원 시계열(실측) — 재스냅샷 구간에 발행이 먼저, apply가 뒤따르는 형태.</p></div>
+</div>
+<div class="diagram-wrap " style="width:150mm;"><img src="/home/nhchoi/deltazium/docs/images/diag-monitoring-rollup.svg"><div class="dlabel" style="left:1.85%;top:23.08%;width:16.67%;height:57.69%;"><div class="inner"><span class="t">1분 샘플러</span><span class="s">offset델타·lag·CPU/RSS</span></div></div><div class="dlabel" style="left:20.99%;top:23.08%;width:16.67%;height:57.69%;"><div class="inner"><span class="t">PostgreSQL</span><span class="s">샘플 적재</span></div></div><div class="dlabel" style="left:40.12%;top:23.08%;width:16.67%;height:57.69%;"><div class="inner"><span class="t">분 롤업</span><span class="s">48h·합/최대</span></div></div><div class="dlabel" style="left:59.26%;top:23.08%;width:16.67%;height:57.69%;"><div class="inner"><span class="t">시간 롤업</span><span class="s">60일</span></div></div><div class="dlabel" style="left:78.40%;top:23.08%;width:16.67%;height:57.69%;"><div class="inner"><span class="t">일 롤업</span><span class="s">1년</span></div></div></div>
+<p class="dcap">그림 I. 2단 롤업 흐름 — 완결 구간만 집계, 재실행은 NOT EXISTS로 멱등.</p>
 </div>
 
 <div class="keep">
 <h3>3.9 재개 지점(offset SCN) 유실 — 같은 예외, 세 경로의 방어</h3>
-<p>같은 종착점(<code>LogFileNotFoundException</code>)의 장애가 서로 다른 세 경로로 실발생했다:
-커넥터 다운 중 archive 정리, 유휴 트래픽 중 offset 정체(Debezium offset은 이벤트 발행 시에만 영속화되므로
-"유휴 기간 &gt; 보존 기간"이면 결정론적으로 재현), 미커밋 장기 트랜잭션의 시작 SCN pin(heartbeat로도 전진
-불가 — 후속 트랜잭션 처리는 막히지 않고 재시작 지점만 잡힌다). 경로별 방어를 공식 문서 검증 후 적용했다:
-<code>heartbeat.interval.ms</code> 60s(유휴) · archive 보존 기간(다운타임) ·
+<div class="fig-row">
+<div style="flex:1.6 1 100mm;">
+<p style="margin-top:0;">같은 종착점(<code>LogFileNotFoundException</code>)의 장애가 서로 다른 세 경로로
+실발생했다: 커넥터 다운 중 archive 정리, 유휴 트래픽 중 offset 정체(Debezium offset은 이벤트 발행 시에만
+영속화되므로 "유휴 기간 &gt; 보존 기간"이면 결정론적으로 재현), 미커밋 장기 트랜잭션의 시작 SCN pin
+(heartbeat로도 전진 불가 — 후속 트랜잭션 처리는 막히지 않고 재시작 지점만 잡힌다). 경로별 방어를 공식
+문서 검증 후 적용했다: <code>heartbeat.interval.ms</code> 60s(유휴) · archive 보존 기간(다운타임) ·
 <code>log.mining.transaction.retention.ms</code> 2h(장기 트랜잭션 — 버려진 트랜잭션이 이후 커밋되면 복제에서
 빠지는 대가를 문서화하고 선택). 롤오버 index가 시각 순서와 무관한 회전 슬롯이라는 함정 등 진단 과정의
 발견도 장애 기록으로 남겼다.</p>
 </div>
+<div class="fig-side" style="width:74mm;"><img src="/home/nhchoi/deltazium/docs/images/events.png"><p class="cap">그림 J. 운영 이벤트 타임라인(실측) — 커넥터 장애 전이·복구가 테이블별로 기록된다.</p></div>
+</div>
+</div>
 
 <div class="keep">
 <h3>3.10 AI 진단 어시스턴트 — tool use 기반 임베디드 에이전트</h3>
-<p>"왜 CDC가 멈췄어?" 질문을 받으면 Claude가 읽기 전용 도구 2종(파이프라인 상태 요약 · 로그 검색)을 스스로
-골라 호출해 원인을 짚는다 — 실시간 상태 진단이라 RAG가 아닌 tool use를 선택했다. 도구 표면은 AI용으로 별도
-설계(비정상만 상세 · 서버측 응답 캡 · 근거 위치 포함)하고 같은 프로세스에서 직접 실행하며, 조치 실행 도구는
-의도적으로 두지 않았다 — 제안까지만, 실행은 사람이 화면에서 한다. 모든 주장에 로그 파일·줄 번호 근거를
-강제해 답변을 grep으로 검증할 수 있다. tool use 왕복의 반복 전송을 prompt caching으로 흡수해 진단 1건
-비용을 $1 → $0.06으로 낮췄다(실측 — 왕복별 토큰 로깅으로 캐시 적중 회귀 감시).</p>
+<div class="fig-row">
+<div style="flex:1.5 1 95mm;">
+<p style="margin-top:0;">"왜 CDC가 멈췄어?" 질문을 받으면 Claude가 읽기 전용 도구 2종(파이프라인 상태 요약
+· 로그 검색)을 스스로 골라 호출해 원인을 짚는다 — 실시간 상태 진단이라 RAG가 아닌 tool use를 선택했다.
+도구 표면은 AI용으로 별도 설계(비정상만 상세 · 서버측 응답 캡 · 근거 위치 포함)하고 같은 프로세스에서
+직접 실행하며, 조치 실행 도구는 의도적으로 두지 않았다 — 제안까지만, 실행은 사람이 화면에서 한다. 모든
+주장에 로그 파일·줄 번호 근거를 강제해 답변을 grep으로 검증할 수 있다. tool use 왕복의 반복 전송을
+prompt caching으로 흡수해 진단 1건 비용을 $1 → $0.06으로 낮췄다(실측 — 왕복별 토큰 로깅으로 캐시 적중
+회귀 감시).</p>
+</div>
+<div class="fig-side" style="width:76mm;"><img src="/home/nhchoi/deltazium/docs/images/assist.png"><p class="cap">그림 K. AI 진단 위젯(실측 대화) — 로그 검색 도구를 자율 호출해 근거와 함께 원인 제시.</p></div>
+</div>
 </div>
 
 <div class="keep">
 <h3>3.11 다중 소스·타깃 — changelog 중립 계약과 타깃 식별자 폴딩</h3>
-<p>소스 N개(Oracle·PostgreSQL)·타깃 M개를 "소스 테이블 1 → changelog 1 → 타깃 테이블 M" fan-out
-하나로 한정했다(소스 fan-in은 범위 밖). 소스 식별자는 Debezium topic.prefix 하나로 충분하고, 하류
-(recovery-job·backend 수렴)가 <code>source</code> 블록 내부 필드(scn·lsn 등)를 읽지 않고
-op/before/after/<code>_pos</code>만 본다는 changelog 중립 불변식이 소스가 늘어도 그대로 지탱한다.
-topic prefix는 사용자가 값을 정하지 않고 커넥션 이름 슬러그로 고정해, 이름을 바꿔도 토픽·changelog
-namespace·복제 슬롯 재등록이 필요 없다. 타깃 쪽은 PG→PG 실측(2026-09-22)에서 결함을 드러냈다 —
-등록 시 타깃 스키마·테이블명을 DbType과 무관하게 대문자로 저장하던 코드가, JDBC sink는 unquoted
-실행이라 PostgreSQL이 소문자로 접어 우연히 동작했지만 DDL 승인 초안은 따옴표를 쳐 존재하지 않는
-대문자 스키마를 찾아 502로 실패했다. 수정은 저장 시점에 "타깃 DbType이 unquoted 식별자를 접는
-형태"로 접는 함수 하나 — 소스 딕셔너리 조회용 정규화(mixed-case 소스 테이블 대응)와는 역할이 달라
-기존 메서드를 고치지 않고 분리했다.</p>
+<p>소스 N개(Oracle·PostgreSQL)·타깃 M개를 "소스 테이블 1 → changelog 1 → 타깃 테이블 M" fan-out 하나로
+한정했다(소스 fan-in은 범위 밖). 소스 식별자는 Debezium topic.prefix 하나로 충분하고, 하류(recovery-job·
+backend 수렴)가 <code>source</code> 블록 내부 필드(scn·lsn 등)를 읽지 않고 op/before/after/<code>_pos</code>만
+본다는 changelog 중립 불변식이 소스가 늘어도 그대로 지탱한다. topic prefix는 사용자가 값을 정하지 않고
+커넥션 이름 슬러그로 고정해, 이름을 바꿔도 토픽·changelog namespace·복제 슬롯 재등록이 필요 없다.</p>
+<div class="diagram-wrap " style="width:158mm;"><img src="/home/nhchoi/deltazium/docs/images/diag-multi-src-tgt.svg"><div class="dlabel" style="left:1.21%;top:6.45%;width:18.18%;height:20.97%;"><div class="inner"><span class="t">Oracle</span><span class="s">소스 N개</span></div></div><div class="dlabel" style="left:21.82%;top:6.45%;width:18.18%;height:20.97%;"><div class="inner"><span class="t">PostgreSQL</span><span class="s">topic.prefix로 식별</span></div></div><div class="dlabel" style="left:1.21%;top:38.71%;width:76.36%;height:24.19%;"><div class="inner"><span class="t">changelog — 중립 계약</span><span class="s">op · before · after · _pos (source 내부 필드 미참조)</span></div></div><div class="dlabel" style="left:1.21%;top:74.19%;width:18.18%;height:20.97%;"><div class="inner"><span class="t">Oracle</span><span class="s">타깃</span></div></div><div class="dlabel" style="left:21.82%;top:74.19%;width:18.18%;height:20.97%;"><div class="inner"><span class="t">PostgreSQL</span><span class="s">타깃</span></div></div><div class="dlabel" style="left:42.42%;top:74.19%;width:20.61%;height:20.97%;"><div class="inner"><span class="s">타깃 M개…</span></div></div></div>
+<p class="dcap">그림 L. 소스 N개·타깃 M개가 changelog 중립 계약 위에서 만난다 — 하류는 source 내부 필드를 읽지 않는다.</p>
+<div class="fig-row">
+<div style="flex:1.6 1 100mm;">
+<p style="margin-top:0;">타깃 쪽은 PG→PG 실측(2026-09-22)에서 결함을 드러냈다 — 등록 시 타깃 스키마·테이블명을
+DbType과 무관하게 대문자로 저장하던 코드가, JDBC sink는 unquoted 실행이라 PostgreSQL이 소문자로 접어
+우연히 동작했지만 DDL 승인 초안은 따옴표를 쳐 존재하지 않는 대문자 스키마를 찾아 502로 실패했다. 수정은
+저장 시점에 "타깃 DbType이 unquoted 식별자를 접는 형태"로 접는 함수 하나 — 소스 딕셔너리 조회용 정규화
+(mixed-case 소스 테이블 대응)와는 역할이 달라 기존 메서드를 고치지 않고 분리했다.</p>
+</div>
+<div class="fig-side" style="width:74mm;"><img src="/home/nhchoi/deltazium/docs/images/tables.png"><p class="cap">그림 M. 다중 소스·타깃 테이블 모니터링(실측) — orcl225·pg5433·nhtest_src 등 소스·타깃 연결명을 병기.</p></div>
+</div>
 </div>
 
-<h2>4. 웹 콘솔 기능</h2>
+<h2 class="pagebreak">4. 웹 콘솔 기능</h2>
 <table>
   <tr><th style="width:22%">화면</th><th>기능</th></tr>
   <tr><td>대시보드</td><td>KPI 카드(커넥터 — 클릭 시 배포된 커넥터 목록 팝오버 · 처리량 · 최대 lag · 미승인 DDL) + 동적 토폴로지(자체 SVG, 소스·타깃 연결 수만큼 노드 생성, 팬·줌·노드 클릭 정보 카드 — 교차 없는 직교 라우팅·흐름 애니메이션) + 주의 필요 목록(lag 초과·DDL 대기, 해당 화면 이동) + 처리량(발행 vs apply)·lag 시계열(테이블·기간 선택) + 최근 운영 이벤트</td></tr>
@@ -206,6 +306,13 @@ namespace·복제 슬롯 재등록이 필요 없다. 타깃 쪽은 PG→PG 실�
   <tr><td>헤더 알림</td><td>전 화면 공통 — 경고 배지(커넥터 장애 등 CRITICAL/WARN)와 알림 벨(사용자가 직접 정지했거나 DDL 거부로 apply만 멈춘 것 — INFO, 확인 후 제거)을 분리해 "고장"과 "의도된 정지"를 구분 표시</td></tr>
   <tr><td>AI 진단 위젯</td><td>전 화면 공통 플로팅 채팅 — 상태 요약·로그 검색 도구 자율 호출, 로그 라인 근거와 함께 원인 제시(SSE 스트리밍·사용 도구 표시), 조치는 제안만</td></tr>
 </table>
+<p class="small">아래는 위 기능 중 본문에 싣지 않은 화면이다.</p>
+<div class="thumbgrid keep">
+  <figure><img src="/home/nhchoi/deltazium/docs/images/wizard.png"><figcaption>등록 위저드 — PK 없는 테이블 선택 차단, 캡처 사전조건 미설정 경고</figcaption></figure>
+  <figure><img src="/home/nhchoi/deltazium/docs/images/ddl.png"><figcaption>DDL 이력 — PG 소스 스키마 지문(FINGERPRINT) 감지로 ALTER 승인 사례</figcaption></figure>
+  <figure><img src="/home/nhchoi/deltazium/docs/images/recovery.png"><figcaption>복구 — changelog 현황·복구 실행 drawer·go-live 자동 재개</figcaption></figure>
+  <figure><img src="/home/nhchoi/deltazium/docs/images/connectors-popover.png"><figcaption>커넥터 KPI 카드 클릭 — 배포된 커넥터 14개 상태 목록 팝오버</figcaption></figure>
+</div>
 
 <h2>5. 검증 결과</h2>
 <table>
@@ -224,6 +331,11 @@ namespace·복제 슬롯 재등록이 필요 없다. 타깃 쪽은 PG→PG 실�
   → 타깃 45/80건까지 정렬 덤프 diff 0, DDL 스키마 지문 감지 정상. 타깃 식별자 대문자 정규화로 PG
   타깃 DDL 승인이 502로 실패하는 결함(D1) 발견 → 타깃 DbType 기준 폴딩으로 수정 → 재검증 성공
   (orders 47건, diff 0). topic prefix는 커넥션 이름 슬러그로 고정(4절).</td></tr>
+  <tr><td>정합 검증 체크섬 정밀화 (2026-09-23)</td><td>컬럼별 해시로 바꾼 체크섬이 CDC.NH_CDC_TEST_5(206컬럼,
+  466,025행) 중 정확히 1행 불일치를 검출 — 1951-05-06 KST DST 공백 시각의 DATE가 Connect 워커 JVM의
+  로컬 타임존 해석으로 1시간 밀려 적재된 것이 원인(docs/incidents/2026-09-23-dst-gap-date-shift.md).
+  Connect 워커 JVM 타임존을 UTC로 고정해 수정, 재검증에서 466,025행 체크섬 전량 일치. 같은 작업에서
+  PostgreSQL 체크섬 지원과 등록 해제 시 PG 복제 슬롯·publication 자동 정리도 반영했다.</td></tr>
 </table>
 
 <h2>6. 기술 스택 · 문서화</h2>
@@ -232,57 +344,23 @@ Java 21 · Spring Boot 3.5 · MyBatis · Debezium 3.6 (Oracle LogMiner · Postgr
 Apache Iceberg 1.11 · MinIO(S3) · PostgreSQL 15 · React 19 · TypeScript · Vite · Tailwind 4 · shadcn/ui ·
 TanStack Table · 자체 SVG(토폴로지·차트) · Claude API(tool use · SSE).
 </p>
-<p class="small">
-설계 기준(architecture.md) · 운영 가이드(operations.md) · 구현 내부 노트(internals.md) ·
+<p>설계 기준(architecture.md) · 운영 가이드(operations.md) · 구현 내부 노트(internals.md) ·
 실장애 기록(incidents/, 건별 타임라인·진단 경로·교훈) · 실측 실험 기록(experiments/)을 리포에 유지 —
-"UI에는 사용자 결정에 필요한 것만, 시스템 내부는 문서·주석에" 원칙.
+"UI에는 사용자 결정에 필요한 것만, 시스템 내부는 문서·주석에" 원칙. 문서는 작업이 아니라 주제 단위로
+갱신한다: 새 작업이 생겨도 새 md를 만들지 않고 기존 문서의 해당 절을 고친다.</p>
+<div class="diagram-wrap " style="width:148mm;"><img src="/home/nhchoi/deltazium/docs/images/diag-docs-map.svg"><div class="dlabel" style="left:37.50%;top:5.00%;width:25.00%;height:30.00%;"><div class="inner"><span class="t">architecture.md</span><span class="s">설계 기준</span></div></div><div class="dlabel" style="left:5.00%;top:60.00%;width:16.50%;height:32.50%;"><div class="inner"><span class="t">internals.md</span><span class="s">구현 판단</span></div></div><div class="dlabel" style="left:23.38%;top:60.00%;width:16.50%;height:32.50%;"><div class="inner"><span class="t">operations.md</span><span class="s">운영 절차</span></div></div><div class="dlabel" style="left:41.75%;top:60.00%;width:16.50%;height:32.50%;"><div class="inner"><span class="t">TODO.md</span><span class="s">할 일</span></div></div><div class="dlabel" style="left:60.12%;top:60.00%;width:16.50%;height:32.50%;"><div class="inner"><span class="t">incidents/</span><span class="s">장애 기록</span></div></div><div class="dlabel" style="left:78.50%;top:60.00%;width:16.50%;height:32.50%;"><div class="inner"><span class="t">experiments/</span><span class="s">실험 기록</span></div></div></div>
+<p class="dcap">그림 O. 문서 체계 — 설계 기준 아래로 구현·운영·할 일·장애·실험 기록이 갈라진다.</p>
+<p class="small">
 남은 과제: 기동 중 테이블 추가 시 초기적재(incremental snapshot + Kafka signal) ·
 Prometheus/Grafana(JMX exporter) 도입 후 자체 수집과 비교 · 컬럼 리네임의 적재 반영(스톡 sink 한계 — 정책
 결정 대기) · S3 복구 풀 리허설 실행 검증 · AI 진단 멀티턴(후속 질문 맥락 유지) · offset 정체 조기 경보(실패 전
 WARN의 운영 이벤트 승격)
 </p>
 
-<h2 style="page-break-before: always;">부록 A. 콘솔 화면</h2>
-<p class="small">개발 환경 화면 캡처이며, 내부 주소 등 일부 정보는 가림 처리했다.</p>
-
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/dashboard.png">
-<p class="cap">그림 1. 대시보드 — KPI 카드(커넥터 14/14 running·처리량·최대 lag·미승인 DDL)·동적 토폴로지(소스 3·타깃 3)·주의 필요·처리량(발행 vs apply)·lag 시계열 (재스냅샷 진행 중 실측 — 처리량 1,220 ev/s, 최대 lag 430K대)</p></div>
-
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/dashboard-charts.png">
-<p class="cap">그림 1b. 대시보드 전체(스크롤 포함) — 하단의 처리량·lag 시계열(최근 6시간: 재스냅샷 구간에 발행(캡처)이 먼저 치솟고 apply(타깃)가 뒤따르는 형태)·sink lag 추이(JDBC lag가 스냅샷 종료 후 감소, Iceberg lag는 커밋 주기마다 짧게 튐)·컴포넌트 자원(CPU·RSS)·최근 이벤트(테이블별 SNAPSHOT_TABLE_COMPLETED → SNAPSHOT_COMPLETED). 재스냅샷 직후 실측 — 최대 lag 291,484건(NH_CDC_TEST_5, 206컬럼 upsert 적재 중)</p></div>
-
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/wizard.png">
-<p class="cap">그림 2. 등록 위저드 — 소스 딕셔너리 조회: PK 없는 테이블 선택 차단(PK 없음 — 등록 불가)·캡처 사전조건 미설정 경고·행수</p></div>
-
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/tables.png">
-<p class="cap">그림 3. 테이블 모니터링 — 다중 소스(orcl225·pg5433·nhtest_src)·타깃(Target97·nhtest_tgt) 컬럼, 실측 이벤트 수·lag·15분 추세, 정지/재개/삭제</p></div>
-
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/recovery.png">
-<p class="cap">그림 4. 복구 — changelog(S3) 현황(보존 구간·파티션)·복구 실행 drawer(대상 테이블 → 진입 시각 → 정합 검증)·go-live 자동 재개</p></div>
-
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/events.png">
-<p class="cap">그림 5. 운영 이벤트 타임라인 — 등록·스냅샷·DDL·복구·커넥터 장애 전이 이력(실측 200 events)</p></div>
-
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/capture-banner.png">
-<p class="cap">그림 6. 캡처 장애 경고 배너(실장애 실측) — connector RUNNING/task FAILED 불일치, 감지 시각·원인·전체 trace·복구 진입</p></div>
-
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/resnapshot.png">
-<p class="cap">그림 7. 재스냅샷 — 실행 전 설정 팝업(타깃을 비우고 재적재할지 여부, TRUNCATE 경고). 실행하면 유입 차단→잔량 소진→타깃 비우기→재기동→스냅샷→go-live 단계가 같은 팝업에 순서대로 표시(실장애 복구 run 실측: 10.5만 행·50초)</p></div>
-
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/assist.png">
-<p class="cap">그림 8. AI 진단 위젯 — "orcl225 소스 커넥터 상태와 최근 장애 요약해줘"에 로그 검색 도구를 자율 호출(CONNECT·NH_CDC_TEST_5 로그)해 응답: JDBC sink 처리 지연 소견과 재스냅샷 트리거 원인 확인을 제안(실측 대화)</p></div>
-
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/topology.png">
-<p class="cap">그림 9. 동적 토폴로지 — 연결된 소스·타깃 수만큼 노드가 생성된다(소스 3·타깃 3). 타깃 노드 클릭 시 접속 정보 카드(타입·주소·사용자·배포된 커넥터 수)</p></div>
-
+<h2 class="pagebreak">부록 A. 콘솔 화면</h2>
+<p class="small">개발 환경 화면 캡처이며, 내부 주소 등 일부 정보는 가림 처리했다. 본문에 실은 화면은 제외했다.</p>
 <div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/connections.png">
-<p class="cap">그림 10. DB 연결 — 소스 3·타깃 3 + changelog 저장소(MinIO) 카드, 접속 정보와 사용 중인 테이블 수를 한눈에 확인</p></div>
-
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/connectors-popover.png">
-<p class="cap">그림 11. 대시보드 커넥터 KPI 카드 클릭 — 배포된 커넥터 14개(source·iceberg·jdbc-sink)와 상태 목록 팝오버</p></div>
-
-<div class="fig keep"><img src="/home/nhchoi/deltazium/docs/images/ddl.png">
-<p class="cap">그림 12. DDL 이력 — PostgreSQL 소스는 schema change topic이 없어 스키마 지문 비교(FINGERPRINT)로 변경을 감지한다. 감지된 <code>ALTER TABLE "cdc_tmp"."orders" ADD COLUMN "remark"</code> 승인 사례(2026-09-22)</p></div>
+<p class="cap">그림 N. DB 연결 — 소스 3·타깃 3 + changelog 저장소(MinIO) 카드, 접속 정보와 사용 중인 테이블 수를 한눈에 확인</p></div>
 
 </body>
 </html>
