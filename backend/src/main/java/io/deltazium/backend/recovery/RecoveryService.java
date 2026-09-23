@@ -32,6 +32,7 @@ import io.deltazium.backend.registration.RegisteredTable;
 import io.deltazium.backend.registration.RegisteredTableRepository;
 import io.deltazium.backend.registry.DbConnection;
 import io.deltazium.backend.registry.DbConnectionService;
+import io.deltazium.backend.registry.DbType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -65,6 +66,12 @@ import org.springframework.stereotype.Service;
  * |                          | 비밀값이 프로세스 인자(ps 노출)로 전달되는 현행 방식은 유지
  * |                          | (docs/internals.md 기록)
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | 결함 수정: 정합 검증 체크섬을 ChecksumSql(DbType별 생성기)로
+ * |                          | 분리 — Oracle은 컬럼별 해시 후 행 해시(+ 필요 시 묶음)로
+ * |                          | VARCHAR2 4000 한도(ORA-01489, 206컬럼 테이블에서 실측)를
+ * |                          | 피하고, PostgreSQL은 md5 기반 SQL을 추가. 소스·타깃 DbType이
+ * |                          | 다른 이종 조합은 체크섬 비교가 성립하지 않아 행 수만 비교
+ * --------------------------------------------------
  */
 @Service
 public class RecoveryService {
@@ -75,8 +82,14 @@ public class RecoveryService {
                               LocalDateTime startedAt, boolean autoResume) {
     }
 
+    /**
+     * @param sourceChecksum checksumSupported가 false면 null(이종 DB 조합 — 6.4절 ⑤, 체크섬 비교 불가)
+     * @param targetChecksum checksumSupported가 false면 null(위와 동일)
+     * @param note           checksumSupported가 false일 때만 채워지는 사유 한 줄
+     */
     public record VerifyResult(long sourceCount, long targetCount,
-                               long sourceChecksum, long targetChecksum, boolean match) {
+                               Long sourceChecksum, Long targetChecksum, boolean match,
+                               boolean checksumSupported, String note) {
     }
 
     private static final Pattern RESULT_LINE =
@@ -286,52 +299,75 @@ public class RecoveryService {
     }
 
     /**
-     * 6.4절 ⑤ 정합 검증 — 행 수 + ORA_HASH 체크섬 (활성·동일명 컬럼 기준).
-     * 주의(2026-09-07, 다중 소스 ②로 드러난 한계): checksumSql은 Oracle 전용(ORA_HASH)이라
-     * PostgreSQL 소스의 SRC측 체크섬은 아직 지원하지 않는다 — PG 소스 복구 리허설은 행 수만으로
-     * 우선 검증하고, PG용 체크섬 SQL(예: md5(string_agg(...)))은 별도 결정 필요(docs/TODO.md).
+     * 6.4절 ⑤ 정합 검증 — 행 수 + 체크섬(활성·동일명 컬럼 기준).
+     * 체크섬은 소스·타깃 DbType이 같은 Oracle↔Oracle·PostgreSQL↔PostgreSQL 조합에서만
+     * 비교 가능하다(ChecksumSql — Oracle은 ORA_HASH, PostgreSQL은 md5 기반이라 값 자체가
+     * 다른 알고리즘이라 이종 조합은 비교가 성립하지 않는다, 2026-09-23 결정,
+     * docs/internals.md "정합 검증 체크섬" 절). 이종 DB 조합(Oracle↔PostgreSQL)은 행 수만
+     * 비교하고 checksumSupported=false로 사유를 note에 남긴다.
      */
     public VerifyResult verify(long registeredTableId) {
         RegisteredTable table = find(registeredTableId);
         DbConnection source = connections.get(table.sourceConnectionId());
         DbConnection target = connections.get(table.targetConnectionId());
+        DbType sourceType = DbType.find(source.dbType())
+                .orElseThrow(() -> new IllegalArgumentException("알 수 없는 소스 DB 종류: " + source.dbType()));
+        DbType targetType = DbType.find(target.dbType())
+                .orElseThrow(() -> new IllegalArgumentException("알 수 없는 타깃 DB 종류: " + target.dbType()));
+        boolean checksumSupported = sourceType == targetType
+                && (sourceType == DbType.ORACLE || sourceType == DbType.POSTGRESQL);
 
-        List<String> cols = columns.findByTable(table.id()).stream()
-                .filter(m -> m.enabled() && m.isIdentity())
-                .map(m -> m.sourceColumn().orElseThrow())
-                .collect(Collectors.toList());
-        if (cols.isEmpty()) {
-            // 매핑 메타데이터가 없는 구버전 등록 — 소스 딕셔너리 전 컬럼
-            cols = dictionaryRouter.forConnection(source)
-                    .listColumns(source, table.schemaName(), table.tableName())
-                    .stream().map(TableColumn::name).collect(Collectors.toList());
+        List<String> cols = List.of();
+        if (checksumSupported) {
+            cols = columns.findByTable(table.id()).stream()
+                    .filter(m -> m.enabled() && m.isIdentity())
+                    .map(m -> m.sourceColumn().orElseThrow())
+                    .collect(Collectors.toList());
+            if (cols.isEmpty()) {
+                // 매핑 메타데이터가 없는 구버전 등록 — 소스 딕셔너리 전 컬럼
+                cols = dictionaryRouter.forConnection(source)
+                        .listColumns(source, table.schemaName(), table.tableName())
+                        .stream().map(TableColumn::name).collect(Collectors.toList());
+            }
         }
 
-        long[] src = countAndChecksum(source, table.qualified(), cols);
-        long[] tgt = countAndChecksum(target, table.targetQualified(), cols);
-        return new VerifyResult(src[0], tgt[0], src[1], tgt[1],
-                src[0] == tgt[0] && src[1] == tgt[1]);
+        CountChecksum src = countAndChecksum(source, sourceType, table.schemaName(), table.tableName(),
+                cols, checksumSupported);
+        CountChecksum tgt = countAndChecksum(target, targetType, table.targetSchema(), table.targetTable(),
+                cols, checksumSupported);
+        boolean match = src.count() == tgt.count()
+                && (!checksumSupported || java.util.Objects.equals(src.checksum(), tgt.checksum()));
+        String note = checksumSupported ? null : "이종 DB는 행수만 비교(체크섬 미지원)";
+        return new VerifyResult(src.count(), tgt.count(), src.checksum(), tgt.checksum(),
+                match, checksumSupported, note);
     }
 
-    static String checksumSql(String qualifiedTable, List<String> cols) {
-        String concat = cols.stream()
-                .map(c -> "NVL(TO_CHAR(\"" + c + "\"), '~null~')")
-                .collect(Collectors.joining(" || '|' || "));
-        return "SELECT COUNT(*), NVL(SUM(ORA_HASH(" + concat + ")), 0) FROM " + qualifiedTable;
+    private record CountChecksum(long count, Long checksum) {
     }
 
-    private long[] countAndChecksum(DbConnection conn, String qualifiedTable, List<String> cols) {
+    private CountChecksum countAndChecksum(DbConnection conn, DbType type, String schema, String table,
+                                           List<String> cols, boolean checksumSupported) {
+        String sql = !checksumSupported ? ChecksumSql.rowCountOnly(type, schema, table)
+                : type == DbType.POSTGRESQL ? ChecksumSql.forPostgres(schema, table, cols)
+                : ChecksumSql.forOracle(schema, table, cols);
         Properties props = new Properties();
         props.setProperty("user", conn.username());
         props.setProperty("password", conn.password());
-        props.setProperty("oracle.net.CONNECT_TIMEOUT", "5000");
+        if (type == DbType.POSTGRESQL) {
+            props.setProperty("loginTimeout", "5");
+            props.setProperty("connectTimeout", "5");
+        } else {
+            props.setProperty("oracle.net.CONNECT_TIMEOUT", "5000");
+        }
         try (Connection db = DriverManager.getConnection(conn.jdbcUrl(), props);
              Statement st = db.createStatement();
-             ResultSet rs = st.executeQuery(checksumSql(qualifiedTable, cols))) {
+             ResultSet rs = st.executeQuery(sql)) {
             rs.next();
-            return new long[] {rs.getLong(1), rs.getLong(2)};
+            long count = rs.getLong(1);
+            Long checksum = checksumSupported ? rs.getLong(2) : null;
+            return new CountChecksum(count, checksum);
         } catch (SQLException e) {
-            throw new IllegalStateException("정합 검증 쿼리 실패(" + qualifiedTable + "): "
+            throw new IllegalStateException("정합 검증 쿼리 실패(" + schema + "." + table + "): "
                     + (e.getMessage() == null ? e.toString() : e.getMessage().strip()));
         }
     }

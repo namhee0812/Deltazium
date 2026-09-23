@@ -23,6 +23,7 @@ import io.deltazium.backend.iceberg.IcebergProperties;
 import io.deltazium.backend.registry.DbConnection;
 import io.deltazium.backend.registry.DbConnectionService;
 import io.deltazium.backend.registry.DbType;
+import io.deltazium.backend.registry.PostgresReplicationCleaner;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -83,6 +84,12 @@ import org.springframework.transaction.annotation.Transactional;
  * |                          | 통일 — 기존엔 대문자로 저장돼 DdlEventService 등 다른 기록처와
  * |                          | 달라 테이블 drawer 이벤트 목록에서 누락됐다.
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | 결함 수정: PG 소스의 마지막 테이블 해제(source 커넥터 삭제) 직후
+ * |                          | PostgresReplicationCleaner로 복제 슬롯·publication 정리 —
+ * |                          | inactive 슬롯이 남아 WAL 정리를 막던 문제(2026-09-22~23 관측).
+ * |                          | 슬롯·publication 이름 리터럴("dz_"+prefix)을
+ * |                          | ConnectorNames.replicationSlot/Publication으로 단일화
+ * --------------------------------------------------
  */
 @Service
 public class RegistrationService {
@@ -100,6 +107,7 @@ public class RegistrationService {
     private final ChangelogTableService changelog;
     private final IcebergProperties iceberg;
     private final TableEventService events;
+    private final PostgresReplicationCleaner replicationCleaner;
     private final String kafkaBootstrap;
 
     public RegistrationService(RegisteredTableRepository repository,
@@ -110,6 +118,7 @@ public class RegistrationService {
                                ChangelogTableService changelog,
                                IcebergProperties iceberg,
                                TableEventService events,
+                               PostgresReplicationCleaner replicationCleaner,
                                @Value("${deltazium.kafka.bootstrap}") String kafkaBootstrap) {
         this.repository = repository;
         this.columnRepository = columnRepository;
@@ -119,6 +128,7 @@ public class RegistrationService {
         this.changelog = changelog;
         this.iceberg = iceberg;
         this.events = events;
+        this.replicationCleaner = replicationCleaner;
         this.kafkaBootstrap = kafkaBootstrap;
     }
 
@@ -425,8 +435,8 @@ public class RegistrationService {
                 vars.put("pg_user", source.username());
                 vars.put("pg_password", source.password());
                 vars.put("pg_dbname", source.databaseName());
-                vars.put("slot_name", "dz_" + prefix);
-                vars.put("publication_name", "dz_" + prefix);
+                vars.put("slot_name", ConnectorNames.replicationSlot(prefix));
+                vars.put("publication_name", ConnectorNames.replicationPublication(prefix));
                 yield "source-postgresql";
             }
             default -> throw new IllegalArgumentException("source 커넥터 템플릿 미정의: " + type.label());
@@ -511,6 +521,9 @@ public class RegistrationService {
             resetConnectorOffsets(ConnectorNames.source(prefix));
             quietDelete(ConnectorNames.source(prefix));
             quietDelete(ConnectorNames.icebergSink(prefix));
+            if (DbType.find(source.dbType()).orElse(null) == DbType.POSTGRESQL) {
+                cleanupPostgresReplication(source, prefix, table);
+            }
         } else {
             deploySource(source, remainingOfSource, null);
         }
@@ -521,6 +534,32 @@ public class RegistrationService {
         events.info(table.schemaName(), table.tableName(), "UNREGISTERED",
                 "등록 해제 — changelog " + (dropChangelog ? "삭제됨" : "보존"));
         return remaining;
+    }
+
+    /**
+     * PostgreSQL 소스의 마지막 테이블 해제 직후 슬롯·publication 정리 (결함 2 수정,
+     * 2026-09-22~23 관측 — inactive 슬롯이 남아 WAL 정리를 막던 문제, docs/internals.md
+     * "PG 복제 슬롯 정리" 절). 실패해도 등록 해제 자체는 실패시키지 않는다 — WARN 이벤트로
+     * 남기고 사용자가 이벤트 메시지의 SQL로 수동 정리할 수 있게 한다.
+     */
+    private void cleanupPostgresReplication(DbConnection source, String prefix, RegisteredTable table) {
+        String slot = ConnectorNames.replicationSlot(prefix);
+        String publication = ConnectorNames.replicationPublication(prefix);
+        String manualSql = "SELECT pg_drop_replication_slot('" + slot + "'); "
+                + "DROP PUBLICATION IF EXISTS \"" + publication + "\";";
+        try {
+            PostgresReplicationCleaner.Result result = replicationCleaner.cleanup(source, slot, publication);
+            if (result.slotDropped() && result.publicationDropped()) {
+                events.info(table.schemaName(), table.tableName(), "SLOT_DROPPED",
+                        "PG 복제 슬롯·publication 정리 완료 (" + slot + ")");
+            } else {
+                events.record(table.schemaName(), table.tableName(), "SLOT_CLEANUP_FAILED", "WARN",
+                        "PG 복제 슬롯이 아직 active라 정리하지 못함 — 수동 정리: " + manualSql, null);
+            }
+        } catch (Exception e) {
+            events.record(table.schemaName(), table.tableName(), "SLOT_CLEANUP_FAILED", "WARN",
+                    "PG 복제 슬롯·publication 정리 실패(" + e.getMessage() + ") — 수동 정리: " + manualSql, null);
+        }
     }
 
     private void resetConnectorOffsets(String connector) {

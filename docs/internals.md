@@ -504,8 +504,92 @@ unquoted 폴딩 규칙 하나로만 저장하므로 애초에 표현할 수 없�
 
 **미검증으로 남은 범위** (`docs/TODO.md` ② 참고): 새 소스 등록 후 스냅샷 notification
 구독이 backend 재기동 전까지 안 보이는 한계(이미 위 절에 기록됨, D3), PG 타깃의 체크섬
-검증(`RecoveryService.checksumSql`은 여전히 `ORA_HASH` 전용), mixed-case 타깃·타입 매핑
-경계·복구 재발행의 PG 타깃 실측.
+검증(2026-09-23 결함 1 수정으로 해소 — 아래 "정합 검증 체크섬" 절), mixed-case 타깃·타입
+매핑 경계·복구 재발행의 PG 타깃 실측.
+
+## 정합 검증 체크섬 — 컬럼별 해시·PG 지원·이종 DB 제한 (2026-09-23, 결함 1)
+
+`RecoveryService.verify()`(architecture.md 6.4절 ⑤)의 체크섬 SQL이 전 컬럼을
+`NVL(TO_CHAR(c),'~null~') || '|' || ...`로 한 문자열에 이어 `ORA_HASH`했다. 206컬럼
+테이블(CDC.NH_CDC_TEST_5)에서 `ORA-01489: result of string concatenation is too long`
+(VARCHAR2 4000바이트 한도) — 컬럼 수가 많은 테이블은 애초에 정합 검증이 안 됐다. 게다가
+`ORA_HASH` 전용이라 PostgreSQL이 소스·타깃 어느 쪽이든 끼면 체크섬 자체가 없었다
+(위 "PG 타깃 식별자 폴딩" 절 미검증 항목).
+
+**행 해시로 전환 — 컬럼별 해시를 먼저 낸다.** `ChecksumSql.forOracle`은 컬럼마다
+`NVL(TO_CHAR(ORA_HASH("c")), '~null~')`로 먼저 해시를 낸 뒤(결과가 10자리 이하 숫자
+문자열이거나 `~null~`) 그것들을 `'|'`로 이어 행 해시 `ORA_HASH(...)`를 낸다. 컬럼 하나가
+결과 문자열에 기여하는 바이트 수가 "TO_CHAR(임의 값)"에서 "10자리 숫자 + 구분자 1바이트
+≈ 11바이트" 고정 상한으로 줄어든다 — 행 안 컬럼 결합(모든 컬럼 값이 같아야 해시가
+같다)은 그대로 유지되면서 VARCHAR2 4000 한도에 걸릴 여지가 거의 사라진다.
+
+**그래도 넘을 수 있는 컬럼 수(200 초과)는 묶어서 해시의 해시.** 200컬럼 * 11바이트 =
+2200바이트로 여유가 있지만, 컬럼이 아주 많은 테이블(300~400개대)까지 안전하게 두려고
+`ChecksumSql.ORACLE_CHUNK_SIZE=200`개씩 묶어 묶음 해시(`TO_CHAR(ORA_HASH(...))`)를 내고,
+묶음 해시들을 다시 `'|'`로 이어 최종 행 해시를 낸다 — 묶음이 몇 개든 묶음 해시 하나는
+10자리 이하라 바깥쪽 결합도 4000을 넘지 않는다. 206컬럼(200+6)·450컬럼(200+200+50) 케이스로
+`ChecksumSqlTest`에서 묶음 경계를 검증한다.
+
+**PostgreSQL은 별도 SQL — text에 길이 한도가 없어 묶음이 필요 없다.**
+`ChecksumSql.forPostgres`는 `concat_ws('|', coalesce("c"::text,'~null~'), ...)`로 전
+컬럼을 이은 뒤 `md5(...)` 앞 8자리(32bit)를 `bit(32)::bigint`로 변환해 SUM한다. 식별자는
+따옴표로 감싼다 — 저장값이 이미 `DbType.foldIdentifier`로 폴딩돼 있으므로(8절) 그대로
+따옴표에 넣으면 실제 카탈로그 식별자와 일치한다.
+
+**이종(Oracle↔PostgreSQL) 조합은 체크섬을 비교하지 않는다.** 두 SQL이 서로 다른 해시
+알고리즘·문자열 표현(`TO_CHAR` vs `::text`)을 쓰므로 같은 행이라도 같은 값이 나온다는
+보장이 없다 — 비교 자체가 성립하지 않는다. `RecoveryService.verify()`는 소스·타깃
+DbType이 같을 때만(`Oracle↔Oracle`·`PostgreSQL↔PostgreSQL`) `checksumSupported=true`로
+컬럼 해시 SQL을 쓰고, 다르면 `ChecksumSql.rowCountOnly`(컬럼 없이 `COUNT(*)`만)로 행 수만
+비교한다 — 컬럼 없이 실행되므로 소스·타깃 컬럼 케이스가 서로 다른 문제(PG 타깃 소문자
+폴딩 vs Oracle 소스 대문자)도 비껴간다. `VerifyResult`에 `checksumSupported`·`note`를
+추가해 UI(`RecoveryPanel.tsx`)가 체크섬 칸을 "—"로, 사유를 한 줄로 보여준다.
+
+**DbType별 접속 속성도 분기.** `countAndChecksum`이 Oracle 전용
+`oracle.net.CONNECT_TIMEOUT`만 쓰고 있었다 — `OracleConnectionTester`에 이미 있던
+PostgreSQL(`loginTimeout`·`connectTimeout`) 분기를 그대로 가져왔다. 소스·타깃이 서로 다른
+DbType이면 각자의 DbType에 맞는 속성으로 접속한다.
+
+**범위 밖으로 남긴 것** (`docs/TODO.md` ② 기록): 이종 DB 조합의 체크섬(알고리즘을
+맞추는 것 자체가 별도 설계 — 예: 양쪽 다 md5 기반으로 통일하려면 Oracle 쪽도 `DBMS_CRYPTO`
+등을 검토해야 한다).
+
+## PG 복제 슬롯 정리 — 등록 해제 시점 자동 정리 (2026-09-23, 결함 2)
+
+소스의 마지막 테이블을 해제해 `dz-source-<prefix>` 커넥터를 지운 뒤에도 PostgreSQL 소스에
+논리 복제 슬롯 `dz_<prefix>`·publication `dz_<prefix>`가 inactive로 남는 현상을
+2026-09-22~23 두 차례 관측(수동 삭제로 대응). inactive 슬롯은 PostgreSQL이 WAL을 그
+슬롯의 confirmed_flush_lsn 이전으로 정리하지 못하게 막아 디스크를 채운다 — Debezium
+소스 커넥터를 지워도 슬롯 자체는 PostgreSQL 쪽 객체라 자동으로 없어지지 않는다.
+
+**정리 시점을 "소스의 마지막 테이블 해제" 하나로 고정.** 테이블이 남아 있으면 그 소스는
+계속 캡처해야 하므로 슬롯을 건드리면 안 된다 — `RegistrationService.unregister`가 이미
+"remainingOfSource가 비면 그 소스의 source·iceberg-sink만 정리"하는 분기를 갖고 있어(D2
+이전부터 있던 로직), 그 분기 안(소스 커넥터 삭제 직후)에서만 PostgreSQL 소스일 때
+`PostgresReplicationCleaner.cleanup`을 호출한다.
+
+**별도 컴포넌트로 분리한 이유.** SQL·재시도 로직을 JDBC mock으로 빠르게 단위 테스트하려면
+Spring 컨텍스트가 필요 없는 순수 클래스가 유리하다 — `RegistrationServiceTest`는
+`@MockitoBean`으로 호출 여부(3케이스: PG 마지막 테이블/Oracle 소스/PG 테이블 잔존)만 검증하고,
+`PostgresReplicationCleanerTest`가 실제 SQL 문자열·재시도 횟수를 검증한다.
+
+**재시도는 "커넥터 종료 대기" — active 슬롯은 DROP이 거부된다.** source 커넥터를 지운
+직후에도 Debezium task가 완전히 정지하기 전까지는 슬롯이 active일 수 있어, `active=false`가
+될 때까지 1초 간격 최대 10회 재조회한다. 10회 후에도 active면 드롭을 포기하고
+`stillActive=true`로 보고 — 억지로 드롭을 시도하지 않는다(PostgreSQL이 어차피 거부한다).
+
+**실패해도 등록 해제 자체는 실패시키지 않는다.** `RegistrationService.
+cleanupPostgresReplication`은 `cleanup` 호출을 전부 try/catch로 감싸 예외를 삼키고,
+결과에 따라 WARN 이벤트(`SLOT_CLEANUP_FAILED`) 또는 성공 이벤트(`SLOT_DROPPED`)를 남긴다.
+`SLOT_CLEANUP_FAILED` 메시지에는 수동 정리용 SQL(`SELECT pg_drop_replication_slot('...');
+DROP PUBLICATION IF EXISTS "...";`)을 그대로 적어 사용자가 복사해 쓸 수 있게 한다 —
+등록 해제(메타데이터 삭제·커넥터 제거)는 이벤트 기록 실패조차 흐름을 막지 않는
+`TableEventService.record`의 원칙(파일 상단 설명)과 같은 이유다.
+
+**이름 규칙 단일화.** 슬롯·publication 이름 `"dz_" + prefix`가 `RegistrationService.
+deploySourceConnector`(배포)와 정리 코드 양쪽에 따로 있으면 한쪽만 바뀌었을 때 어긋난다 —
+`ConnectorNames.replicationSlot/replicationPublication`으로 옮겨 두 곳이 같은 메서드를
+쓰게 했다(source-postgresql.json.tmpl의 `{{slot_name}}`·`{{publication_name}}`과 같은 값).
 
 ## 다중 소스·다중 타깃 ③ 저장소 프로파일(MinIO/R2) 구현 판단 (2026-09-07)
 

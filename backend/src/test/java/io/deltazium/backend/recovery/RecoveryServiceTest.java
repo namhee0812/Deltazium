@@ -11,7 +11,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 파일명 : RecoveryServiceTest.java
  * 작성일자 : 26. 07. 29.
  * 작성자 : 최남희
- * 설명 : 순수 로직 검증 — 커맨드 조립·체크섬 SQL. 프로세스 기동·검증 쿼리는 리허설(E2E)에서 확인.
+ * 설명 : 순수 로직 검증 — 복구 커맨드 조립. 체크섬 SQL은 ChecksumSqlTest, 프로세스 기동·검증
+ * 쿼리는 리허설(E2E)에서 확인.
  *
  * <p>
  * 수정 내역
@@ -28,17 +29,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ③ 저장소 프로파일: catalog-uri= 단일 인자 대신
  * |                          | catalog.uri= 형태(카탈로그 속성 반복 인자)로 검증
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | 체크섬 SQL 생성 단위 테스트를 ChecksumSqlTest로 분리(결함 1
+ * |                          | 수정 — DbType별 생성기, Oracle 묶음 해시) — 여기는 커맨드 조립만 남김
+ * --------------------------------------------------
  */
 class RecoveryServiceTest {
-
-    @Test
-    void 체크섬_SQL은_NULL을_안전하게_다루고_컬럼을_구분자로_잇는다() {
-        String sql = RecoveryService.checksumSql("TGT.T1", List.of("ID", "AMOUNT"));
-        assertThat(sql).isEqualTo(
-                "SELECT COUNT(*), NVL(SUM(ORA_HASH("
-                + "NVL(TO_CHAR(\"ID\"), '~null~') || '|' || NVL(TO_CHAR(\"AMOUNT\"), '~null~')"
-                + ")), 0) FROM TGT.T1");
-    }
 
     @Test
     void 복구_커맨드에_카탈로그와_재생_인자가_전부_들어간다() {

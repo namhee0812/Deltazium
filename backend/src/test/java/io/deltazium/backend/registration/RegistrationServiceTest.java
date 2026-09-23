@@ -16,6 +16,7 @@ import io.deltazium.backend.registry.DbConnectionRepository;
 import io.deltazium.backend.registry.DbConnectionService;
 import io.deltazium.backend.registry.DbType;
 import io.deltazium.backend.registry.OracleConnectionTester;
+import io.deltazium.backend.registry.PostgresReplicationCleaner;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -74,6 +75,9 @@ import static org.mockito.Mockito.when;
  * 26. 09. 22.       | 최남희  | PG 타깃 검증(2026-09-22) 결함 회귀 테스트 추가 — D1(타깃
  * |                          | 이름 폴딩이 타깃 DbType 기준인지), D2(등록 이벤트 키가 원문인지)
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | 결함 2 회귀 테스트 추가 — PG 소스 마지막 테이블 해제 시
+ * |                          | PostgresReplicationCleaner 호출/미호출 3케이스
+ * --------------------------------------------------
  */
 @EnableConfigurationProperties(IcebergProperties.class)
 class RegistrationServiceTest {
@@ -102,6 +106,9 @@ class RegistrationServiceTest {
 
     @MockitoBean
     OracleConnectionTester tester;
+
+    @MockitoBean
+    PostgresReplicationCleaner replicationCleaner;
 
     long srcId;
     long tgtId;
@@ -488,6 +495,48 @@ class RegistrationServiceTest {
         verify(deploy).deleteConnector("dz-iceberg-dz");
         verify(deploy, org.mockito.Mockito.never()).deleteConnector("dz-source-pgsrc2");
         verify(deploy, org.mockito.Mockito.never()).deleteConnector("dz-iceberg-pgsrc2");
+    }
+
+    @Test
+    void PG_소스의_마지막_테이블_해제는_복제_슬롯_정리를_호출한다() throws java.sql.SQLException {
+        // 결함 2 회귀: 소스의 마지막 테이블 해제로 source 커넥터가 사라지면 PostgreSQL 소스는
+        // 복제 슬롯·publication을 정리해야 한다(ConnectorNames와 같은 이름 규칙, dz_<prefix>).
+        long pgSrcId = connections.create(new DbConnection(null, "pgsrc5", "POSTGRESQL", "SOURCE",
+                "pghost", 5432, "cdc", "dz_capture", "pw", "pgsrc5")).id();
+        mockPgTable("cdc_src.orders", true, true);
+        long id = service.register(pgSrcId, tgtId, List.of(spec("cdc_src.orders"))).get(0).id();
+        when(replicationCleaner.cleanup(any(), eq("dz_pgsrc5"), eq("dz_pgsrc5")))
+                .thenReturn(new PostgresReplicationCleaner.Result(true, true, false));
+
+        service.unregister(id, false);
+
+        verify(replicationCleaner).cleanup(any(), eq("dz_pgsrc5"), eq("dz_pgsrc5"));
+    }
+
+    @Test
+    void Oracle_소스의_마지막_테이블_해제는_복제_슬롯_정리를_호출하지_않는다() throws java.sql.SQLException {
+        mockTable("CDC.T1", true, true);
+        long id = service.register(srcId, tgtId, List.of(spec("CDC.T1"))).get(0).id();
+
+        service.unregister(id, false);
+
+        verify(replicationCleaner, org.mockito.Mockito.never())
+                .cleanup(any(), anyString(), anyString());
+    }
+
+    @Test
+    void PG_소스에_테이블이_남아있으면_복제_슬롯_정리를_호출하지_않는다() throws java.sql.SQLException {
+        long pgSrcId = connections.create(new DbConnection(null, "pgsrc6", "POSTGRESQL", "SOURCE",
+                "pghost", 5432, "cdc", "dz_capture", "pw", "pgsrc6")).id();
+        mockPgTable("cdc_src.orders", true, true);
+        mockPgTable("cdc_src.items", true, true);
+        var all = service.register(pgSrcId, tgtId, List.of(spec("cdc_src.orders"), spec("cdc_src.items")));
+        long id = all.stream().filter(t -> t.tableName().equals("orders")).findFirst().orElseThrow().id();
+
+        service.unregister(id, false);
+
+        verify(replicationCleaner, org.mockito.Mockito.never())
+                .cleanup(any(), anyString(), anyString());
     }
 
 }
