@@ -33,6 +33,9 @@ import static org.mockito.Mockito.when;
  * --------------------------------------------------
  * 26. 09. 23.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | 리뷰 반영: 재기동 직후(knownInfoIds 초기화) 해소 판정이 무력화되던
+ * |                          | 결함의 회귀 테스트 추가
+ * --------------------------------------------------
  */
 class SystemWarningServiceTest {
 
@@ -155,6 +158,39 @@ class SystemWarningServiceTest {
         SystemWarningService restarted =
                 new SystemWarningService(metrics, connect, acks, System.getProperty("java.io.tmpdir"), 101);
         assertThat(restarted.warnings().warnings()).isEmpty();
+    }
+
+    @Test
+    void 재기동_직후_해소된_관측_행도_지워지고_재정지_시_ack와_무관하게_다시_뜬다() throws Exception {
+        // 리뷰 결함 재현: 해소 판정이 in-memory 집합에만 의존하면, 그 집합이 비어 있는
+        // "재기동 후 첫 조회"에서 이미 해소된(재개된) 관측 행을 못 지운다 — 그 결과 나중에
+        // 같은 커넥터를 다시 정지하면 옛 since_ms를 물려받아, 예전에 ack한 건이면 새 정지가
+        // 알림에 안 뜨는 상태가 된다.
+        String name = "dz-jdbc-sink-dz-src_t1";
+        String id = "connector-paused:" + name;
+
+        stubConnector(name, "PAUSED");
+        long firstSince = service.warnings().warnings().get(0).sinceMs();
+        service.ack(id);
+        assertThat(service.warnings().warnings()).isEmpty();
+
+        // 재개 — 하지만 "재기동 전" 인스턴스(service)에서는 아직 한 번도 조회하지 않는다:
+        // 재기동 직후 knownInfoIds가 비어 있는 상황을 그대로 재현하기 위해 같은 acks(DB)를
+        // 공유하는 새 서비스 인스턴스로 바로 넘어간다.
+        stubConnector(name, "RUNNING");
+        SystemWarningService restarted =
+                new SystemWarningService(metrics, connect, acks, System.getProperty("java.io.tmpdir"), 101);
+
+        // 재기동 후 첫 조회 — 해소된 관측 행이 DB 기준 판정으로 지워져야 한다.
+        assertThat(restarted.warnings().warnings()).isEmpty();
+        assertThat(acks.rows).isEmpty();
+
+        // 재정지 — 관측 행이 새로 만들어지므로 새 since_ms를 받고, 예전 ack와 무관하게 다시 뜬다.
+        Thread.sleep(2);
+        stubConnector(name, "PAUSED");
+        List<SystemWarningService.SystemWarning> ws = restarted.warnings().warnings();
+        assertThat(ws).hasSize(1);
+        assertThat(ws.get(0).sinceMs()).isNotEqualTo(firstSince);
     }
 
     @Test
