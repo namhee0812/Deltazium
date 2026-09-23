@@ -46,6 +46,11 @@
  * 26. 09. 23.       | 최남희  | AI 진단을 우측 drawer → 우하단 플로팅 위젯(AssistWidget)으로 복귀
  * |                          | (사용자 요청). 상단 바 아이콘 제거, 열림 상태는 계속 App이 소유
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | 헤더에 알림 아이콘(NotificationBell) 추가 — 시스템 경고(WARN·
+ * |                          | CRITICAL)와 확인 가능한 알림(INFO, 사용자가 정지한 커넥터)을
+ * |                          | 분리. GET /api/system/warnings 폴링을 useSystemWarnings 훅으로
+ * |                          | 옮겨 두 컴포넌트가 응답을 나눠 쓰게 했다(중복 폴링 금지)
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import {
@@ -70,6 +75,8 @@ import { TablesPanel } from '@/features/tables/TablesPanel'
 import { TopologyPanel } from '@/features/topology/TopologyPanel'
 import { ThemeToggle } from '@/features/system/ThemeToggle'
 import { WarningCenter } from '@/features/system/WarningCenter'
+import { NotificationBell } from '@/features/system/NotificationBell'
+import { useSystemWarnings } from '@/features/system/useSystemWarnings'
 import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/ui/status-pill'
 
@@ -95,6 +102,9 @@ function App() {
   const [wizardOpen, setWizardOpen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [assistOpen, setAssistOpen] = useState(false)
+  // 헤더 경고 칩(WarningCenter)·알림 아이콘(NotificationBell)이 같은 폴링 응답을 나눠 쓴다
+  // (중복 폴링 금지) — severity로 각자 걸러서 보여준다.
+  const systemWarnings = useSystemWarnings()
 
   useEffect(() => {
     const load = () =>
@@ -190,7 +200,8 @@ function App() {
               ＋ CDC 등록
             </Button>
             <ThemeToggle />
-            <WarningCenter />
+            <NotificationBell warnings={systemWarnings} />
+            <WarningCenter warnings={systemWarnings} />
           </div>
         </header>
 

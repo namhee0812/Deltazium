@@ -559,6 +559,70 @@ BigQuery SDK와 Jetty EE10 서블릿 스택을 통째로 끌어오는 비용이 
 공개 경로가 테이블의 `io()`뿐이기 때문. 등록된 changelog 테이블이 하나도 없으면(설치 직후)
 이 단계는 건너뛰고 namespace 조회 성공만으로 연결성을 판정한다.
 
+## 경고/알림 분리 — INFO severity와 ack 저장 방식 (2026-09-23)
+
+**문제.** 경고 센터(`SystemWarningService`)가 사용자가 직접 정지(pause)한 커넥터나
+DDL 거부로 apply만 멈춘 커넥터를 WARN으로 띄웠다 — 사람이 의도적으로 만든 상태인데
+"고장"처럼 보였다. 사용자 판단: 이건 확인 후 없앨 수 있는 알림이어야 한다.
+
+**severity 3단.** CRITICAL(FAILED·Kafka/Connect 불가)·WARN(사람이 만든 게 아닌
+비정상 — UNASSIGNED, task 0개 등)·INFO(PAUSED — `checkConnectors`가 상태를 FAILED →
+**PAUSED** → 그 외 비정상(WARN) 순으로 분기한다. PAUSED는 사용자 정지(`RegistrationService
+.pause`)와 DDL 거부(`DdlEventService.reject`) 둘 다 jdbc-sink 커넥터를 Connect API로
+pause시켜 만드는 상태라 이 하나의 판정으로 두 원인을 다 잡는다(architecture.md 6·7절
+— 어느 쪽이든 "apply만 멈추고 changelog는 계속"이 불변식).
+
+**ack 저장을 DB에 둔 이유.** 기존 `firstSeen`(in-memory `Map<id, sinceMs>`)은 backend
+재기동마다 리셋된다 — CRITICAL/WARN은 "경고가 다시 떴다"의 근거가 로그·Connect 상태
+자체라 문제 없지만, INFO는 ack 여부를 `id + sinceMs` 조합으로 판정하므로 재기동으로
+sinceMs가 리셋되면 이미 확인한 정지 건이 다시 뜬다. 그래서 `system_warning_acks`
+(schema.sql)에 최초 관측 시각을 저장해 재기동에도 값이 유지되게 했다 — CRITICAL/WARN은
+그대로 in-memory `firstSeen`을 쓴다(ack가 없으므로 재기동 리셋의 영향이 적고, 매 poll
+DB 왕복을 늘릴 이유가 없다).
+
+**테이블 하나가 두 역할.** `system_warning_acks(id, since_ms, acked_at)` 한 행이
+"최초 관측"과 "확인 여부"를 겸한다 — INFO 항목을 처음 보는 순간 `since_ms`만 채운
+행을 만들고(`acked_at` NULL), 사용자가 확인하면 `acked_at`만 채운다. 두 테이블(관측용
++ ack용)로 나누지 않은 건 애초에 요구된 스키마가 이 세 컬럼뿐이었고, 겸용해도 의미
+충돌이 없기 때문.
+
+**해소 시 행 삭제 — 판정은 DB 기준.** 정지된 커넥터가 재개되면(WARN/CRITICAL로도 안
+잡히는 상태) 다음 poll에서 `stabilizeInfoSinceMs`가 관측 행을 지운다 — 같은 커넥터가
+나중에 다시 정지되면 새 `since_ms`로 다시 관측돼, 예전 ack와 무관하게 알림이 다시
+뜬다("재개 후 재정지는 별개 사건" 판단, DdlEventServiceTest/RegistrationServiceTest와
+무관). 첫 구현은 해소 여부를 in-memory `Set<String> knownInfoIds`(직전 poll에서 본
+INFO id)로 판정했는데, **backend 재기동 직후엔 이 집합이 비어 있어 판정이 무력화**됐다
+— 재기동 전에 이미 해소된 id가 DB에 그대로 남고, 그 커넥터를 나중에 다시 정지하면
+옛 `since_ms`를 물려받아 예전에 ack한 건이면 새 정지가 알림에 안 뜨는 결함으로
+이어졌다(2026-09-23 리뷰 지적). `acks.findAll()`은 sinceMs 안정화 때 매 poll 한 번
+이미 부르므로, 해소 판정을 그 **같은 스냅숏**(`observed.keySet() - currentInfoIds`)
+기준으로 바꿔 knownInfoIds 없이도 재기동 여부와 무관하게 항상 정확하게 했다 — in-memory
+집합을 없앴을 뿐 DB 왕복 횟수는 늘지 않았다.
+
+**ack 필터도 같은 스냅숏 재사용.** 처음엔 sinceMs 안정화(1회)와 ack 여부 판정(1회)이
+각자 `acks.findAll()`을 불러 poll당 두 번 쿼리했다. `computeActive()`가
+`ActiveWarnings(items, ackedInfoIds)`를 반환하도록 바꿔 한 스냅숏에서 sinceMs 결정과
+ack 판정을 함께 끝내고, `warnings()`는 그 `ackedInfoIds`로만 필터한다 — poll당 쿼리
+1회로 줄었다.
+
+**UI.** 경고 칩(WarningCenter)과 알림 아이콘(NotificationBell)은 같은
+`GET /api/system/warnings` 30초 폴링 응답을 `useSystemWarnings()` 훅 하나로 공유한다
+(App.tsx가 한 번 호출해 두 컴포넌트에 내려줌) — 중복 폴링 방지.
+
+## DB 벤더 로고 (2026-09-23)
+
+토폴로지 노드·정보 카드의 "ORACLE"/"POSTGRESQL" 텍스트 태그 옆에 단색 글리프를
+붙였다(`ui/src/components/DbVendorLogo.tsx`, `simple-icons` npm 패키지 CC0 path 데이터를
+SVG `<path>`로 인라인 렌더 — 외부 요청 없음, Vite/Rollup이 사용한 아이콘만 트리셰이킹).
+
+- **simple-icons에 Oracle 글리프가 없다** — 상표 요청으로 제거된 것으로 보인다
+  (2026-09-23 확인: `siOracle` export 없음, `siPostgresql`은 있음). ORACLE은 텍스트만
+  유지하고, PostgreSQL만 아이콘이 붙는다.
+- 색은 브랜드 컬러가 아니라 텍스트와 같은 단색(`var(--ink-2)`) — 다크/라이트 양쪽에서
+  읽혀야 하고 상태 점(`--ok`/`--warn`/`--crit`) 색과 헷갈리면 안 되기 때문.
+- `DbVendorLogo`의 `<svg>`는 중첩 가능하게 만들어 `TopologySvg`(부모가 이미 `<svg>`)
+  안에서는 x/y로, `TopologyPanel`(일반 HTML)에서는 그냥 인라인 아이콘으로 쓴다.
+
 ## 개발 환경 특이사항
 
 - vite dev 서버는 `usePolling` (vite.config.ts): 이 서버에서 inotify 감시가 변경을

@@ -124,3 +124,14 @@ CREATE INDEX IF NOT EXISTS idx_metrics_samples_at ON metrics_samples (sampled_at
 -- 해상도: MIN(원본 48h) → HOUR(60일) → DAY(1년) 2단 롤업 (MetricsRollupService)
 ALTER TABLE metrics_samples ADD COLUMN IF NOT EXISTS resolution VARCHAR(5) NOT NULL DEFAULT 'MIN';
 CREATE INDEX IF NOT EXISTS idx_metrics_samples_res_at ON metrics_samples (resolution, sampled_at);
+
+-- 경고 센터 INFO 알림(PAUSED 등) 관측·확인(ack) 상태 (SystemWarningService, docs/internals.md).
+-- 한 행이 두 역할을 겸한다: (1) since_ms는 해당 경고 id의 최초 관측 시각 — backend 재기동 후에도
+-- 같은 정지 건에 대한 ack가 유효하려면 sinceMs가 유지돼야 하므로 DB에 둔다(in-memory였다면
+-- 재기동마다 리셋돼 ack가 무의미해진다). (2) acked_at이 NULL이 아니면 확인 완료.
+-- 해소(재개 등)되면 SystemWarningService가 이 행을 지운다 — 재발 시 새 since_ms로 다시 뜨게.
+CREATE TABLE IF NOT EXISTS system_warning_acks (
+    id         VARCHAR(200) PRIMARY KEY,
+    since_ms   BIGINT       NOT NULL,
+    acked_at   TIMESTAMP WITH TIME ZONE
+);
