@@ -51,6 +51,9 @@
  * |                          | 분리. GET /api/system/warnings 폴링을 useSystemWarnings 훅으로
  * |                          | 옮겨 두 컴포넌트가 응답을 나눠 쓰게 했다(중복 폴링 금지)
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | 상단 바 우측 액션 간격 정리 — 등록 버튼(전각 ＋ 문자 → Plus 아이콘)과
+ * |                          | 아이콘 묶음(테마·알림·경고) 사이에 구분선, 묶음 간 gap-4, 우측 여백
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import {
@@ -59,6 +62,7 @@ import {
   History,
   LayoutDashboard,
   Mountain,
+  Plus,
   RotateCcw,
   Table2,
 } from 'lucide-react'
@@ -195,13 +199,17 @@ function App() {
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-6">
           <span className="text-[15px] font-semibold">{current.label}</span>
           <span className="text-xs text-ink-3">{current.sub}</span>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-4 pr-1">
             <Button size="sm" onClick={() => setWizardOpen(true)}>
-              ＋ CDC 등록
+              <Plus className="size-4" strokeWidth={2.2} />
+              CDC 등록
             </Button>
-            <ThemeToggle />
-            <NotificationBell warnings={systemWarnings} />
-            <WarningCenter warnings={systemWarnings} />
+            <div className="h-5 w-px bg-border" aria-hidden />
+            <div className="flex items-center gap-2">
+              <ThemeToggle />
+              <NotificationBell warnings={systemWarnings} />
+              <WarningCenter warnings={systemWarnings} />
+            </div>
           </div>
         </header>
 
