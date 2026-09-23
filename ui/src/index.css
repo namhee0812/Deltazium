@@ -1,10 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource/ibm-plex-sans/400.css";
-@import "@fontsource/ibm-plex-sans/500.css";
-@import "@fontsource/ibm-plex-sans/600.css";
-@import "@fontsource/ibm-plex-sans/700.css";
+/* 본문: Pretendard Variable(OFL) — 한글·영문 한 벌. IBM Plex Sans는 한글이 없어 한글만
+   OS 폰트로 폴백돼 굵기·베이스라인이 어긋났다(2026-09-23). 동적 서브셋: 쓰인 글리프
+   구간만 내려받는다. 모노는 IBM Plex Mono 유지(숫자 판독·OS 무관 동일 렌더). */
+@import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 @import "@fontsource/ibm-plex-mono/400.css";
 @import "@fontsource/ibm-plex-mono/500.css";
 @import "@fontsource/ibm-plex-mono/600.css";
@@ -13,7 +13,7 @@
 
 @theme inline {
     --font-heading: var(--font-sans);
-    --font-sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-sans: 'Pretendard Variable', Pretendard, system-ui, -apple-system, 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
     --font-mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
     /* Deltazium 상태·그래픽 색 — 값은 :root(라이트)/.dark에 정의, 여기선 var() 참조만 */
     --color-ok: var(--ok);
@@ -225,6 +225,9 @@
     }
   body {
     @apply bg-background text-foreground;
+    /* Pretendard가 macOS에서 두껍게 번지는 것 방지 — dswebclient와 같은 관례 설정 */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     }
   html {
     @apply font-sans;
