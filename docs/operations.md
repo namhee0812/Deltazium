@@ -13,6 +13,10 @@
 ```
 
 - Kafka Connect가 뜨면 등록된 커넥터는 마지막 offset부터 자동 재개된다 — 커넥터 별도 기동 없음.
+- Connect 워커 JVM은 **UTC 고정**(`-Duser.timezone=UTC`, 2026-09-23)이다 — 시간대 없는
+  DATE/TIMESTAMP가 로컬(Asia/Seoul) DST 공백 시각에서 1시간 밀리던 문제
+  ([09-23 기록](incidents/2026-09-23-dst-gap-date-shift.md)). 워커를 늘리면 전부 같은 값이어야
+  하고, `connect.log`의 시각은 UTC다(KST = +9h).
 - backend(제어면)가 죽어도 CDC 데이터 흐름(캡처→apply→changelog)은 계속 돈다.
   UI·등록·복구·DDL 승인만 멈춘다.
 - 로그 위치·로테이션: [deploy/README.md](../deploy/README.md) — 일 단위,
