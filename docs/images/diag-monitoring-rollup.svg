@@ -1,0 +1,16 @@
+<svg width="162" height="26" viewBox="0 0 162 26" xmlns="http://www.w3.org/2000/svg">
+<rect x="0" y="0" width="162" height="26" fill="#ffffff"/>
+<path d="M30,13.5 L31.6,13.5" fill="none" stroke="#2f5a8a" stroke-width="0.55" stroke-linejoin="round"/>
+<polygon points="34,13.5 31.60,14.65 31.60,12.35" fill="#2f5a8a"/>
+<path d="M61,13.5 L62.6,13.5" fill="none" stroke="#2f5a8a" stroke-width="0.55" stroke-linejoin="round"/>
+<polygon points="65,13.5 62.60,14.65 62.60,12.35" fill="#2f5a8a"/>
+<path d="M92,13.5 L93.6,13.5" fill="none" stroke="#2f5a8a" stroke-width="0.55" stroke-linejoin="round"/>
+<polygon points="96,13.5 93.60,14.65 93.60,12.35" fill="#2f5a8a"/>
+<path d="M123,13.5 L124.6,13.5" fill="none" stroke="#2f5a8a" stroke-width="0.55" stroke-linejoin="round"/>
+<polygon points="127,13.5 124.60,14.65 124.60,12.35" fill="#2f5a8a"/>
+<rect x="3" y="6" width="27" height="15" rx="2.4" fill="#dce7f2" stroke="#1c2e4a" stroke-width="0.4"/>
+<rect x="34" y="6" width="27" height="15" rx="2.4" fill="#eef2f7" stroke="#1c2e4a" stroke-width="0.4"/>
+<rect x="65" y="6" width="27" height="15" rx="2.4" fill="#eef2f7" stroke="#1c2e4a" stroke-width="0.4"/>
+<rect x="96" y="6" width="27" height="15" rx="2.4" fill="#eef2f7" stroke="#1c2e4a" stroke-width="0.4"/>
+<rect x="127" y="6" width="27" height="15" rx="2.4" fill="#eef2f7" stroke="#1c2e4a" stroke-width="0.4"/>
+</svg>
