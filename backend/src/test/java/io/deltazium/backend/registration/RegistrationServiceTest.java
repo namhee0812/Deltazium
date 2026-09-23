@@ -111,9 +111,9 @@ class RegistrationServiceTest {
         when(dictionary.dbType()).thenReturn(DbType.ORACLE);
         when(dictionary.captureSetupLabel()).thenReturn("supplemental logging (ALL) COLUMNS");
         when(pgDictionary.dbType()).thenReturn(DbType.POSTGRESQL);
-        // 소스 커넥션의 topicPrefix가 커넥터 이름(dz-*-<prefix>-*)에 그대로 들어간다 — "dz"로 고정해
-        // 기존(단일 소스 시절) 커넥터명 기댓값과의 diff를 prefix 삽입만으로 좁힌다.
-        srcId = connections.create(new DbConnection(null, "src", "ORACLE", "SOURCE",
+        // topicPrefix는 이름 슬러그로 고정된다(2026-09-23, 4절) — 이름을 "dz"로 두어 커넥터명이
+        // 단일 소스 시절 기댓값(dz-source-dz 등)과 그대로 맞도록 한다. 명시 prefix 인자는 무시된다.
+        srcId = connections.create(new DbConnection(null, "dz", "ORACLE", "SOURCE",
                 "srchost", 1521, "SRCPDB", "dbz", "pw", "dz")).id();
         tgtId = connections.create(new DbConnection(null, "tgt", "ORACLE", "TARGET",
                 "tgthost", 1521, "TGTPDB", "apply", "pw")).id();
