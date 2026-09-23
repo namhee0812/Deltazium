@@ -70,7 +70,9 @@ import org.springframework.stereotype.Service;
  * |                          | 분리 — Oracle은 컬럼별 해시 후 행 해시(+ 필요 시 묶음)로
  * |                          | VARCHAR2 4000 한도(ORA-01489, 206컬럼 테이블에서 실측)를
  * |                          | 피하고, PostgreSQL은 md5 기반 SQL을 추가. 소스·타깃 DbType이
- * |                          | 다른 이종 조합은 체크섬 비교가 성립하지 않아 행 수만 비교
+ * |                          | 다른 이종 조합은 체크섬 비교가 성립하지 않아 행 수만 비교.
+ * |                          | (보완) 체크섬 컬럼명을 DbType 폴딩으로 — sourceColumn()의 대문자
+ * |                          | 가정 때문에 PG↔PG에서 "ID" does not exist로 실패하던 것(라이브 실측)
  * --------------------------------------------------
  */
 @Service
@@ -329,6 +331,10 @@ public class RecoveryService {
                         .listColumns(source, table.schemaName(), table.tableName())
                         .stream().map(TableColumn::name).collect(Collectors.toList());
             }
+            // ColumnMapping.sourceColumn()은 Oracle 가정으로 대문자를 돌려준다 — 체크섬 SQL은 따옴표
+            // 식별자라 실제 카탈로그 대소문자여야 하므로 DbType 폴딩(Oracle 대문자·PG 소문자, 8절)으로
+            // 맞춘다. 체크섬은 동종 조합에서만 계산하니 소스·타깃에 같은 폴딩을 써도 된다.
+            cols = cols.stream().map(sourceType::foldIdentifier).collect(Collectors.toList());
         }
 
         CountChecksum src = countAndChecksum(source, sourceType, table.schemaName(), table.tableName(),
