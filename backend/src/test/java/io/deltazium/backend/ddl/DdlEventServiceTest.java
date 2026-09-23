@@ -71,7 +71,7 @@ class DdlEventServiceTest {
 
     @BeforeEach
     void setUp() {
-        long sourceId = connections.create(new DbConnection(null, "s", "ORACLE", "SOURCE",
+        long sourceId = connections.create(new DbConnection(null, "dz", "ORACLE", "SOURCE",
                 "h", 1521, "SRC", "u", "p", "dz")).id();
         targetId = connections.create(new DbConnection(null, "t", "ORACLE", "TARGET",
                 "h", 1521, "TGT", "u", "p")).id();
