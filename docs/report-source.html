@@ -118,7 +118,7 @@ group으로 같은 토픽을 소비해 lag를 서로 격리한다. Iceberg/MinIO
 쓰고 자체 코드는 제어면·복구·UI에만 둔다 — apply 시맨틱을 JDBC sink 단일 경로로 유지해, 복구 결과가
 라이브 적재와 달라지는 사고를 구조적으로 차단하기 위함이다.
 </p>
-<div class="diagram-wrap " style="width:172mm;"><img src="/home/nhchoi/deltazium/docs/images/diag-overview.svg"><div class="dlabel" style="left:2.33%;top:18.87%;width:17.44%;height:12.26%;"><div class="inner"><span class="t">Oracle</span><span class="s">SRC · LogMiner</span></div></div><div class="dlabel" style="left:2.33%;top:37.74%;width:17.44%;height:12.26%;"><div class="inner"><span class="t">PostgreSQL</span><span class="s">SRC · pgoutput</span></div></div><div class="dlabel" style="left:23.26%;top:26.42%;width:16.28%;height:14.15%;"><div class="inner"><span class="t">Debezium</span><span class="s">source connector</span></div></div><div class="dlabel" style="left:43.02%;top:26.42%;width:13.95%;height:14.15%;"><div class="inner"><span class="t">Kafka</span><span class="s">KRaft</span></div></div><div class="dlabel" style="left:60.47%;top:5.66%;width:15.12%;height:12.26%;"><div class="inner"><span class="t">Iceberg sink</span><span class="s">append</span></div></div><div class="dlabel" style="left:79.07%;top:5.66%;width:18.60%;height:12.26%;"><div class="inner"><span class="t">changelog</span><span class="s">Iceberg · MinIO(S3)</span></div></div><div class="dlabel" style="left:79.07%;top:24.53%;width:18.60%;height:12.26%;"><div class="inner"><span class="t">recovery-job</span><span class="s">scan · 재조립</span></div></div><div class="dlabel" style="left:60.47%;top:24.53%;width:15.12%;height:12.26%;"><div class="inner"><span class="t">복구 토픽</span><span class="s">Kafka</span></div></div><div class="dlabel" style="left:60.47%;top:62.26%;width:19.77%;height:14.15%;"><div class="inner"><span class="t">JDBC sink</span><span class="s">라이브 · 복구 공용</span></div></div><div class="dlabel" style="left:82.56%;top:62.26%;width:15.12%;height:14.15%;"><div class="inner"><span class="t">타깃 DB</span><span class="s">PK upsert</span></div></div><div class="dlabel" style="left:23.26%;top:84.91%;width:52.33%;height:12.26%;"><div class="inner"><span class="t">제어면 — backend(Spring Boot) + Web UI(React)</span></div></div></div>
+<div class="diagram-wrap " style="width:172mm;"><img src="/home/nhchoi/deltazium/docs/images/diag-overview.svg"><div class="dlabel" style="left:2.33%;top:18.52%;width:17.44%;height:12.04%;"><div class="inner"><span class="t">Oracle</span><span class="s">SRC · LogMiner</span></div></div><div class="dlabel" style="left:2.33%;top:37.04%;width:17.44%;height:12.04%;"><div class="inner"><span class="t">PostgreSQL</span><span class="s">SRC · pgoutput</span></div></div><div class="dlabel" style="left:24.42%;top:22.22%;width:15.12%;height:24.07%;"><div class="inner"><span class="t">Debezium</span><span class="s">source connector</span></div></div><div class="dlabel" style="left:44.19%;top:27.78%;width:13.95%;height:12.96%;"><div class="inner"><span class="t">Kafka</span><span class="s">KRaft</span></div></div><div class="dlabel" style="left:62.79%;top:5.56%;width:14.53%;height:12.04%;"><div class="inner"><span class="t">Iceberg sink</span><span class="s">append</span></div></div><div class="dlabel" style="left:80.81%;top:5.56%;width:18.02%;height:12.04%;"><div class="inner"><span class="t">changelog</span><span class="s">Iceberg · MinIO(S3)</span></div></div><div class="dlabel" style="left:80.81%;top:24.07%;width:18.02%;height:12.04%;"><div class="inner"><span class="t">recovery-job</span><span class="s">scan · 재조립</span></div></div><div class="dlabel" style="left:62.79%;top:24.07%;width:14.53%;height:12.04%;"><div class="inner"><span class="t">복구 토픽</span><span class="s">Kafka</span></div></div><div class="dlabel" style="left:62.79%;top:61.11%;width:19.77%;height:13.89%;"><div class="inner"><span class="t">JDBC sink</span><span class="s">라이브 · 복구 공용</span></div></div><div class="dlabel" style="left:84.88%;top:61.11%;width:15.12%;height:13.89%;"><div class="inner"><span class="t">타깃 DB</span><span class="s">PK upsert</span></div></div><div class="dlabel" style="left:76.74%;top:83.33%;width:22.09%;height:11.11%;"><div class="inner"><span class="t">제어면</span><span class="s">backend + UI</span></div></div></div>
 <p class="dcap">그림 A. 전체 아키텍처 — 캡처(소스별) → Kafka → 실적재(JDBC sink)·changelog(Iceberg sink) 병행,
 복구는 changelog → recovery-job → 복구 토픽 → 동일 JDBC sink로 합류. 점선은 제어면의 배포·관리 경로.</p>
 
@@ -200,17 +200,15 @@ recovery-sink는 apply 완료(consumer lag 소진)를 감지해 자동 정지한
 
 <div class="keep">
 <h3>3.6 실장애: connector RUNNING / task FAILED — 나흘 미감지의 해부와 복구</h3>
-<div class="fig-row">
-<div style="flex:1.6 1 100mm;">
-<p style="margin-top:0;">공유 dev Oracle의 archive log 정리로 재개 지점 SCN이 소실돼 캡처 task가 죽었는데,
+<p>공유 dev Oracle의 archive log 정리로 재개 지점 SCN이 소실돼 캡처 task가 죽었는데,
 connector는 RUNNING·발행이 없으니 lag도 0 — 모든 지표가 "평온"을 가리키는 나흘이 흘렀다. Connect REST의
 task trace로 원인을 확정하고 이 장애에서 기능을 파생시켰다: task 포함 상태 판정(최악값 집계), 장애 배너
 (감지 시각·원인·전체 trace), 행별 재시도, 단계형 재스냅샷 워크플로. 최종 복구는 타깃 truncate 완전
 재구축으로 10.5만 행을 50초에 go-live — 갭 중 소스에서 삭제된 행(고아 +2,237)까지 정리했다. "lag 0은
 따라잡음과 무소식을 구분하지 못한다"는 교훈은 대시보드의 발행 vs apply 겹침 차트로 만들었다.</p>
 </div>
-<div class="fig-side" style="width:74mm;"><div class="cropbox" style="width:74mm;height:87.18mm;"><img src="/home/nhchoi/deltazium/docs/images/dashboard.png" style="width:291.95mm;left:-213.89mm;top:-46.63mm;"></div><p class="cap">그림 E. 대시보드 "주의 필요" 목록(확대) — lag 초과 테이블을 원인 배지와 함께 즉시 노출.</p></div>
-</div>
+<div class="keep" style="width:88mm;margin:0 0 3mm;">
+<div class="fig-side" style="width:88mm;"><div class="cropbox" style="width:88mm;height:103.67mm;"><img src="/home/nhchoi/deltazium/docs/images/dashboard.png" style="width:347.18mm;left:-254.36mm;top:-55.45mm;"></div><p class="cap">그림 E. 대시보드 "주의 필요" 목록(확대) — lag 초과 테이블을 원인 배지와 함께 즉시 노출.</p></div>
 </div>
 
 <div class="keep">
@@ -221,7 +219,9 @@ task trace로 원인을 확정하고 이 장애에서 기능을 파생시켰다:
 스냅샷 진행률은 Debezium notification 채널을 소비해 추정이 아닌 실측으로 표시한다.</p>
 <div class="diagram-wrap " style="width:172mm;"><img src="/home/nhchoi/deltazium/docs/images/diag-resnapshot-states.svg"><div class="dlabel" style="left:1.74%;top:17.39%;width:11.63%;height:32.61%;"><div class="inner"><span class="t">요청</span><span class="s">UI 실행</span></div></div><div class="dlabel" style="left:16.22%;top:17.39%;width:11.63%;height:32.61%;"><div class="inner"><span class="t">유입 차단</span><span class="s">신규 이벤트 정지</span></div></div><div class="dlabel" style="left:30.70%;top:17.39%;width:11.63%;height:32.61%;"><div class="inner"><span class="t">잔량 소진</span><span class="s">실시간 lag=0</span></div></div><div class="dlabel" style="left:45.17%;top:17.39%;width:11.63%;height:32.61%;"><div class="inner"><span class="t">타깃 비우기</span><span class="s">승인/홀드 · TRUNCATE</span></div></div><div class="dlabel" style="left:59.65%;top:17.39%;width:11.63%;height:32.61%;"><div class="inner"><span class="t">재기동</span><span class="s">커넥터 재시작</span></div></div><div class="dlabel" style="left:74.13%;top:17.39%;width:11.63%;height:32.61%;"><div class="inner"><span class="t">스냅샷</span><span class="s">initial 스냅샷</span></div></div><div class="dlabel" style="left:88.60%;top:17.39%;width:11.63%;height:32.61%;"><div class="inner"><span class="t">go-live</span><span class="s">라이브 복귀</span></div></div><div class="dlabel" style="left:27.91%;top:69.57%;width:44.19%;height:21.74%;"><div class="inner"><span class="s">취소·실패 시 원복 보장 — offset 삭제(되돌릴 수 없는 지점) 전까지</span></div></div></div>
 <p class="dcap">그림 F. 재스냅샷 상태 기계 — 7단계, 점선 이전(잔량 소진까지)은 취소해도 원복 보장.</p>
-<div class="fig-side" style="width:124mm;"><img src="/home/nhchoi/deltazium/docs/images/resnapshot.png"><p class="cap">그림 G. 재스냅샷 실행 팝업(실장애 복구 run 실측) — 단계가 순서대로 표시되며 10.5만 행·50초에 go-live.</p></div>
+</div>
+<div class="keep">
+<div class="fig-side" style="width:108mm;"><img src="/home/nhchoi/deltazium/docs/images/resnapshot.png"><p class="cap">그림 G. 재스냅샷 실행 팝업(실장애 복구 run 실측) — 단계가 순서대로 표시되며 10.5만 행·50초에 go-live.</p></div>
 </div>
 
 <div class="keep">
