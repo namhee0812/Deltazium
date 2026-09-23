@@ -586,13 +586,24 @@ DB 왕복을 늘릴 이유가 없다).
 + ack용)로 나누지 않은 건 애초에 요구된 스키마가 이 세 컬럼뿐이었고, 겸용해도 의미
 충돌이 없기 때문.
 
-**해소 시 행 삭제.** 정지된 커넥터가 재개되면(WARN/CRITICAL로도 안 잡히는 상태) 다음
-poll에서 `stabilizeInfoSinceMs`가 관측 행을 지운다 — 같은 커넥터가 나중에 다시
-정지되면 새 `since_ms`로 다시 관측돼, 예전 ack와 무관하게 알림이 다시 뜬다("재개 후
-재정지는 별개 사건" 판단, DdlEventServiceTest/RegistrationServiceTest와 무관).
-`GET /api/system/warnings`는 매 poll마다 `acks.findAll()`을 두 번 부른다(sinceMs
-안정화 1회 + ack 필터 1회) — 토이 프로젝트 규모(파일 몇 개)에서 쿼리 두 번을
-아끼려고 코드를 더 얽을 이유가 없다고 판단했다.
+**해소 시 행 삭제 — 판정은 DB 기준.** 정지된 커넥터가 재개되면(WARN/CRITICAL로도 안
+잡히는 상태) 다음 poll에서 `stabilizeInfoSinceMs`가 관측 행을 지운다 — 같은 커넥터가
+나중에 다시 정지되면 새 `since_ms`로 다시 관측돼, 예전 ack와 무관하게 알림이 다시
+뜬다("재개 후 재정지는 별개 사건" 판단, DdlEventServiceTest/RegistrationServiceTest와
+무관). 첫 구현은 해소 여부를 in-memory `Set<String> knownInfoIds`(직전 poll에서 본
+INFO id)로 판정했는데, **backend 재기동 직후엔 이 집합이 비어 있어 판정이 무력화**됐다
+— 재기동 전에 이미 해소된 id가 DB에 그대로 남고, 그 커넥터를 나중에 다시 정지하면
+옛 `since_ms`를 물려받아 예전에 ack한 건이면 새 정지가 알림에 안 뜨는 결함으로
+이어졌다(2026-09-23 리뷰 지적). `acks.findAll()`은 sinceMs 안정화 때 매 poll 한 번
+이미 부르므로, 해소 판정을 그 **같은 스냅숏**(`observed.keySet() - currentInfoIds`)
+기준으로 바꿔 knownInfoIds 없이도 재기동 여부와 무관하게 항상 정확하게 했다 — in-memory
+집합을 없앴을 뿐 DB 왕복 횟수는 늘지 않았다.
+
+**ack 필터도 같은 스냅숏 재사용.** 처음엔 sinceMs 안정화(1회)와 ack 여부 판정(1회)이
+각자 `acks.findAll()`을 불러 poll당 두 번 쿼리했다. `computeActive()`가
+`ActiveWarnings(items, ackedInfoIds)`를 반환하도록 바꿔 한 스냅숏에서 sinceMs 결정과
+ack 판정을 함께 끝내고, `warnings()`는 그 `ackedInfoIds`로만 필터한다 — poll당 쿼리
+1회로 줄었다.
 
 **UI.** 경고 칩(WarningCenter)과 알림 아이콘(NotificationBell)은 같은
 `GET /api/system/warnings` 30초 폴링 응답을 `useSystemWarnings()` 훅 하나로 공유한다
