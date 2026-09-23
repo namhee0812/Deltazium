@@ -235,10 +235,12 @@ export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
   useEffect(() => {
     const el = panelRef.current
     if (!open || !el) return
-    const r = el.getBoundingClientRect()
+    // 폭은 transition 중이라 측정값이 옛 폭일 수 있어 목표 폭 상수로 계산한다
+    const width = expanded ? 720 : 440
+    const height = el.getBoundingClientRect().height
     const next = { ...posRef.current }
-    if (r.left < 8) next.right = Math.max(window.innerWidth - r.width - 8, 8)
-    if (r.top < 8) next.bottom = Math.max(window.innerHeight - r.height - 8, 8)
+    if (window.innerWidth - next.right - width < 8) next.right = Math.max(window.innerWidth - width - 8, 8)
+    if (window.innerHeight - next.bottom - height < 8) next.bottom = Math.max(window.innerHeight - height - 8, 8)
     if (next.right !== posRef.current.right || next.bottom !== posRef.current.bottom) {
       setPos(next)
       savePos(next)
