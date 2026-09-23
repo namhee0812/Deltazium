@@ -15,6 +15,10 @@ package io.deltazium.backend.connect;
  * --------------------------------------------------
  * 26. 09. 07.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | 결함 수정: PG 복제 슬롯·publication 이름(dz_&lt;prefix&gt;)을
+ * |                          | RegistrationService의 문자열 리터럴에서 이곳으로 이관 —
+ * |                          | 등록 해제 시 PostgresReplicationCleaner가 같은 이름 규칙을 쓴다
+ * --------------------------------------------------
  */
 public final class ConnectorNames {
 
@@ -59,5 +63,15 @@ public final class ConnectorNames {
     /** Debezium notification 토픽 — <prefix>-notifications. */
     public static String notificationTopic(String topicPrefix) {
         return topicPrefix + "-notifications";
+    }
+
+    /** PostgreSQL 소스 논리 복제 슬롯 — dz_<prefix> (source-postgresql.json.tmpl과 동일 규칙). */
+    public static String replicationSlot(String topicPrefix) {
+        return "dz_" + topicPrefix;
+    }
+
+    /** PostgreSQL 소스 publication — dz_<prefix> (source-postgresql.json.tmpl과 동일 규칙). */
+    public static String replicationPublication(String topicPrefix) {
+        return "dz_" + topicPrefix;
     }
 }

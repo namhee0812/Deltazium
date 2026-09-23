@@ -22,6 +22,11 @@
  * |                          | 필드가 fromScn(long)에서 fromTimeMs(epoch millis)로 바뀜에 따름
  * |                          | (architecture.md 6.2절). SCN은 더 이상 UI에서 쓰지 않는다.
  * --------------------------------------------------
+ * 26. 09. 23.       | 최남희  | 결함 수정: VerifyResult에 checksumSupported·note 추가 —
+ * |                          | source·target DB 종류가 다르면 체크섬 비교가 성립하지 않아
+ * |                          | 행 수만 비교한다(backend ChecksumSql). 체크섬 칸은 "—", 사유는
+ * |                          | note 한 줄로 표시
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useState } from 'react'
 import { X } from 'lucide-react'
@@ -57,9 +62,11 @@ const fmtTime = (ms: number) => new Date(ms).toLocaleString('sv-SE').slice(0, 16
 interface VerifyResult {
   sourceCount: number
   targetCount: number
-  sourceChecksum: number
-  targetChecksum: number
+  sourceChecksum: number | null
+  targetChecksum: number | null
   match: boolean
+  checksumSupported: boolean
+  note: string | null
 }
 
 interface PartitionInfo {
@@ -195,9 +202,12 @@ export function RecoveryPanel() {
             <div className="grid grid-cols-2 gap-2 px-4 py-3 font-mono text-[12px]">
               <div>SRC rows: {verify.sourceCount.toLocaleString()}</div>
               <div>TGT rows: {verify.targetCount.toLocaleString()}</div>
-              <div>SRC checksum: {verify.sourceChecksum}</div>
-              <div>TGT checksum: {verify.targetChecksum}</div>
+              <div>SRC checksum: {verify.checksumSupported ? verify.sourceChecksum : '—'}</div>
+              <div>TGT checksum: {verify.checksumSupported ? verify.targetChecksum : '—'}</div>
             </div>
+            {!verify.checksumSupported && verify.note && (
+              <div className="border-t border-border px-4 py-2 text-[11.5px] text-ink-3">{verify.note}</div>
+            )}
           </div>
         )}
 
@@ -435,8 +445,9 @@ function RecoveryDrawer({
           </div>
           <div className="flex flex-col gap-2.5 p-3.5 text-[12.5px]">
             <p className="text-ink-3">
-              source vs target 행 수·체크섬(ORA_HASH) 비교 — 대형 테이블은 소요 시간이 클 수 있습니다.
-              재발행 apply가 끝난 뒤 실행하세요.
+              source vs target 행 수·체크섬 비교 — 대형 테이블은 소요 시간이 클 수 있습니다.
+              재발행 apply가 끝난 뒤 실행하세요. (source·target DB 종류가 다르면 체크섬 없이
+              행 수만 비교합니다)
             </p>
             <GhostButton disabled={!selected || busy} onClick={onVerify} className="w-fit">
               정합 검증 실행
@@ -447,6 +458,9 @@ function RecoveryDrawer({
               }`}>
                 {verify.match ? '일치' : '불일치'} · SRC {verify.sourceCount.toLocaleString()} / TGT{' '}
                 {verify.targetCount.toLocaleString()}
+                {!verify.checksumSupported && verify.note && (
+                  <span className="ml-2 text-ink-3">· {verify.note}</span>
+                )}
               </div>
             )}
           </div>

@@ -202,6 +202,11 @@ retention을 넘긴 과거 구간은 Kafka에 없다 — 그 구간의 유일한
 
 시나리오(OLTP): ① 타깃 테이블 훼손(행 삭제/절단) → ② UI에서 시각 지정 복구 트리거 → ③ recovery-job 재발행 → ④ recovery-sink apply → ⑤ SRC/TGT 정합 검증 스크립트(행 수 + 체크섬). 이 리허설이 통과해야 "복구 기능이 있다"고 말할 수 있다.
 
+⑤ 체크섬은 소스·타깃 DbType이 같을 때만 비교한다(Oracle↔Oracle은 컬럼별 ORA_HASH 후
+행 해시, PostgreSQL↔PostgreSQL은 md5 기반 — `ChecksumSql`, 2026-09-23 결정,
+docs/internals.md "정합 검증 체크섬" 절). 소스·타깃 DbType이 다른 이종 조합(Oracle↔
+PostgreSQL)은 두 SQL의 해시 알고리즘이 달라 비교가 성립하지 않으므로 행 수만 비교한다.
+
 시나리오(DW, 6.5 구현 후): ① 최종 테이블 훼손 → ② UI에서 시각 지정 복구 트리거 → ③ recovery-job 재발행 → ④ DW apply 워커가 복구 토픽을 배치 stage-and-merge → ⑤ 정합 검증. 추가로 **MERGE 멱등 증명**: 같은 이벤트를 두 번 밀어 넣어도 최종 테이블은 1행.
 
 ### 6.5 DW 계열 적재 — 푸시 모델 stage-and-merge (2026-09-10 확정, 세부는 docs/TODO.md ④)

@@ -59,11 +59,13 @@
       → 이벤트 40 승인 → 타깃 ALTER 적용 → sink 재개 → NOTE 컬럼 포함 행 적재까지 확인(2026-09-07
       14:00). 트리클 INSERT 24건 SRC/TGT 합계 일치. 잘못 저장된 이벤트 39는 거부 처리.
       **② 완료.** 남은 소소한 것: PG 소스의 스냅샷 notification 이벤트가 테이블명 자리에
-      `dz-source`로 표기됨(레거시 라벨, 표시만) / RecoveryService.verify() 체크섬 PG 소스 미지원
-      (PG 소스 복구 리허설 시 결정).
-      결정 필요로 남은 것: RecoveryService.verify()의 체크섬(ORA_HASH)이 Oracle 전용이라
-      PostgreSQL 소스의 SRC측 체크섬 검증은 아직 미지원(docs/internals.md 기록) — PG 소스
-      복구 리허설에서 정합 검증을 어떻게 할지 결정 필요.
+      `dz-source`로 표기됨(레거시 라벨, 표시만).
+      **PG 체크섬 완료 (2026-09-23, 결함 1 수정)**: `ChecksumSql`이 Oracle(컬럼별 해시 →
+      행 해시, 200컬럼 초과 시 묶음)·PostgreSQL(md5 기반) 양쪽을 지원 — `RecoveryService.
+      verify()`는 소스·타깃 DbType이 같을 때만 체크섬을 비교한다. docs/internals.md
+      "정합 검증 체크섬" 절. **이종 DB(Oracle↔PostgreSQL) 조합의 체크섬은 범위 밖으로
+      확정** — 해시 알고리즘이 달라 비교가 성립하지 않는다(`ChecksumSql.rowCountOnly`로
+      행 수만 비교, `VerifyResult.checksumSupported=false`).
     - **진행 상태 (2026-09-22, PG 타깃 검증)**: PostgreSQL을 **타깃**으로 등록해 데이터 경로
       (스냅샷·DML upsert/delete·changelog)는 결함 없이 동작함을 확인
       (`docs/experiments/2026-09-22-pg2pg-cdc.md`). 제어면 결함 2건은 feature/pg-target-identifier
@@ -78,11 +80,10 @@
       타깃 ②" 절 — 소스·타깃 공통) / 타깃 테이블 생성 방침 — 현재는 사전 수동 생성이
       전제(등록 흐름에 타깃 DDL 초안·자동 생성 없음, sink는 schema.evolution=none이라
       만들지 않음) — 사전 점검에 "타깃 테이블 존재·컬럼 일치" 항목을 추가할지 결정 필요
-      (현재는 위저드가 타깃 컬럼 조회 실패로만 알려줌) / PG 체크섬 — `RecoveryService.
-      checksumSql`이 여전히 ORA_HASH 전용이라 PG 타깃(TGT측)도 체크섬 검증 미지원(위
-      SRC측 미지원과 같은 성격, PG용 `md5(string_agg(...))` 필요) / 미검증 항목: 사용자가
-      따옴표로 만든 mixed-case 타깃 테이블, 타입 매핑 경계(numeric 정밀도·bytea·array),
-      복구 재발행(recovery-sink)의 PG 타깃, 대량 배치.
+      (현재는 위저드가 타깃 컬럼 조회 실패로만 알려줌) / **PG 체크섬은 2026-09-23 결함 1
+      수정으로 완료**(위 참고 — Oracle↔Oracle·PostgreSQL↔PostgreSQL만 지원, 이종 조합은
+      범위 밖) / 미검증 항목: 사용자가 따옴표로 만든 mixed-case 타깃 테이블, 타입 매핑 경계
+      (numeric 정밀도·bytea·array), 복구 재발행(recovery-sink)의 PG 타깃, 대량 배치.
     - **소스 식별자를 커넥션 속성으로**: `db_connections.topic_prefix`(소스 커넥션 필수, 유일,
       `[a-z][a-z0-9_]*`, 기본값 = 이름 슬러그). 전역 `deltazium.topic-prefix` 제거. 기존 소스
       커넥션(orcl225)은 마이그레이션으로 `dz` 유지
