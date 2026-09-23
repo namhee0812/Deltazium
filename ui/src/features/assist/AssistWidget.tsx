@@ -25,6 +25,8 @@
  * |                          | 그리고, 상단 바 아이콘은 제거. 09-02의 "플로팅이 테이블/복구 drawer
  * |                          | 하단 액션 바를 가림"은 알고 감수 — 겹치면 위젯을 닫으면 된다.
  * |                          | 헤더의 X를 최소화(−)로 — 닫아도 대화가 유지되므로 의미상 최소화다.
+ * |                          | FAB·패널 헤더 드래그로 위치 이동(뷰포트 안으로 클램프, localStorage
+ * |                          | 저장) — 플로팅이 테이블 drawer 하단 버튼을 가릴 때 비켜 놓기 위함.
  * --------------------------------------------------
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -128,6 +130,30 @@ interface AssistWidgetProps {
   onClose: () => void
 }
 
+/** 위젯 위치 — 뷰포트 우하단 기준 offset(px). 브라우저별 편의 저장(localStorage, 실패해도 무시). */
+interface WidgetPos {
+  right: number
+  bottom: number
+}
+
+const POS_KEY = 'dz.assist.pos'
+const DEFAULT_POS: WidgetPos = { right: 24, bottom: 24 }
+
+function loadPos(): WidgetPos {
+  try {
+    const raw = localStorage.getItem(POS_KEY)
+    if (raw) {
+      const p = JSON.parse(raw)
+      if (typeof p.right === 'number' && typeof p.bottom === 'number') return p
+    }
+  } catch { /* 사설 창·차단 등 — 기본 위치 */ }
+  return DEFAULT_POS
+}
+
+function savePos(p: WidgetPos) {
+  try { localStorage.setItem(POS_KEY, JSON.stringify(p)) } catch { /* 무시 */ }
+}
+
 export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
   const [expanded, setExpanded] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
@@ -171,13 +197,65 @@ export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
     })
   }, [input, busy])
 
+  // --- 위치: 뷰포트 우하단 기준 offset(px). FAB·패널이 같은 값을 써서 열고 닫아도 자리가 유지된다.
+  // 드래그 핸들은 FAB 자체와 패널 헤더. 4px 이상 움직여야 드래그로 보고, 그 미만은 클릭이다.
+  const [pos, setPos] = useState<WidgetPos>(loadPos)
+  const posRef = useRef(pos)
+  posRef.current = pos
+  const justDragged = useRef(false)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  const startDrag = (e: React.PointerEvent, box: HTMLElement | null) => {
+    if (e.button !== 0 || !box) return
+    const r = box.getBoundingClientRect()
+    const d = { x: e.clientX, y: e.clientY, right: posRef.current.right, bottom: posRef.current.bottom, w: r.width, h: r.height, moved: false }
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - d.x
+      const dy = ev.clientY - d.y
+      if (!d.moved && Math.hypot(dx, dy) < 4) return
+      d.moved = true
+      const maxRight = Math.max(window.innerWidth - d.w - 8, 8)
+      const maxBottom = Math.max(window.innerHeight - d.h - 8, 8)
+      setPos({
+        right: Math.min(Math.max(d.right - dx, 8), maxRight),
+        bottom: Math.min(Math.max(d.bottom - dy, 8), maxBottom),
+      })
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      justDragged.current = d.moved
+      if (d.moved) savePos(posRef.current)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  // 열릴 때·확장할 때 패널이 뷰포트 밖으로 나가면(FAB를 왼쪽 끝에 두고 연 경우 등) 안으로 되민다
+  useEffect(() => {
+    const el = panelRef.current
+    if (!open || !el) return
+    const r = el.getBoundingClientRect()
+    const next = { ...posRef.current }
+    if (r.left < 8) next.right = Math.max(window.innerWidth - r.width - 8, 8)
+    if (r.top < 8) next.bottom = Math.max(window.innerHeight - r.height - 8, 8)
+    if (next.right !== posRef.current.right || next.bottom !== posRef.current.bottom) {
+      setPos(next)
+      savePos(next)
+    }
+  }, [open, expanded])
+
+  const posStyle = { right: pos.right, bottom: pos.bottom }
+
   if (!open) {
     return (
       <button
-        onClick={onOpen}
+        onClick={() => { if (justDragged.current) { justDragged.current = false; return } onOpen() }}
+        onPointerDown={(e) => startDrag(e, e.currentTarget)}
         aria-label="AI 진단 열기"
-        title="AI 진단"
-        className="fixed right-6 bottom-6 z-50 flex size-13 items-center justify-center rounded-full bg-primary text-white shadow-lg transition-transform hover:scale-105"
+        title="AI 진단 (드래그로 이동)"
+        className="fixed z-50 flex size-13 touch-none select-none items-center justify-center rounded-full bg-primary text-white shadow-lg transition-transform hover:scale-105"
+        style={posStyle}
       >
         <MessageCircle className="size-6" />
       </button>
@@ -186,14 +264,19 @@ export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
 
   return (
     <div
-      className={`fixed right-6 bottom-6 z-50 flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl transition-[width] ${
+      ref={panelRef}
+      className={`fixed z-50 flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl transition-[width] ${
         expanded ? 'w-[720px]' : 'w-[440px]'
       }`}
-      style={{ height: 'min(70vh, 640px)' }}
+      style={{ height: 'min(70vh, 640px)', ...posStyle }}
     >
-      <div className="flex items-center gap-1 bg-rail px-5 py-3.5 text-rail-ink">
+      <div
+        className="flex cursor-move touch-none select-none items-center gap-1 bg-rail px-5 py-3.5 text-rail-ink"
+        onPointerDown={(e) => startDrag(e, panelRef.current)}
+        title="드래그로 이동"
+      >
         <span className="text-[15px] font-semibold">AI 진단</span>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>
           <button
             className="text-rail-ink-2 hover:text-rail-ink"
             onClick={() => setExpanded((v) => !v)}
