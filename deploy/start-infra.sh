@@ -92,7 +92,12 @@ else
   render deploy/connect/connect-log4j2.yaml "$DZ_RT/conf/connect-log4j2.yaml"
   # 기본 log4j2는 시간별 로테이션 — 일 단위(날짜 디렉터리) 우리 설정으로 교체.
   # connect.log는 log4j2 전용으로 두고, 콘솔 리다이렉트는 별도 파일(이중 기록 방지).
+  # JVM 타임존 UTC 고정(2026-09-23): 시간대 없는 DATE/TIMESTAMP를 JVM 로컬(Asia/Seoul)로
+  # 해석하면 DST 공백 시각(예: 1951-05-06 00:46 KST — 존재하지 않는 로컬 시각)이 1시간
+  # 밀려 적재된다(NH_CDC_TEST_5 정합 검증에서 실측). UTC엔 공백이 없어 왕복이 항등이다.
+  # 워커가 여러 대면 전부 같은 값이어야 한다. 로그 시각도 UTC로 찍힌다.
   LOG_DIR="$DZ_LOG_DIR" \
+  KAFKA_OPTS="-Duser.timezone=UTC ${KAFKA_OPTS:-}" \
   KAFKA_LOG4J_OPTS="-Dlog4j2.configurationFile=$DZ_RT/conf/connect-log4j2.yaml" \
   nohup "$DZ_KAFKA_HOME/bin/connect-distributed.sh" \
     "$DZ_RT/conf/connect-distributed.properties" >"$DZ_LOG_DIR/connect-console.log" 2>&1 &
