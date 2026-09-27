@@ -29,6 +29,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 26. 09. 27.       | 최남희  | mapNativeType·draftCreateTable 테스트 추가 — 등록 시 "소스
  * |                          | 스키마로 새로 생성" 옵션(architecture.md 8절) 전용 CREATE TABLE 초안
  * --------------------------------------------------
+ * 26. 09. 28.       | 최남희  | SingleStore 타깃 케이스 추가 — draftDdl 백틱 인용, mapNativeType
+ * |                          | Oracle/PostgreSQL→SingleStore, draftCreateTable SingleStore 타깃
+ * --------------------------------------------------
  */
 class SchemaFingerprintTest {
 
@@ -172,6 +175,22 @@ class SchemaFingerprintTest {
     }
 
     @Test
+    void 추가_삭제만_있으면_singlestore_초안_DDL을_백틱으로_만든다() {
+        var changes = List.of(
+                new SchemaFingerprint.FieldChange(SchemaFingerprint.ChangeKind.ADDED, null,
+                        new SchemaFingerprint.FieldDesc("amount", "int32", true, Map.of())),
+                new SchemaFingerprint.FieldChange(SchemaFingerprint.ChangeKind.REMOVED,
+                        new SchemaFingerprint.FieldDesc("legacy_flag", "int8", true, Map.of()), null));
+
+        String ddl = SchemaFingerprint.draftDdl("SINGLESTORE", "tgt", "orders", changes);
+
+        // SingleStore(MySQL 계열)는 큰따옴표가 아니라 백틱을 식별자 구분자로 쓴다.
+        assertThat(ddl).isEqualTo(
+                "ALTER TABLE `tgt`.`orders` ADD COLUMN `amount` INT, DROP COLUMN `legacy_flag`");
+        assertThat(ddl).doesNotContain("\"");
+    }
+
+    @Test
     void 타입변경만_있으면_초안이_없다() {
         var changes = List.of(new SchemaFingerprint.FieldChange(SchemaFingerprint.ChangeKind.TYPE_CHANGED,
                 new SchemaFingerprint.FieldDesc("id", "int32", false, Map.of()),
@@ -245,6 +264,32 @@ class SchemaFingerprintTest {
     }
 
     @Test
+    void 오라클에서_싱글스토어로_컬럼_타입을_매핑한다() {
+        assertThat(SchemaFingerprint.mapNativeType(DbType.ORACLE, DbType.SINGLESTORE, "VARCHAR2"))
+                .isEqualTo("TEXT");
+        assertThat(SchemaFingerprint.mapNativeType(DbType.ORACLE, DbType.SINGLESTORE, "NUMBER"))
+                .isEqualTo("DECIMAL(65,30)");
+        assertThat(SchemaFingerprint.mapNativeType(DbType.ORACLE, DbType.SINGLESTORE, "DATE"))
+                .isEqualTo("DATETIME(6)");
+        assertThat(SchemaFingerprint.mapNativeType(DbType.ORACLE, DbType.SINGLESTORE, "RAW"))
+                .isEqualTo("BLOB");
+    }
+
+    @Test
+    void 포스트그레스에서_싱글스토어로_컬럼_타입을_매핑한다() {
+        assertThat(SchemaFingerprint.mapNativeType(DbType.POSTGRESQL, DbType.SINGLESTORE, "character varying"))
+                .isEqualTo("TEXT");
+        assertThat(SchemaFingerprint.mapNativeType(DbType.POSTGRESQL, DbType.SINGLESTORE, "boolean"))
+                .isEqualTo("BOOL");
+        assertThat(SchemaFingerprint.mapNativeType(DbType.POSTGRESQL, DbType.SINGLESTORE, "integer"))
+                .isEqualTo("INT");
+        assertThat(SchemaFingerprint.mapNativeType(DbType.POSTGRESQL, DbType.SINGLESTORE, "bytea"))
+                .isEqualTo("BLOB");
+        assertThat(SchemaFingerprint.mapNativeType(DbType.POSTGRESQL, DbType.SINGLESTORE, "date"))
+                .isEqualTo("DATE");
+    }
+
+    @Test
     void 동종_DB는_원문_타입을_그대로_돌려준다() {
         assertThat(SchemaFingerprint.mapNativeType(DbType.ORACLE, DbType.ORACLE, "NUMBER(10,2)"))
                 .isEqualTo("NUMBER(10,2)");
@@ -279,6 +324,19 @@ class SchemaFingerprintTest {
 
         assertThat(ddl).isEqualTo(
                 "CREATE TABLE \"CDC_TMP\".\"ORDERS\" (\"ID\" NUMBER(10), \"ACTIVE\" NUMBER(1), PRIMARY KEY (\"ID\"))");
+    }
+
+    @Test
+    void 오라클_소스로_싱글스토어_타깃_CREATE_TABLE_초안을_백틱으로_만든다() {
+        var columns = List.of(
+                new TableColumn("ID", "NUMBER", true),
+                new TableColumn("NAME", "VARCHAR2", false));
+
+        String ddl = SchemaFingerprint.draftCreateTable(DbType.ORACLE, DbType.SINGLESTORE,
+                "cdc_tmp", "orders", columns);
+
+        assertThat(ddl).isEqualTo(
+                "CREATE TABLE `cdc_tmp`.`orders` (`ID` DECIMAL(65,30), `NAME` TEXT, PRIMARY KEY (`ID`))");
     }
 
     @Test

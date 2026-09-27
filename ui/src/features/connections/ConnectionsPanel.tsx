@@ -28,6 +28,11 @@
  * |                          | 제거(backend도 요청값 무시). 카드는 prefix가 현재 이름의 슬러그와
  * |                          | 다를 때만(레거시 dz·pg·nhtest, 생성 후 이름 변경) 한 줄 표시
  * --------------------------------------------------
+ * 26. 09. 28.       | 최남희  | SingleStore(타깃 전용) 지원 — DB 종류 선택을 역할(role)로 걸러
+ * |                          | role=SOURCE일 땐 sourceCapable=false인 종류(SingleStore)를 목록에서
+ * |                          | 제외. role을 SOURCE로 바꿨는데 이미 고른 dbType이 소스 불가면
+ * |                          | ORACLE로 되돌린다(백엔드 거부 전에 화면에서 막음).
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, MoreVertical, Plus } from 'lucide-react'
@@ -128,7 +133,7 @@ export function ConnectionsPanel() {
     reload()
     api<DbTypeOption[]>('/api/connections/db-types')
       .then(setDbTypes)
-      .catch(() => setDbTypes([{ code: 'ORACLE', label: 'Oracle' }]))
+      .catch(() => setDbTypes([{ code: 'ORACLE', label: 'Oracle', sourceCapable: true }]))
     api<ChangelogStorageInfo>('/api/system/changelog-storage')
       .then(setStorageInfo)
       .catch(() => setStorageInfo(null))
@@ -301,11 +306,13 @@ export function ConnectionsPanel() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {dbTypes.map((t) => (
-                    <SelectItem key={t.code} value={t.code}>
-                      {t.label}
-                    </SelectItem>
-                  ))}
+                  {dbTypes
+                    .filter((t) => form.role !== 'SOURCE' || t.sourceCapable)
+                    .map((t) => (
+                      <SelectItem key={t.code} value={t.code}>
+                        {t.label}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>
@@ -313,7 +320,17 @@ export function ConnectionsPanel() {
               <Label>역할</Label>
               <Select
                 value={form.role}
-                onValueChange={(v) => set({ role: v as DbConnection['role'] })}
+                onValueChange={(v) => {
+                  const role = v as DbConnection['role']
+                  const current = dbTypes.find((t) => t.code === form.dbType)
+                  // 소스 불가 DB 종류(SingleStore)를 고른 채로 역할을 SOURCE로 바꾸면
+                  // 백엔드가 거부하기 전에 화면에서 기본값(ORACLE)으로 되돌린다.
+                  if (role === 'SOURCE' && current && !current.sourceCapable) {
+                    set({ role, dbType: 'ORACLE' })
+                  } else {
+                    set({ role })
+                  }
+                }}
               >
                 <SelectTrigger>
                   <SelectValue />

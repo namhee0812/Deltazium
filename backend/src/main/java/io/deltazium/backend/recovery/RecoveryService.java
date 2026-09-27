@@ -97,6 +97,14 @@ import org.springframework.stereotype.Service;
  * |                          | FAILED(cause=causeLine)로 남기고 WARN 이벤트 기록 — 종전엔 30분
  * |                          | 타임아웃까지 실행 상태가 DONE에 고착돼 실패를 알 수 없었다.
  * --------------------------------------------------
+ * 26. 09. 28.       | 최남희  | SingleStore 타깃 지원 — countAndChecksum 접속 타임아웃에
+ * |                          | SingleStore 분기 추가. 체크섬 SQL은 별도 분기가 필요 없다:
+ * |                          | SingleStore는 sourceCapable=false(소스 불가)라 sourceType==
+ * |                          | targetType==SINGLESTORE 조합 자체가 존재하지 않고, 항상 이종
+ * |                          | 조합(Oracle/PostgreSQL→SingleStore)으로 rowCountOnly 경로를
+ * |                          | 탄다 — 기존 checksumSupported 판정이 그대로 맞다(docs/internals.md
+ * |                          | "정합 검증 체크섬" 절 갱신 참고).
+ * --------------------------------------------------
  */
 @Service
 public class RecoveryService {
@@ -518,6 +526,9 @@ public class RecoveryService {
         if (type == DbType.POSTGRESQL) {
             props.setProperty("loginTimeout", "5");
             props.setProperty("connectTimeout", "5");
+        } else if (type == DbType.SINGLESTORE) {
+            props.setProperty("connectTimeout", "5000");
+            props.setProperty("socketTimeout", "5000");
         } else {
             props.setProperty("oracle.net.CONNECT_TIMEOUT", "5000");
         }

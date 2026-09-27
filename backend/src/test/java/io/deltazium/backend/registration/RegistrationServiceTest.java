@@ -8,6 +8,7 @@ import io.deltazium.backend.ddl.TargetDdlExecutor;
 import io.deltazium.backend.dictionary.DictionaryRouter;
 import io.deltazium.backend.dictionary.OracleDictionaryService;
 import io.deltazium.backend.dictionary.PostgresDictionaryService;
+import io.deltazium.backend.dictionary.SingleStoreDictionaryService;
 import io.deltazium.backend.dictionary.SourceTableInfo;
 import io.deltazium.backend.dictionary.TableColumn;
 import io.deltazium.backend.iceberg.ChangelogTableService;
@@ -83,6 +84,11 @@ import static org.mockito.Mockito.when;
  * |                          | 테스트 추가 — TargetDdlExecutor mock 추가(생성자 의존성), ddlPolicy
  * |                          | 저장 검증, createTarget 성공/존재 시 거부/매핑 불가 타입 거부
  * --------------------------------------------------
+ * 26. 09. 28.       | 최남희  | SingleStore 타깃 지원 — SingleStoreDictionaryService mock 추가
+ * |                          | (DictionaryRouter가 List&lt;SourceDictionary&gt;를 주입받으므로
+ * |                          | 세 구현 모두 빈이어야 한다), SingleStore 타깃 createTarget이
+ * |                          | 백틱 인용 CREATE TABLE을 실행하는지 검증
+ * --------------------------------------------------
  */
 @EnableConfigurationProperties(IcebergProperties.class)
 class RegistrationServiceTest {
@@ -99,9 +105,12 @@ class RegistrationServiceTest {
     @MockitoBean
     OracleDictionaryService dictionary;
 
-    /** DictionaryRouter가 List<SourceDictionary>를 주입받으므로 두 구현 모두 빈이어야 한다. */
+    /** DictionaryRouter가 List<SourceDictionary>를 주입받으므로 세 구현 모두 빈이어야 한다. */
     @MockitoBean
     PostgresDictionaryService pgDictionary;
+
+    @MockitoBean
+    SingleStoreDictionaryService ssDictionary;
 
     @MockitoBean
     ConnectorDeployService deploy;
@@ -126,6 +135,7 @@ class RegistrationServiceTest {
         when(dictionary.dbType()).thenReturn(DbType.ORACLE);
         when(dictionary.captureSetupLabel()).thenReturn("supplemental logging (ALL) COLUMNS");
         when(pgDictionary.dbType()).thenReturn(DbType.POSTGRESQL);
+        when(ssDictionary.dbType()).thenReturn(DbType.SINGLESTORE);
         // topicPrefix는 이름 슬러그로 고정된다(2026-09-23, 4절) — 이름을 "dz"로 두어 커넥터명이
         // 단일 소스 시절 기댓값(dz-source-dz 등)과 그대로 맞도록 한다. 명시 prefix 인자는 무시된다.
         srcId = connections.create(new DbConnection(null, "dz", "ORACLE", "SOURCE",
@@ -317,6 +327,23 @@ class RegistrationServiceTest {
         assertThat(service.mappings(t.id())).extracting(ColumnMapping::targetColumn)
                 .containsExactly("ID", "AMOUNT", "STATUS");
         assertThat(service.mappings(t.id())).allMatch(ColumnMapping::enabled);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void createTarget이면_SingleStore_타깃에_백틱_인용_CREATE_TABLE을_실행한다() {
+        mockTable("CDC.T1", true, true);
+        long ssTgtId = connections.create(new DbConnection(null, "ss-tgt", "SINGLESTORE", "TARGET",
+                "ss-host", 3306, "cdc_tgt", "root", "pw")).id();
+        when(ssDictionary.listColumns(any(), eq("NEWSCHEMA"), eq("NEWTAB"))).thenReturn(List.of());
+
+        service.register(srcId, ssTgtId, List.of(
+                new RegistrationService.TableSpec("CDC.T1", "NEWSCHEMA", "NEWTAB", null, true, "MANUAL")));
+
+        ArgumentCaptor<String> ddl = ArgumentCaptor.forClass(String.class);
+        verify(targetDdlExecutor).execute(any(), ddl.capture());
+        // 타깃 저장값은 foldIdentifier가 원문 유지라 요청값 그대로, 인용은 백틱.
+        assertThat(ddl.getValue()).startsWith("CREATE TABLE `NEWSCHEMA`.`NEWTAB`");
     }
 
     @Test

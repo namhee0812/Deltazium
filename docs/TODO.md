@@ -205,6 +205,19 @@
       폴백 + 경고, 등록 시 "소스 스키마로 새로 생성"(CREATE 초안 승인). 라이브 실측: nhtest orders
       자동 적용(`AUTO_APPLIED`)·items 건너뛰기(대소문자 결함 1건 발견·수정 268406b). 남은 갭:
       테이블별 정책 변경 UI 없음(등록 배치 단위), AUTO 경로가 poll 스레드 동기 실행.
+- [x] **SingleStore 타깃 지원** (2026-09-28, feature/singlestore-target — architecture.md 2.2·8절)
+      DbType.SINGLESTORE 추가(sourceCapable=false로 소스 선택 차단), foldIdentifier 3분기(원문
+      유지)·quoteIdentifier 신설(백틱), SingleStoreDictionaryService(타깃 컬럼 조회만, 소스
+      전용 메서드는 UnsupportedOperationException), mapNativeType/mapType에 Oracle·PostgreSQL
+      →SingleStore 매핑(DECIMAL(65,30)·BLOB 등), 체크섬은 이종 취급으로 자연히 커버(전용 SQL
+      불필요). 라이브 실측은 메인 세션(연결·조회만, 쓰기 없음). 상세: docs/internals.md
+      "SingleStore 타깃" 관련 절.
+      **범위 밖으로 남긴 결정 필요 항목**: Oracle 소스(schema change topic 보유) + SingleStore
+      타깃 조합에서 `DdlEventService.rewriteForTarget`이 Oracle 원문 DDL 구문(괄호 ADD 절·
+      NUMBER/VARCHAR2 타입 키워드)을 그대로 재사용해 SingleStore에 문법이 안 맞을 수 있다 —
+      인용 부호만 고쳐서는 근본 해결이 아니라 손대지 않았다(설계 판단 필요).
+- [ ] **SingleStore 소스 지원 검토** (OBSERVE 기반 커넥터 — SingleStore CDC용 Kafka Connect
+      소스 커넥터, 현재는 타깃 전용만 지원. 기성 커넥터 존재 여부·설정 확인부터)
 - [ ] 테이블별 incremental snapshot (Kafka signal) — 기동 중 테이블 추가 시 초기적재,
       테이블 단위 reload(Qlik per-table reload에 해당). architecture.md 10절 미결
 - [ ] 컬럼 리네임의 적재 반영 방침 결정 — 스톡 sink 한계로 현재 저장만

@@ -27,6 +27,9 @@ import org.springframework.stereotype.Component;
  * |                          | 분기(PostgreSQL은 loginTimeout) — Oracle 전용 속성은 PostgreSQL
  * |                          | 드라이버가 무시하므로 방치돼도 무해하지만 명시적으로 맞춘다.
  * --------------------------------------------------
+ * 26. 09. 28.       | 최남희  | SingleStore(mysql-connector-j) 분기 추가 — connectTimeout·
+ * |                          | socketTimeout(ms 단위, MySQL 드라이버 속성명)
+ * --------------------------------------------------
  */
 @Component
 public class OracleConnectionTester {
@@ -42,6 +45,9 @@ public class OracleConnectionTester {
         if ("POSTGRESQL".equalsIgnoreCase(c.dbType())) {
             props.setProperty("loginTimeout", "5");
             props.setProperty("connectTimeout", "5");
+        } else if ("SINGLESTORE".equalsIgnoreCase(c.dbType())) {
+            props.setProperty("connectTimeout", "5000");
+            props.setProperty("socketTimeout", "5000");
         } else {
             props.setProperty("oracle.net.CONNECT_TIMEOUT", "5000");
         }

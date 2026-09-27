@@ -20,6 +20,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * --------------------------------------------------
  * 26. 09. 22.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 28.       | 최남희  | SingleStore 타깃 지원 — foldIdentifier 3분기(원문 유지)·
+ * |                          | quoteIdentifier(백틱)·sourceCapable·jdbcUrl 테스트 추가
+ * --------------------------------------------------
  */
 class DbTypeTest {
 
@@ -47,5 +50,35 @@ class DbTypeTest {
         // PostgreSQL은 원문을 유지한다(foldIdentifier처럼 소문자로 접지 않는다).
         assertThat(DbType.POSTGRESQL.normalizeIdentifier("Mixed_Case")).isEqualTo("Mixed_Case");
         assertThat(DbType.ORACLE.normalizeIdentifier("cdc_tmp")).isEqualTo("CDC_TMP");
+    }
+
+    @Test
+    void foldIdentifier_SingleStore는_원문을_그대로_유지한다() {
+        // SingleStore는 식별자 대소문자를 보존하는 DB라 "접는 형태" 자체가 없다
+        // (실측 9.0.44: CREATE TABLE MixedCase 후 select mixedcase는 1146 오류).
+        assertThat(DbType.SINGLESTORE.foldIdentifier("Cdc_Tmp")).isEqualTo("Cdc_Tmp");
+        assertThat(DbType.SINGLESTORE.foldIdentifier("cdc_tmp")).isEqualTo("cdc_tmp");
+    }
+
+    @Test
+    void quoteIdentifier_SingleStore는_백틱_그_외는_큰따옴표() {
+        assertThat(DbType.SINGLESTORE.quoteIdentifier("orders")).isEqualTo("`orders`");
+        assertThat(DbType.ORACLE.quoteIdentifier("ORDERS")).isEqualTo("\"ORDERS\"");
+        assertThat(DbType.POSTGRESQL.quoteIdentifier("orders")).isEqualTo("\"orders\"");
+    }
+
+    @Test
+    void sourceCapable은_SingleStore만_false다() {
+        assertThat(DbType.ORACLE.sourceCapable()).isTrue();
+        assertThat(DbType.POSTGRESQL.sourceCapable()).isTrue();
+        assertThat(DbType.SINGLESTORE.sourceCapable()).isFalse();
+    }
+
+    @Test
+    void jdbcUrl은_SingleStore일_때_mysql_URL을_만든다() {
+        DbConnection c = new DbConnection(null, "ss-tgt", "SINGLESTORE", "TARGET",
+                "127.0.0.1", 3307, "cdc_tgt", "root", "secret");
+        assertThat(c.jdbcUrl()).isEqualTo(
+                "jdbc:mysql://127.0.0.1:3307/cdc_tgt?useSSL=false&allowPublicKeyRetrieval=true");
     }
 }

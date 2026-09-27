@@ -64,6 +64,12 @@ MySQL   ─Debezium MySQL─┘        (topic.prefix = 소스 식별자)   (5절
 - changelog 하류(recovery-job·DW MERGE·backend 수렴 로직)는 **`source` 블록 내부 필드에 의존하지 않는다** — 순서·증분 기준은 5.1의 위치 컬럼. 이 불변식이 소스 N개를 지탱한다.
 - 소스 N개를 타깃 테이블 하나로 합치는 fan-in은 범위 밖(10절). 다루는 것은 "소스 테이블 1 → changelog 1 → 타깃 테이블 M"의 fan-out뿐.
 - changelog 저장소는 **설치 프로파일**(3절)로 정한다. 타깃별·테이블별로 저장소를 나누지 않는다 — changelog는 설치당 하나.
+- **SingleStore는 OLTP 타깃 전용이다(2026-09-28 추가).** MySQL wire-compatible라 Debezium JDBC
+  sink가 MySQL dialect로 그대로 동작한다(JDBC 접속 메타데이터로 자동 감지 — 커넥터 설정에
+  dialect를 명시하지 않는다). 소스 캡처 커넥터가 없어 SOURCE로는 등록할 수 없다
+  (`DbType.sourceCapable`, 8절). 식별자 대소문자를 그대로 보존하는 DB라(폴딩이 없음) 등록 시
+  저장하는 타깃 식별자·DDL 인용 규칙이 Oracle·PostgreSQL과 다르다 — docs/internals.md
+  "PG 타깃 식별자 폴딩" 절 참고.
 
 ## 3. 컴포넌트 스택
 
@@ -346,9 +352,11 @@ Snowflake·Databricks에는 Debezium JDBC sink의 dialect가 없고, 행 단위 
 
 **MySQL 소스 (예정):** `binlog_format=ROW`, `binlog_row_image=FULL`, REPLICATION SLAVE/CLIENT 권한, GTID 여부.
 
-**타깃 이름 규칙 (2026-09-22 확정, PG 타깃 DDL 승인 502 결함 D1 수정):** 등록 시 저장하는
-타깃 스키마·테이블명은 **타깃 DbType이 unquoted 식별자를 접는 형태**로 폴딩한다 — Oracle은
-대문자, PostgreSQL은 소문자(`DbType.foldIdentifier`, 소스 딕셔너리 조회용
+**타깃 이름 규칙 (2026-09-22 확정, PG 타깃 DDL 승인 502 결함 D1 수정 — 2026-09-28
+SingleStore 3분기로 확장):** 등록 시 저장하는 타깃 스키마·테이블명은 **타깃 DbType이
+unquoted 식별자를 접는 형태**로 폴딩한다 — Oracle은 대문자, PostgreSQL은 소문자,
+**SingleStore는 원문 유지**(식별자 대소문자를 그대로 보존하는 DB라 "접는 형태" 자체가 없다,
+실측 근거는 docs/internals.md)(`DbType.foldIdentifier`, 소스 딕셔너리 조회용
 `normalizeIdentifier`와는 별도). 기준은 소스가 아니라 **타깃** DbType이다(예: Oracle 소스
 `CDC.NH_TEST` → PostgreSQL 타깃이면 `cdc.nh_test`로 저장). 이 값이 JDBC sink
 `collection.name.format`·DDL 승인 초안(SchemaFingerprint)에 그대로 쓰이므로 폴딩이 어긋나면
@@ -372,16 +380,18 @@ DDL 승인이 존재하지 않는 스키마를 찾아 실패한다. 사용자가
   확인을 받은 뒤, 등록 요청에 `createTarget: true`를 실어 보내면 등록 트랜잭션 안에서
   같은 함수로 다시 조립해 실행한다(미리보기와 실행이 항상 일치 — 클라이언트가 보낸 DDL
   문자열은 신뢰하지 않는다). 타깃에 이미 같은 이름의 테이블이 있으면 등록을 거부한다(400).
-- 식별자 폴딩·따옴표 규칙은 `SchemaFingerprint.draftDdl`(7절 ADD/DROP COLUMN 초안)과
-  동일 — 타깃이 Oracle이면 대문자, 그 외는 원문. 컬럼 매핑은 소스와 동일명 전부 활성으로
-  고정된다(존재하지 않던 테이블이라 리네임·비활성 선택의 의미가 없다).
+- 식별자 폴딩·인용 규칙은 `SchemaFingerprint.draftDdl`(7절 ADD/DROP COLUMN 초안)과
+  동일 — 타깃이 Oracle이면 대문자, 그 외는 원문. 인용 부호는 `DbType.quoteIdentifier`
+  (Oracle·PostgreSQL은 큰따옴표, **SingleStore는 백틱**, 2026-09-28). 컬럼 매핑은 소스와
+  동일명 전부 활성으로 고정된다(존재하지 않던 테이블이라 리네임·비활성 선택의 의미가 없다).
 - 타입 매핑은 `SchemaFingerprint`에 있는 소형 매핑을 확장해 **한 곳에서** 관리한다
-  (Oracle↔PostgreSQL 양방향 최소: 문자·정수·소수·날짜/시각·boolean·bytea/RAW). 매핑 불가
-  타입이 하나라도 있으면 초안 생성 자체를 거부하고 사유(컬럼명·원본 타입)를 보여준다 —
-  나중에 컬럼을 못 맞추는 반쪽 테이블을 남기지 않기 위함. Oracle·PostgreSQL 외 조합(MySQL
-  등)은 이 옵션을 지원하지 않는다(8절 지원 DB 범위와 동일).
-- 상세 구현 판단(길이·정밀도를 다루지 않는 이유 등): docs/internals.md "타깃 테이블 생성
-  옵션 — 타입 매핑" 절.
+  (Oracle↔PostgreSQL 양방향 + Oracle·PostgreSQL→**SingleStore**(2026-09-28 추가, SingleStore는
+  타깃 전용이라 반대 방향은 없음) 최소: 문자·정수·소수·날짜/시각·boolean·bytea/RAW). 매핑
+  불가 타입이 하나라도 있으면 초안 생성 자체를 거부하고 사유(컬럼명·원본 타입)를 보여준다 —
+  나중에 컬럼을 못 맞추는 반쪽 테이블을 남기지 않기 위함. 이 세 종류 외 조합(MySQL 소스 등)은
+  이 옵션을 지원하지 않는다(8절 지원 DB 범위와 동일).
+- 상세 구현 판단(길이·정밀도를 다루지 않는 이유, SingleStore DECIMAL 정밀도 선택 등):
+  docs/internals.md "타깃 테이블 생성 옵션 — 타입 매핑" 절.
 
 ## 9. 리스크와 검증 순서
 

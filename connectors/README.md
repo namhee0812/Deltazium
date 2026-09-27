@@ -102,3 +102,20 @@ https://debezium.io/documentation/reference/stable/connectors/postgresql.html
    기본 스키마**에 수행한다 (`collection.name.format=${topic}`). 스키마 한정자 문제 회피 —
    타깃 스키마 = TARGET 접속 계정 스키마라는 규약. 실 Oracle 배선에서 최종 검증 예정.
 3. source의 `database.pdb.name`: 대상 Oracle이 CDB/PDB 구성일 때만 추가.
+
+## SingleStore 타깃 — jdbc-sink 템플릿은 그대로 (2026-09-28)
+
+SingleStore(MySQL wire-compatible)를 타깃으로 추가하며 `jdbc-sink.json.tmpl`에 dialect
+관련 키를 넣어야 하는지 확인했다. Debezium JDBC sink 공식 문서(3.6/stable,
+https://debezium.io/documentation/reference/stable/connectors/jdbc.html) 기준: dialect는
+`hibernate.dialect`로 명시 지정할 수 있는 선택 설정이고, 지정하지 않으면 JDBC 접속
+메타데이터로 결정된다 — 실측(2026-09-28, SingleStore 9.0.44)에서
+`DatabaseMetaData.getDatabaseProductName()`이 `"MySQL"`을 돌려주는 걸 확인했으므로 별도
+지정 없이 MySQL dialect가 잡힌다. `quote.identifiers`는 기본값 `false`(unquoted)이고
+이 값이 기존 Oracle·PostgreSQL 타깃과 같은 전제(등록 시 `DbType.foldIdentifier`로 저장한
+값이 그 DB의 unquoted 해석과 일치하도록 미리 접어 둔다, architecture.md 8절)를 그대로
+따른다 — SingleStore는 폴딩이 "원문 유지"이므로 저장값이 실제 카탈로그 대소문자와 같고,
+unquoted 그대로 참조해도 일치한다. `use.reduction.buffer=true`는 문서상 Oracle MERGE
+dialect 전용이 아니라 dialect 공통 설정이라 그대로 유지한다. 결론: 템플릿 변경 없음 —
+`target_jdbc_url`(`DbConnection.jdbcUrl()`)·`target_user`·`target_password`만 SingleStore
+값으로 채워지면 된다.
