@@ -97,6 +97,9 @@ import org.springframework.transaction.annotation.Transactional;
  * |                          | 생성자는 MANUAL·false로 위임). createTarget이면 소스 스키마로
  * |                          | CREATE TABLE을 등록 트랜잭션 안에서 실행(previewTargetTableDdl과
  * |                          | 같은 함수로 조립 — 클라이언트가 보낸 DDL 문자열은 신뢰하지 않는다)
+ * |                          | (보완) fieldIncludeConfig가 소스 컬럼 원문 대소문자를 쓰도록 —
+ * |                          | 대문자 목록이 PG 소문자 필드와 안 맞아 skip 재배포 후 sink가
+ * |                          | "no key fields"로 실패하던 것(라이브 실측)
  * |                          | 하고 컬럼 매핑은 동일명 전부 활성으로 고정한다. DDL 건너뛰기
  * |                          | (SKIPPED, DdlEventService 전용)를 위해 redeployJdbcSinkOnly·
  * |                          | addDisabledColumn·disableColumn 추가 — 소스 전체 재배포
@@ -558,9 +561,10 @@ public class RegistrationService {
         if (mappings.isEmpty()) {
             return Map.of();
         }
+        // 원문 대소문자로 — sink의 field.include.list는 레코드 필드명과 정확히 일치해야 한다(PG 소문자)
         List<String> included = mappings.stream()
                 .filter(m -> m.enabled() && m.isIdentity())
-                .map(m -> m.sourceColumn().orElseThrow())
+                .map(m -> m.sourceColumnRaw().orElseThrow())
                 .toList();
         boolean allIdentityEnabled = included.size() == mappings.size();
         if (allIdentityEnabled) {

@@ -61,4 +61,15 @@ class ColumnMappingTest {
                 new ColumnMapping("STATUS2", "${STATUS}", true)));      // 리네임 — 스톡 미지원, 제외
         assertThat(config).containsEntry("field.include.list", "ID");
     }
+
+    @Test
+    void include_목록은_소스_컬럼_원문_대소문자를_유지한다_PG_소문자() {
+        // Debezium JDBC sink의 field.include.list는 레코드 필드명과 대소문자까지 일치해야 한다 —
+        // 대문자로 접으면 PG 소문자 필드가 전부 걸러져 "no key fields"로 실패한다(2026-09-27 실측)
+        Map<String, String> config = RegistrationService.fieldIncludeConfig(List.of(
+                new ColumnMapping("id", "${id}", true),
+                new ColumnMapping("sku", "${sku}", true),
+                new ColumnMapping("tag", "${tag}", false)));
+        assertThat(config).containsEntry("field.include.list", "id,sku");
+    }
 }
