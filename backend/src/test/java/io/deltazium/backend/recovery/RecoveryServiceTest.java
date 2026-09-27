@@ -32,6 +32,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 26. 09. 23.       | 최남희  | 체크섬 SQL 생성 단위 테스트를 ChecksumSqlTest로 분리(결함 1
  * |                          | 수정 — DbType별 생성기, Oracle 묶음 해시) — 여기는 커맨드 조립만 남김
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | 결함 R1 수정(feature/recovery-type-hints): buildCommand에
+ * |                          | field-schema-file 인자 추가 — 힌트 경로가 있으면 붙고 없으면
+ * |                          | (null) 인자 자체가 빠지는지 검증. RecoveryService 생성자에
+ * |                          | ConnectClient 파라미터(R2)가 추가돼 호출부도 함께 갱신
+ * --------------------------------------------------
  */
 class RecoveryServiceTest {
 
@@ -41,7 +46,7 @@ class RecoveryServiceTest {
                 "jdbc:postgresql://localhost:5433/iceberg_catalog", "u", "p",
                 "s3://wh/warehouse", "http://localhost:9010", "ak", "sk");
         var changelog = new io.deltazium.backend.iceberg.ChangelogTableService(iceberg);
-        RecoveryService service = new RecoveryService(null, null, null, null, null,
+        RecoveryService service = new RecoveryService(null, null, null, null, null, null,
                 changelog, iceberg, null, null, "localhost:9092", "/opt/recovery-job/bin/recovery-job", "/tmp");
 
         RegisteredTable table = new RegisteredTable(1L, "CDC", "AUTO_100", 1, 2, null, null);
@@ -57,5 +62,24 @@ class RecoveryServiceTest {
                 "bootstrap=localhost:9092",
                 "catalog.uri=jdbc:postgresql://localhost:5433/iceberg_catalog",
                 "catalog.catalog-impl=org.apache.iceberg.jdbc.JdbcCatalog");
+        // 힌트 경로를 안 넘기면(기존 6-인자 오버로드) field-schema-file 인자 자체가 없다
+        assertThat(cmd).noneMatch(a -> a.startsWith("field-schema-file="));
+    }
+
+    @Test
+    void 힌트_파일_경로가_있으면_field_schema_file_인자가_붙는다() {
+        var iceberg = io.deltazium.backend.iceberg.IcebergProperties.minio(
+                "jdbc:postgresql://localhost:5433/iceberg_catalog", "u", "p",
+                "s3://wh/warehouse", "http://localhost:9010", "ak", "sk");
+        var changelog = new io.deltazium.backend.iceberg.ChangelogTableService(iceberg);
+        RecoveryService service = new RecoveryService(null, null, null, null, null, null,
+                changelog, iceberg, null, null, "localhost:9092", "/opt/recovery-job/bin/recovery-job", "/tmp");
+
+        RegisteredTable table = new RegisteredTable(1L, "CDC", "AUTO_100", 1, 2, null, null);
+        List<String> cmd = service.buildCommand(table, "dz", 1753300000000L,
+                List.of("ID"), "dz-recovery.dz.cdc_auto_100", "/tmp/x.log",
+                "/tmp/x-field-schema.json");
+
+        assertThat(cmd).contains("field-schema-file=/tmp/x-field-schema.json");
     }
 }

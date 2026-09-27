@@ -1,5 +1,8 @@
 package io.deltazium.backend.recovery;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -18,8 +21,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import io.deltazium.backend.connect.ConnectClient;
 import io.deltazium.backend.connect.ConnectorDeployService;
 import io.deltazium.backend.connect.ConnectorNames;
+import io.deltazium.backend.ddl.CaptureTopicSchemaReader;
+import io.deltazium.backend.ddl.SchemaFingerprint;
 import io.deltazium.backend.dictionary.DictionaryRouter;
 import io.deltazium.backend.dictionary.TableColumn;
 import io.deltazium.backend.events.TableEventService;
@@ -33,6 +40,9 @@ import io.deltazium.backend.registration.RegisteredTableRepository;
 import io.deltazium.backend.registry.DbConnection;
 import io.deltazium.backend.registry.DbConnectionService;
 import io.deltazium.backend.registry.DbType;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -74,14 +84,31 @@ import org.springframework.stereotype.Service;
  * |                          | (보완) 체크섬 컬럼명을 DbType 폴딩으로 — sourceColumn()의 대문자
  * |                          | 가정 때문에 PG↔PG에서 "ID" does not exist로 실패하던 것(라이브 실측)
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | PG→PG 복구 리허설 결함 R1·R2·R3 수정
+ * |                          | (docs/experiments/2026-09-27-pg2pg-recovery-rehearsal.md):
+ * |                          | R1) 복구 트리거 시 캡처 토픽 마지막 레코드(폴백: schema_fields_json)
+ * |                          | 에서 컬럼 논리 타입을 읽어 힌트 파일로 recovery-job에 넘긴다
+ * |                          | (writeFieldSchemaHint·FieldSchemaHint) — Iceberg changelog는
+ * |                          | Debezium 논리 타입명을 보존하지 못해 재조립만으로 복원 불가하다.
+ * |                          | R2) 복구 sink 배포 후 재개를 ConnectClient.resumeAfterDdl로 —
+ * |                          | FAILED task는 restartFailed, PAUSED는 resume(종전엔 무조건 resume
+ * |                          | 만 호출해 FAILED task가 재트리거로도 회복되지 않았다).
+ * |                          | R3) apply 대기 중 recovery-sink FAILED를 감지하면 즉시 run 상태를
+ * |                          | FAILED(cause=causeLine)로 남기고 WARN 이벤트 기록 — 종전엔 30분
+ * |                          | 타임아웃까지 실행 상태가 DONE에 고착돼 실패를 알 수 없었다.
+ * --------------------------------------------------
  */
 @Service
 public class RecoveryService {
 
-    /** @param fromTimeMs 복구 진입 시각 (epoch millis) */
+    /**
+     * @param fromTimeMs 복구 진입 시각 (epoch millis)
+     * @param cause      status가 FAILED일 때만 채워지는 원인 한 줄(recovery-sink의 causeLine,
+     *                   결함 R3) — 그 외 상태에서는 null
+     */
     public record RecoveryRun(long id, String table, long fromTimeMs, String status,
                               long published, long skipped, String logPath,
-                              LocalDateTime startedAt, boolean autoResume) {
+                              LocalDateTime startedAt, boolean autoResume, String cause) {
     }
 
     /**
@@ -102,6 +129,7 @@ public class RecoveryService {
     private final DbConnectionService connections;
     private final DictionaryRouter dictionaryRouter;
     private final ConnectorDeployService deploy;
+    private final ConnectClient connect;
     private final ChangelogTableService changelog;
     private final IcebergProperties iceberg;
     private final TableEventService events;
@@ -118,6 +146,7 @@ public class RecoveryService {
                            DbConnectionService connections,
                            DictionaryRouter dictionaryRouter,
                            ConnectorDeployService deploy,
+                           ConnectClient connect,
                            ChangelogTableService changelog,
                            IcebergProperties iceberg,
                            TableEventService events,
@@ -130,6 +159,7 @@ public class RecoveryService {
         this.connections = connections;
         this.dictionaryRouter = dictionaryRouter;
         this.deploy = deploy;
+        this.connect = connect;
         this.changelog = changelog;
         this.iceberg = iceberg;
         this.events = events;
@@ -174,10 +204,13 @@ public class RecoveryService {
 
         long id = runSeq.incrementAndGet();
         String logPath = logDir + "/recovery-" + table.suffix() + "-" + id + ".log";
-        List<String> command = buildCommand(table, prefix, fromTimeMs, keyColumns, recoveryTopic, logPath);
+        String hintPath = logDir + "/recovery-" + table.suffix() + "-" + id + "-field-schema.json";
+        String fieldSchemaFile = writeFieldSchemaHint(table, prefix, hintPath);
+        List<String> command = buildCommand(table, prefix, fromTimeMs, keyColumns, recoveryTopic, logPath,
+                fieldSchemaFile);
 
         RecoveryRun run = new RecoveryRun(id, table.qualified(), fromTimeMs, "RUNNING",
-                0, 0, logPath, LocalDateTime.now(), autoResume);
+                0, 0, logPath, LocalDateTime.now(), autoResume, null);
         runs.put(id, run);
         events.record(table.schemaName(), table.tableName(), "RECOVERY_STARTED", "WARN",
                 Instant.ofEpochMilli(fromTimeMs) + "부터 재발행 시작" + (autoResume ? " (완료 후 자동 재개)" : ""), null);
@@ -187,6 +220,15 @@ public class RecoveryService {
 
     List<String> buildCommand(RegisteredTable table, String topicPrefix, long fromTimeMs,
                               List<String> keyColumns, String recoveryTopic, String logPath) {
+        return buildCommand(table, topicPrefix, fromTimeMs, keyColumns, recoveryTopic, logPath, null);
+    }
+
+    /** @param fieldSchemaFile 결함 R1 — 컬럼 논리 타입 힌트 파일 경로(writeFieldSchemaHint가
+     *                         만든다). 힌트를 하나도 못 구했으면 null(인자 자체를 안 넘김 —
+     *                         recovery-job은 힌트 없이 기존 Iceberg 타입 기반 동작으로 진행). */
+    List<String> buildCommand(RegisteredTable table, String topicPrefix, long fromTimeMs,
+                              List<String> keyColumns, String recoveryTopic, String logPath,
+                              String fieldSchemaFile) {
         List<String> cmd = new ArrayList<>();
         cmd.add(launcher);
         iceberg.catalogProperties().forEach((k, v) -> cmd.add("catalog." + k + "=" + v));
@@ -195,7 +237,62 @@ public class RecoveryService {
         cmd.add("key-columns=" + String.join(",", keyColumns));
         cmd.add("bootstrap=" + kafkaBootstrap);
         cmd.add("topic=" + recoveryTopic);
+        if (fieldSchemaFile != null) {
+            cmd.add("field-schema-file=" + fieldSchemaFile);
+        }
         return cmd;
+    }
+
+    /**
+     * 결함 R1(docs/experiments/2026-09-27-pg2pg-recovery-rehearsal.md) — changelog(Iceberg)는
+     * Debezium 전용 논리 타입명(io.debezium.time.* 등)을 보존하지 못해(docs/experiments/
+     * 2026-07-24-iceberg-sink-schema.md) recovery-job의 재조립만으로는 복원할 수 없다.
+     * changelog는 소스 중립(5.1절 불변식 2)이라 애초에 그 이름을 담을 자리가 없으므로,
+     * changelog 대신 **트리거 시점**의 캡처 토픽에서 별도로 얻는다 — SchemaFingerprintPoller가
+     * DDL 지문 비교에 쓰는 것과 같은 읽기(CaptureTopicSchemaReader, assign 기반·트래픽 재구독
+     * 없음)를 재사용한다. 캡처 토픽에서 못 얻으면(토픽 비었음 등) 등록 시점 스냅샷
+     * (registered_tables.schema_fields_json)으로 폴백하고, 그것도 없으면 힌트 없이 진행하며
+     * WARN 이벤트를 남긴다(조용히 묻히지 않게).
+     * @return 힌트 파일 경로, 힌트를 하나도 못 구했으면 null
+     */
+    private String writeFieldSchemaHint(RegisteredTable table, String prefix, String hintPath) {
+        List<SchemaFingerprint.FieldDesc> fields = readLiveFieldSchema(prefix, table);
+        if (fields.isEmpty()) {
+            fields = SchemaFingerprint.fromJson(table.schemaFieldsJson());
+        }
+        if (fields.isEmpty()) {
+            events.record(table.schemaName(), table.tableName(), "RECOVERY_STARTED", "WARN",
+                    "논리 타입 힌트 없음 — 타깃 타입 불일치 가능(예: PostgreSQL timestamptz)", null);
+            return null;
+        }
+        try {
+            Files.writeString(Path.of(hintPath), FieldSchemaHint.toJson(fields));
+            return hintPath;
+        } catch (IOException e) {
+            events.record(table.schemaName(), table.tableName(), "RECOVERY_STARTED", "WARN",
+                    "논리 타입 힌트 파일 기록 실패 — 힌트 없이 진행: " + e.getMessage(), null);
+            return null;
+        }
+    }
+
+    /** 캡처 토픽(&lt;prefix&gt;.&lt;schema&gt;.&lt;table&gt;) 마지막 레코드의 after struct
+     * 필드 목록 — SchemaFingerprintPoller와 같은 1회성 assign 소비(consumer group 없음). 실패
+     * 시(토픽 없음·타임아웃 등) 예외를 삼키고 빈 목록으로 — 힌트는 있으면 좋은 보조 정보일 뿐
+     * 복구 자체를 막을 이유가 아니다. */
+    private List<SchemaFingerprint.FieldDesc> readLiveFieldSchema(String prefix, RegisteredTable table) {
+        String topic = ConnectorNames.captureTopic(prefix, table.schemaName(), table.tableName());
+        Properties props = new Properties();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBootstrap);
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        // group.id 없음 — 복구 트리거 1회에 쓰고 버리는 단발 consumer(SchemaFingerprintPoller의
+        // 상주 consumer와 달리 여기서 만들고 닫는다)
+        try (KafkaConsumer<String, String> c = new KafkaConsumer<>(props)) {
+            JsonNode value = CaptureTopicSchemaReader.lastEnvelopeValue(c, topic).orElse(null);
+            return value == null ? List.of() : SchemaFingerprint.afterFields(value);
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     private void deployRecoverySink(RegisteredTable table, DbConnection target, String topicPrefix, String topic) {
@@ -211,8 +308,12 @@ public class RecoveryService {
         List<ColumnMapping> mappings = columns.findByTable(table.id());
         deploy.deploy("recovery-sink", vars,
                 io.deltazium.backend.registration.RegistrationService.fieldIncludeConfig(mappings));
-        // 이전 복구에서 pause된 상태로 남아 있을 수 있다 — 항상 깨워서 시작
-        deploy.resumeConnector(connectorName);
+        // 이전 복구에서 pause된 상태로 남아 있을 수 있다 — 항상 깨워서 시작.
+        // 결함 R2: 이전 실행이 apply 실패로 task FAILED인 채 남아 있을 수도 있다 — 같은 config를
+        // PUT해도 Connect는 "connector-only config update"로 커넥터만 재시작하고 task는 FAILED
+        // 그대로다(RUNNING 커넥터에 resume은 no-op). resumeAfterDdl이 상태를 보고 FAILED면
+        // restartFailed(KIP-745), PAUSED면 resume을 골라 재트리거로도 회복되게 한다.
+        connect.resumeAfterDdl(connectorName);
     }
 
     private void launchProcess(long id, List<String> command, String logPath, RegisteredTable table,
@@ -256,6 +357,12 @@ public class RecoveryService {
      * recovery-sink의 apply 완료(lag 소진)를 기다렸다가 정지 — "평시 정지" 원칙(4절).
      * 발행 0건이면 바로 정지. 30분 내 소진 안 되면 정지하지 않고 경고만 남긴다.
      * autoResume이면 완료 후 해당 테이블 jdbc-sink를 재개해 go-live까지 마친다.
+     *
+     * <p>결함 R3: 대기 중 recovery-sink 커넥터/태스크가 FAILED로 전이하면 lag는 더 줄지
+     * 않는데도(멈춰 있으므로) 종전엔 30분 타임아웃까지 실행 상태가 "DONE"에 그대로 남아
+     * apply 실패를 실행 이력만으로는 알 수 없었다(실측: 리허설 orders). 5초 주기 대기마다
+     * FAILED 여부를 함께 확인해 감지 즉시 run을 FAILED로 남기고(cause=causeLine), DONE·
+     * go-live로 넘어가지 않는다.
      */
     private void awaitApplyThenPauseSink(long id, RegisteredTable table, String topicPrefix, long published,
                                          boolean autoResume) {
@@ -265,11 +372,19 @@ public class RecoveryService {
         try {
             if (published > 0) {
                 long deadline = System.currentTimeMillis() + 30 * 60_000L;
-                while (System.currentTimeMillis() < deadline) {
+                String cause = failureCause(connector);
+                while (cause == null && System.currentTimeMillis() < deadline) {
                     if (metrics.groupLag(group, topic) == 0) {
                         break;
                     }
                     Thread.sleep(5_000);
+                    cause = failureCause(connector);
+                }
+                if (cause != null) {
+                    update(id, "FAILED", published, 0, cause);
+                    events.record(table.schemaName(), table.tableName(), "RECOVERY_DONE", "WARN",
+                            "recovery-sink apply 실패 — " + cause, null);
+                    return;
                 }
                 if (metrics.groupLag(group, topic) > 0) {
                     events.record(table.schemaName(), table.tableName(), "RECOVERY_DONE", "WARN",
@@ -294,10 +409,51 @@ public class RecoveryService {
         }
     }
 
+    /**
+     * connector/task 상태에서 FAILED 원인 한 줄 — ui/src/lib/connect.ts의 effectiveState·
+     * causeLine과 같은 판정을 백엔드에서 재구현(결함 R3, 실행 이력에 원인을 남기기 위해 필요).
+     * UI·SystemWarningService·ConnectorHealthWatcher·ConnectClient.resumeAfterDdl에 이미 각자
+     * 목적으로 중복 정의된 effectiveState 판정의 다섯 번째 자리다(docs/internals.md "DDL 반영
+     * 정책" 절 — 목적이 다 달라 공유 유틸리티로 뽑지 않는 이 프로젝트의 기존 방침을 따른다).
+     * @return FAILED가 아니면 null
+     */
+    private String failureCause(String connectorName) {
+        JsonNode status = connect.status(connectorName);
+        boolean connectorFailed = "FAILED".equals(status.path("connector").path("state").asText());
+        boolean taskFailed = false;
+        String trace = null;
+        for (JsonNode task : status.path("tasks")) {
+            if ("FAILED".equals(task.path("state").asText())) {
+                taskFailed = true;
+                String t = task.path("trace").asText(null);
+                if (t != null) {
+                    trace = t;
+                }
+            }
+        }
+        if (!connectorFailed && !taskFailed) {
+            return null;
+        }
+        if (trace == null) {
+            return "상태 FAILED (trace 없음)";
+        }
+        String lastCause = null;
+        for (String line : trace.split("\n")) {
+            if (line.startsWith("Caused by: ")) {
+                lastCause = line.substring("Caused by: ".length());
+            }
+        }
+        return (lastCause != null ? lastCause : trace.split("\n")[0]).strip();
+    }
+
     private void update(long id, String status, long published, long skipped) {
+        update(id, status, published, skipped, null);
+    }
+
+    private void update(long id, String status, long published, long skipped, String cause) {
         runs.computeIfPresent(id, (k, r) -> new RecoveryRun(
                 r.id(), r.table(), r.fromTimeMs(), status, published, skipped,
-                r.logPath(), r.startedAt(), r.autoResume()));
+                r.logPath(), r.startedAt(), r.autoResume(), cause));
     }
 
     /**

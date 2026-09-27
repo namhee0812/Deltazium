@@ -193,6 +193,12 @@ Iceberg는 테이블 포맷일 뿐 엔진이 아니다. 읽기는 **iceberg-data
 - 진입점은 시각 → ts_ms 파티션 프루닝(한 파티션 앞부터, 5.2) → 그 이후 전부 재생.
 - 경계 중복 적용은 필연 — **PK upsert 멱등이 전제**라서 안전하다 (I/U는 덮어쓰기, D는 no-op). 정밀한 경계 절단이 필요 없어지는 근거.
 - **복구 토픽은 changelog에 append하지 않는다.** iceberg-sink는 원본 토픽만 구독한다(4절). 복구 이벤트가 섞이면 `_pos`가 원본과 비교 불가가 된다.
+- **재조립 envelope의 논리 타입 복원(2026-09-27, 결함 R1).** changelog는 Debezium 전용 논리
+  타입명(`io.debezium.time.*`)을 보존하지 못해(5.1절, JsonConverter가 모르는 이름은 원시
+  타입으로만 저장됨) 재조립만으로는 일부 타깃 컬럼(예: PostgreSQL timestamptz)의 apply가
+  실패할 수 있다. 복구 트리거 시점에 캡처 토픽(폴백: 등록 시점 스키마 스냅샷)에서 컬럼
+  논리 타입을 별도로 읽어 recovery-job에 힌트로 넘긴다 — changelog 스키마(5.1절)는 바꾸지
+  않는다. 상세: docs/internals.md "복구 재조립 논리 타입 힌트" 절.
 
 ### 6.3 Kafka retention과의 관계
 

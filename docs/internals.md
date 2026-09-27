@@ -849,6 +849,100 @@ SVG `<path>`로 인라인 렌더 — 외부 요청 없음, Vite/Rollup이 사용
 - `DbVendorLogo`의 `<svg>`는 중첩 가능하게 만들어 `TopologySvg`(부모가 이미 `<svg>`)
   안에서는 x/y로, `TopologyPanel`(일반 HTML)에서는 그냥 인라인 아이콘으로 쓴다.
 
+## 복구 재조립 논리 타입 힌트 — 결함 R1·R2·R3 수정 (2026-09-27, feature/recovery-type-hints)
+
+`docs/experiments/2026-09-27-pg2pg-recovery-rehearsal.md`에서 발견된 결함 3건의 구현 판단
+기록. 설계 확정(방향 A: 힌트 주입, changelog 스키마는 불변)은 지시 원문에 있으므로 여기는
+"어떻게 구현했는가"만 남긴다.
+
+### R1 — 왜 changelog가 아니라 트리거 시점 캡처 토픽에서 힌트를 얻는가
+
+changelog(Iceberg)는 5.1절 불변식 2("하류는 소스 중립")에 따라 Debezium 전용 논리 타입명
+(`io.debezium.time.*`)을 담을 자리가 없다 — 애초에 그 이름을 저장하지 않는다(왜 저장되지
+않는지는 아래 표 앞부분 참고). 그래서 changelog 스키마를 건드리는 대신, **복구 트리거
+시점**에 별도로 논리 타입을 얻어 recovery-job에 힌트로 넘긴다(재조립 결과에만 영향, changelog
+불변식은 그대로 유지). 소스는 우선순위대로 둘:
+
+1. **캡처 토픽(`<prefix>.<schema>.<table>`) 마지막 레코드의 `value.schema`** — `after` struct의
+   필드별 type·optional·name(논리명)·parameters. `SchemaFingerprintPoller`가 DDL 지문 비교에
+   쓰던 것과 같은 읽기(assign 기반, consumer group 없음, tombstone이면 최대 20건 거슬러)를
+   `CaptureTopicSchemaReader`로 뽑아 공용화했다 — 상주 consumer(poller)와 1회성 consumer
+   (복구 트리거)가 같은 헬퍼를 쓰되 consumer 수명 관리는 호출측 책임으로 분리했다.
+2. **`registered_tables.schema_fields_json` 폴백** — 캡처 토픽이 비어 있거나(리허설 직후
+   등) 읽기 실패 시 등록 시점 스냅샷을 쓴다. 이미 DDL 워크플로(7절)가 관리하는 필드라
+   재사용했다.
+
+둘 다 없으면 힌트 없이 진행하고 WARN 이벤트("논리 타입 힌트 없음 — 타깃 타입 불일치
+가능")를 남긴다 — 힌트는 있으면 좋은 보조 정보이지 복구 자체를 막을 이유가 아니라는 원칙
+(readLiveFieldSchema·writeFieldSchemaHint의 예외 처리가 전부 이 방향).
+
+**backend ↔ recovery-job 계약.** recovery-job은 backend에 의존하지 않는 플레인 Java 모듈이라
+(CLAUDE.md) 힌트는 파일 하나(JSON)로만 건넨다 — `RecoveryService.writeFieldSchemaHint`가
+`~/deltazium-runtime/logs/recovery-<suffix>-<runId>-field-schema.json`에 쓰고, 커맨드 인자
+`field-schema-file=<path>`로 넘긴다(기존 `key=value` 인자 관례를 따름, `--` 프리픽스는
+`RecoveryJob.parseArgs`가 이미 허용). backend `FieldSchemaHint.toJson`과 recovery-job
+`FieldHint.load`가 같은 JSON 모양(컬럼명 → `{type, name?, optional, parameters}`)을 양쪽에서
+각자 구현 — 필드 이름을 바꾸면 두 파일을 같이 바꿔야 한다.
+
+**적용 범위: before/after만.** `ConnectJsonAssembler`는 envelope 루트(op/before/after/
+source/ts_ms)를 순회하다 필드 이름이 "before"/"after"일 때만 컬럼 힌트 맵을 자식 호출에
+넘긴다(`isImageField`) — source 등 다른 struct 내부에 컬럼명과 우연히 같은 이름이 있어도
+힌트가 새어 들어가지 않는다.
+
+### 논리 타입 힌트 값 변환 표 — Iceberg 저장 표현 → Debezium 와이어 표현
+
+Debezium이 내보내는 `io.debezium.time.*` 논리 타입명은 **표준 Kafka Connect JsonConverter가
+모르는 이름**이다(표준은 `org.apache.kafka.connect.data.{Decimal,Date,Time,Timestamp}` 4종만
+인식). JsonConverter가 인식하지 못하는 논리명은 무시되고 `type`(raw, 예: int64)만으로
+파싱되므로, 그 필드는 원시 Java 타입(Long/Integer/String)인 채로 Iceberg-sink에 전달되고
+Iceberg도 원시 타입(LONG/INTEGER/STRING)으로 저장한다 — **의미(마이크로초냐 밀리초냐 등)는
+바뀌지 않고 이름표만 없어진다.** 그래서 힌트의 값 변환은 스케일 계산 없이 대부분 그대로
+통과시키는 것이 정답이다(`ConnectJsonAssembler.asLong`/`asInt`/`hintedBytesValue`).
+
+| Debezium 논리 타입 | raw type | Iceberg 저장 타입(실측/추론) | 값 변환 | 검증 상태 |
+|---|---|---|---|---|
+| `io.debezium.time.ZonedTimestamp` | string | STRING | 그대로(문자열 패스스루) | **실측**(R1 리허설, PG timestamptz) |
+| `io.debezium.time.Timestamp` | int64(ms) | LONG | 그대로(숫자 패스스루) | 추론 — JsonConverter 미인식 논리명 규칙에서 도출, 미실측 |
+| `io.debezium.time.MicroTimestamp` | int64(µs) | LONG | 그대로 | 추론, 미실측 |
+| `io.debezium.time.NanoTimestamp` | int64(ns) | LONG | 그대로 | 추론, 미실측 |
+| `io.debezium.time.Date` | int32(epoch day) | INTEGER | 그대로 | 추론, 미실측 |
+| `io.debezium.time.Time` | int32(ms) | INTEGER | 그대로 | 추론, 미실측 |
+| `io.debezium.time.MicroTime`/`NanoTime` | int64 | LONG | 그대로 | 추론, 미실측 |
+| `org.apache.kafka.connect.data.Timestamp`/`Date`/`Time` | int64/int32 | TIMESTAMP/DATE(Iceberg 논리 타입) | `asLong`/`asInt`가 `OffsetDateTime`/`LocalDate` 등에서 epoch로 재계산 | **미검증** — 표준 논리명이라 Iceberg가 이미 자체 TIMESTAMP/DATE로 인식해 저장할 것으로 추정되나(그래서 기존 힌트 없는 경로도 이미 이 name을 낸다), 힌트가 실제 이 조합으로 들어오는 경로가 현재 없어 확인 못함 |
+| `org.apache.kafka.connect.data.Decimal` | bytes | DECIMAL | 기존 decimal 경로 그대로(unscaled value base64) | **실측**(기존 EnvelopeRoundTripTest) — 힌트가 있어도 없어도 결과 동일 |
+
+표의 "그대로" 행들은 힌트가 스키마의 `name`만 복원하고 **값은 건드리지 않는다**는 뜻 —
+recovery-sink(JDBC sink)가 이 `name`을 보고 타깃 컬럼 타입에 맞는 바인딩을 고른다(R1 증상이
+바로 이 바인딩 실패였다). Oracle 타깃 `TIMESTAMP WITH TIME ZONE`, PG `timestamp`(without tz)·
+`date`·`time` 컬럼에 대한 라이브 리허설은 아직 하지 않았다(TODO.md).
+
+### R2 — 재트리거 시 FAILED task 회복
+
+`RecoveryService.deployRecoverySink`가 복구 sink config를 PUT한 뒤 무조건 `resume`을
+불렀는데, Connect는 같은 config 재적용을 "connector-only config update"로 처리해 커넥터만
+재시작하고 task는 FAILED 그대로 둔다(RUNNING 커넥터에 resume은 no-op) — 리허설에서 실측한
+그대로다. `DdlEventService`가 DDL 승인·건너뛰기·자동 적용 후 sink 재개에 이미 쓰던
+`ConnectClient.resumeAfterDdl`(상태 조회 후 FAILED면 `restartFailed`, PAUSED면 `resume`)을
+그대로 재사용했다 — "복구 sink를 항상 정상 상태로 깨워서 시작한다"는 목적이 DDL 워크플로의
+"DDL 반영 후 sink를 정상으로 되돌린다"와 같은 요구라 새 메서드를 만들지 않았다.
+
+### R3 — apply 실패를 run 상태에 반영
+
+`awaitApplyThenPauseSink`의 5초 대기 루프마다 lag 확인과 함께 `failureCause(connector)`를
+호출해 FAILED 여부를 함께 본다. 감지 즉시 루프를 빠져나와 run을 `FAILED`(cause=trace의 마지막
+"Caused by:" 줄, 없으면 trace 첫 줄)로 남기고 WARN 이벤트를 기록한다 — 종전엔 FAILED여도
+lag가 줄지 않을 뿐 예외가 나지 않아 30분 타임아웃까지 `DONE` 상태에 머물렀다(리허설 실측).
+
+`failureCause`는 `ui/src/lib/connect.ts`의 `effectiveState`·`causeLine`과 같은 판정을
+백엔드에서 재구현한 것 — UI·`SystemWarningService`·`ConnectorHealthWatcher`·
+`ConnectClient.resumeAfterDdl`에 이미 각자 목적으로 중복 정의된 effectiveState 판정의
+다섯 번째 자리다("DDL 반영 정책" 절에서 이미 네 번째까지 정리한 것과 같은 이유로 공유
+유틸리티로 뽑지 않았다 — 상태 조회 후 액션·이벤트까지 갖는 조합이 매번 달라 억지로 합치면
+오히려 읽기 어려워진다).
+
+실행 이력이 `RecoveryService.runs`(ConcurrentHashMap, 인메모리)에만 있어 backend 재기동 시
+소실되는 점은 이번 수정 범위 밖(TODO.md에 기록).
+
 ## 개발 환경 특이사항
 
 - vite dev 서버는 `usePolling` (vite.config.ts): 이 서버에서 inotify 감시가 변경을
