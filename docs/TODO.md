@@ -218,6 +218,11 @@
       인용 부호만 고쳐서는 근본 해결이 아니라 손대지 않았다(설계 판단 필요).
 - [ ] **SingleStore 소스 지원 검토** (OBSERVE 기반 커넥터 — SingleStore CDC용 Kafka Connect
       소스 커넥터, 현재는 타깃 전용만 지원. 기성 커넥터 존재 여부·설정 확인부터)
+- [ ] **SingleStore 타깃 후속** (2026-09-28 실배선 검증 완료 — docs/experiments/2026-09-28-singlestore-target.md)
+      남은 것: DATETIME에 타임존이 없어 timestamptz가 UTC로 저장되는 점의 문서화·정책, 타입 매핑
+      정밀도(numeric(12,2) → DECIMAL(65,30)), Oracle 소스 + SingleStore 타깃의 schema change topic
+      DDL 승인 미지원(`DdlEventService.rewriteForTarget`이 Oracle 원문 DDL 재사용 — 설계 판단 필요),
+      컬럼 비활성 매핑·DDL 워크플로 미검증.
 - [ ] 테이블별 incremental snapshot (Kafka signal) — 기동 중 테이블 추가 시 초기적재,
       테이블 단위 reload(Qlik per-table reload에 해당). architecture.md 10절 미결
 - [ ] 컬럼 리네임의 적재 반영 방침 결정 — 스톡 sink 한계로 현재 저장만
