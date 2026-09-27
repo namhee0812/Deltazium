@@ -1,6 +1,7 @@
 package io.deltazium.recovery.envelope;
 
 import java.util.List;
+import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,6 +35,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 26. 09. 05.       | 최남희  | changelog 스키마에 `_pos`(파이프라인 부여 위치, 5.1절) 추가 —
  * |                          | 왕복 테스트 대상 행에 채워 넣되, 재조립 envelope에는
  * |                          | 나오지 않아야 함을 검증(원본 Debezium envelope에는 없던 필드)
+ * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | 결함 R1 수정(feature/recovery-type-hints) 회귀 방어선 추가:
+ * |                          | timestamptz(ZonedTimestamp)·timestamp(MicroTimestamp)·
+ * |                          | date(Date) 힌트가 있으면 논리 타입명·값이 복원되고, 힌트 없는
+ * |                          | decimal·힌트 없는 assembler는 기존 동작 그대로임을 검증
  * --------------------------------------------------
  */
 class EnvelopeRoundTripTest {
@@ -225,5 +231,119 @@ class EnvelopeRoundTripTest {
         byte[] decoded = java.util.Base64.getDecoder().decode(
                 value.get("payload").get("after").get("AMT").asText());
         assertTrue(new java.math.BigInteger(decoded).intValue() == 12050);
+    }
+
+    // ── 결함 R1: 논리 타입 힌트 회귀 방어선 ─────────────────────────────────────────
+
+    /** timestamptz(ZonedTimestamp)·timestamp(MicroTimestamp)·date(Date)·힌트 없는 decimal이
+     * 섞인 before/after — 힌트가 있는 컬럼만 논리 타입명이 복원되는지, 값 표현이 Iceberg
+     * 저장값 그대로 통과하는지(스케일 변환 없음) 검증. */
+    private static Types.StructType hintedRowType(int base) {
+        return Types.StructType.of(
+                Types.NestedField.optional(base, "ID", Types.LongType.get()),
+                Types.NestedField.optional(base + 1, "AMOUNT", Types.DecimalType.of(12, 2)),
+                Types.NestedField.optional(base + 2, "UPDATED_AT", Types.StringType.get()),
+                Types.NestedField.optional(base + 3, "CREATED_AT", Types.LongType.get()),
+                Types.NestedField.optional(base + 4, "THE_DATE", Types.IntegerType.get()));
+    }
+
+    private static Schema hintedChangelogSchema() {
+        return new Schema(
+                Types.NestedField.optional(1, "op", Types.StringType.get()),
+                Types.NestedField.optional(2, "ts_ms", Types.LongType.get()),
+                Types.NestedField.optional(3, "source", Types.StructType.of(
+                        Types.NestedField.optional(4, "scn", Types.StringType.get()))),
+                Types.NestedField.optional(20, "before", hintedRowType(21)),
+                Types.NestedField.optional(30, "after", hintedRowType(31)));
+    }
+
+    private static Map<String, FieldHint> hints() {
+        Map<String, FieldHint> h = new java.util.HashMap<>();
+        h.put("UPDATED_AT", new FieldHint("string", "io.debezium.time.ZonedTimestamp", true, Map.of()));
+        h.put("CREATED_AT", new FieldHint("int64", "io.debezium.time.MicroTimestamp", true, Map.of()));
+        h.put("THE_DATE", new FieldHint("int32", "io.debezium.time.Date", true, Map.of()));
+        return h;
+    }
+
+    private static JsonNode fieldSchemaOf(ObjectNode envelopeValue, String fieldName) {
+        for (JsonNode f : envelopeValue.get("schema").get("fields")) {
+            if (fieldName.equals(f.get("field").asText())) {
+                return f;
+            }
+        }
+        throw new AssertionError("필드 스키마 없음: " + fieldName);
+    }
+
+    private static JsonNode fieldByName(JsonNode structSchema, String name) {
+        for (JsonNode f : structSchema.get("fields")) {
+            if (name.equals(f.get("field").asText())) {
+                return f;
+            }
+        }
+        throw new AssertionError("필드 없음: " + name);
+    }
+
+    @Test
+    void 힌트가_있으면_debezium_논리_타입명과_값이_before_after_모두_복원된다() {
+        Schema schema = hintedChangelogSchema();
+
+        GenericRecord after = GenericRecord.create(schema.findField("after").type().asStructType());
+        after.setField("ID", 1L);
+        after.setField("AMOUNT", new java.math.BigDecimal("120.50"));
+        after.setField("UPDATED_AT", "2026-09-27T11:17:02.971965Z");
+        after.setField("CREATED_AT", 1790507822960123L); // MicroTimestamp — 마이크로초 그대로
+        after.setField("THE_DATE", 20358); // epoch day
+
+        GenericRecord before = GenericRecord.create(schema.findField("before").type().asStructType());
+        before.setField("ID", 1L);
+        before.setField("AMOUNT", new java.math.BigDecimal("100.00"));
+        before.setField("UPDATED_AT", "2026-09-26T09:00:00Z");
+        before.setField("CREATED_AT", 1790507822960123L);
+        before.setField("THE_DATE", 20357);
+
+        GenericRecord row = GenericRecord.create(schema.asStruct());
+        row.setField("op", "u");
+        row.setField("ts_ms", 1790507822960L);
+        row.setField("before", before);
+        row.setField("after", after);
+
+        ConnectJsonAssembler hinted = new ConnectJsonAssembler(hints());
+        ObjectNode value = hinted.value(schema, row);
+
+        for (String side : new String[] {"before", "after"}) {
+            JsonNode sideSchema = fieldSchemaOf(value, side);
+
+            JsonNode updatedAt = fieldByName(sideSchema, "UPDATED_AT");
+            assertEquals("string", updatedAt.get("type").asText());
+            assertEquals("io.debezium.time.ZonedTimestamp", updatedAt.get("name").asText());
+
+            JsonNode createdAt = fieldByName(sideSchema, "CREATED_AT");
+            assertEquals("int64", createdAt.get("type").asText());
+            assertEquals("io.debezium.time.MicroTimestamp", createdAt.get("name").asText());
+
+            JsonNode theDate = fieldByName(sideSchema, "THE_DATE");
+            assertEquals("int32", theDate.get("type").asText());
+            assertEquals("io.debezium.time.Date", theDate.get("name").asText());
+
+            // 힌트 없는 AMOUNT(decimal)는 기존과 동일하게 동작한다
+            JsonNode amount = fieldByName(sideSchema, "AMOUNT");
+            assertEquals("bytes", amount.get("type").asText());
+            assertEquals("org.apache.kafka.connect.data.Decimal", amount.get("name").asText());
+        }
+
+        JsonNode payloadAfter = value.get("payload").get("after");
+        assertEquals("2026-09-27T11:17:02.971965Z", payloadAfter.get("UPDATED_AT").asText());
+        assertEquals(1790507822960123L, payloadAfter.get("CREATED_AT").asLong());
+        assertEquals(20358, payloadAfter.get("THE_DATE").asInt());
+
+        JsonNode payloadBefore = value.get("payload").get("before");
+        assertEquals("2026-09-26T09:00:00Z", payloadBefore.get("UPDATED_AT").asText());
+        assertEquals(20357, payloadBefore.get("THE_DATE").asInt());
+
+        // 힌트 없는(기본) assembler로는 논리 타입명이 안 붙는다 — 결함 R1 재현 회귀 방어
+        ObjectNode plain = assembler.value(schema, row);
+        JsonNode plainUpdatedAt = fieldByName(fieldSchemaOf(plain, "after"), "UPDATED_AT");
+        assertTrue(plainUpdatedAt.path("name").isMissingNode());
+        assertEquals("string", plainUpdatedAt.get("type").asText());
     }
 }

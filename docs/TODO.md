@@ -84,13 +84,17 @@
       **복구 재발행(recovery-sink)의 PG 타깃 — 리허설 실행, 결함 발견 (2026-09-27,
       `docs/experiments/2026-09-27-pg2pg-recovery-rehearsal.md`)**: items(타임스탬프 컬럼 없음)는
       6.4 ①~⑤ 통과 — `field.include.list` 상속, `_pos` 순서, 멱등 재실행, go-live 확인.
-      orders(`updated_at timestamptz`)는 **recovery-sink apply 실패 — 미해결**:
-      R1 재조립 envelope에서 `io.debezium.time.ZonedTimestamp` 논리 타입명이 빠져 JDBC sink가
-      varchar로 바인딩(SQLSTATE 42804) → PG 타깃의 timestamptz 테이블은 changelog 복구 불가.
-      R2 실패 task는 재트리거로 회복 안 됨(task restart 경로 없음). R3 apply 실패 시 실행 상태가
-      DONE으로 30분 고착. 수정 방향(assembler에서 논리 타입 복원 vs changelog 스키마에 타입 힌트
-      보존)은 5.1 불변식과 맞물려 **사용자 결정 필요**. Oracle 타깃 TIMESTAMP WITH TIME ZONE,
-      PG `timestamp`/`date` 컬럼은 미검증.
+      orders(`updated_at timestamptz`)는 recovery-sink apply 실패(R1) + 재트리거 미회복(R2) +
+      실행 상태 DONE 고착(R3) — **R1·R2·R3 수정 완료(2026-09-27, `feature/recovery-type-hints`)**:
+      R1은 복구 트리거 시점에 캡처 토픽(폴백: 등록 시점 스냅샷)에서 컬럼 논리 타입을 읽어
+      recovery-job에 힌트로 넘기는 방향(A안)으로 확정·구현 — changelog 스키마(5.1절)는 그대로
+      두고 changelog 밖에서 힌트를 보강했다(docs/internals.md "논리 타입 힌트" 절). R2는
+      `ConnectClient.resumeAfterDdl` 재사용, R3는 apply 대기 루프에서 FAILED를 즉시 감지해
+      `cause`를 run 상태에 남긴다. **라이브 재검증(orders 복구 재실행)은 메인 세션이 한다** —
+      이 커밋은 단위·왕복 테스트만 실행. Oracle 타깃 TIMESTAMP WITH TIME ZONE, PG
+      `timestamp`/`date`/`time` 컬럼의 실측 검증은 여전히 미완(코드는 표를 따라 대응해 뒀으나
+      라이브 리허설 미실시). 부수 관찰(결함 아님, 범위 밖): `RecoveryService.runs`가
+      `ConcurrentHashMap`이라 복구 실행 이력이 backend 재기동 시 소실된다 — 영속화는 별도 작업.
       **타깃 테이블 생성 방침 완료 (2026-09-27, feature/ddl-policy)**: 등록 위저드에
       "기존 테이블 선택 / 소스 스키마로 새로 생성" 옵션 추가 — 생성 선택 시
       `POST /api/registrations/target-table/preview`로 CREATE TABLE 초안(타입 매핑은

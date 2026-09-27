@@ -132,6 +132,10 @@ diff 0.
 
 ## 결함
 
+**수정: `feature/recovery-type-hints` (2026-09-27) — R1·R2·R3 모두 단위·왕복 테스트로 검증,
+라이브 재검증(orders 복구 재실행)은 메인 세션이 한다.** 판단·구현 상세는
+docs/internals.md "복구 재조립 논리 타입 힌트" 절.
+
 ### R1 — 재조립 envelope에서 Debezium 논리 타입명 소실 → PG timestamptz 컬럼 apply 실패
 - 증상: `dz-recovery-sink-nhtest_src-cdc_tmp_orders` task FAILED. connect.log 11:18:40Z:
   `Batch entry 0 INSERT INTO cdc_tmp.orders (...updated_at...) VALUES (... ('2026-09-27T11:17:02.971965Z') ...)

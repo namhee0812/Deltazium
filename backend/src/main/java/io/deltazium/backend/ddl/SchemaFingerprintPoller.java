@@ -7,7 +7,6 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.deltazium.backend.connect.ConnectorNames;
 import io.deltazium.backend.registration.RegisteredTable;
 import io.deltazium.backend.registration.RegisteredTableRepository;
@@ -16,11 +15,7 @@ import io.deltazium.backend.registry.DbConnectionService;
 import io.deltazium.backend.registry.DbType;
 import jakarta.annotation.PreDestroy;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.common.PartitionInfo;
-import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,15 +55,17 @@ import org.springframework.stereotype.Component;
  * |                          | 이벤트를 적재한 직후 DdlEventService.handleNewEvent를 불러 AUTO
  * |                          | 정책 자동 적용을 즉시 시도한다
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | 결함 R1 수정(feature/recovery-type-hints): checkTable의 마지막
+ * |                          | 레코드 읽기 로직을 CaptureTopicSchemaReader로 추출 — RecoveryService가
+ * |                          | 복구 트리거 시 같은 방식으로 캡처 토픽 스키마를 읽어 논리 타입 힌트를
+ * |                          | 만드는 데 재사용한다(docs/internals.md)
+ * --------------------------------------------------
  */
 @Component
 @ConditionalOnProperty(name = "deltazium.fingerprint-poller.enabled", havingValue = "true", matchIfMissing = true)
 public class SchemaFingerprintPoller {
 
     private static final Logger log = LoggerFactory.getLogger(SchemaFingerprintPoller.class);
-    private static final ObjectMapper JSON = new ObjectMapper();
-    private static final int MAX_BACKTRACK = 20;
-    private static final long PARTITION_READ_TIMEOUT_MS = 3000;
 
     private final RegisteredTableRepository registrations;
     private final DbConnectionService connections;
@@ -135,30 +132,9 @@ public class SchemaFingerprintPoller {
     private void checkTable(KafkaConsumer<String, String> c, RegisteredTable t) {
         DbConnection source = connections.get(t.sourceConnectionId());
         String topic = ConnectorNames.captureTopic(source.topicPrefix(), t.schemaName(), t.tableName());
-        List<PartitionInfo> partitions = c.partitionsFor(topic);
-        if (partitions == null || partitions.isEmpty()) {
-            return; // 토픽이 아직 없음 — 다음 주기에 재확인
-        }
-        List<TopicPartition> tps = partitions.stream()
-                .map(p -> new TopicPartition(p.topic(), p.partition())).toList();
-        c.assign(tps);
-        Map<TopicPartition, Long> ends = c.endOffsets(tps);
-
-        // 파티션이 여럿이면 마지막으로 읽은 것을 채택한다 — 현재 num.partitions=1 전제(운영 확인).
-        // 여러 파티션의 스키마가 서로 다를 수는 없다(같은 테이블의 같은 컬럼 구조이므로).
-        JsonNode lastValue = null;
-        for (TopicPartition tp : tps) {
-            long end = ends.getOrDefault(tp, 0L);
-            if (end == 0) {
-                continue; // 이 파티션엔 메시지 없음
-            }
-            JsonNode v = lastNonTombstone(c, tp, end);
-            if (v != null) {
-                lastValue = v;
-            }
-        }
+        JsonNode lastValue = CaptureTopicSchemaReader.lastEnvelopeValue(c, topic).orElse(null);
         if (lastValue == null) {
-            return;
+            return; // 토픽이 없거나 메시지가 없음(전부 tombstone 포함) — 다음 주기에 재확인
         }
 
         List<SchemaFingerprint.FieldDesc> newFields = SchemaFingerprint.afterFields(lastValue);
@@ -218,46 +194,6 @@ public class SchemaFingerprintPoller {
         String note = draftDdl != null ? summary : summary + " (자동 초안 없음 — 확인 후 수동 DDL 필요)";
         String state = draftDdl != null ? "DETECTED" : "SNAPSHOT";
         return new EventPayload(ddlText, note, state);
-    }
-
-    /** 파티션의 마지막 메시지부터 최대 MAX_BACKTRACK건 거슬러 tombstone이 아닌 첫 값을 찾는다. */
-    private JsonNode lastNonTombstone(KafkaConsumer<String, String> c, TopicPartition tp, long endOffset) {
-        for (int back = 0; back < MAX_BACKTRACK; back++) {
-            long offset = endOffset - 1 - back;
-            if (offset < 0) {
-                return null;
-            }
-            c.seek(tp, offset);
-            ConsumerRecord<String, String> rec = pollForOffset(c, tp, offset);
-            if (rec == null) {
-                return null; // 그 offset의 레코드를 못 받음 — 포기(다음 주기 재시도)
-            }
-            if (rec.value() != null) {
-                try {
-                    return JSON.readTree(rec.value());
-                } catch (Exception e) {
-                    return null; // 파싱 불가 — 형식 밖으로 취급
-                }
-            }
-            // tombstone — 한 칸 더 거슬러 올라간다
-        }
-        return null;
-    }
-
-    /** tp를 offset에 seek한 뒤 그 레코드가 도착할 때까지 짧게 poll — 다른 파티션 레코드는 무시. */
-    private ConsumerRecord<String, String> pollForOffset(KafkaConsumer<String, String> c, TopicPartition tp,
-                                                          long offset) {
-        long deadline = System.currentTimeMillis() + PARTITION_READ_TIMEOUT_MS;
-        while (System.currentTimeMillis() < deadline) {
-            ConsumerRecords<String, String> records = c.poll(Duration.ofMillis(500));
-            for (ConsumerRecord<String, String> rec : records) {
-                if (rec.topic().equals(tp.topic()) && rec.partition() == tp.partition()
-                        && rec.offset() == offset) {
-                    return rec;
-                }
-            }
-        }
-        return null;
     }
 
     private KafkaConsumer<String, String> consumer() {

@@ -9,6 +9,7 @@ import java.util.Properties;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.deltazium.recovery.envelope.ConnectJsonAssembler;
+import io.deltazium.recovery.envelope.FieldHint;
 import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Catalog;
@@ -36,7 +37,8 @@ import org.slf4j.LoggerFactory;
  * catalog.jdbc.user=..., catalog.type=rest 등. backend IcebergProperties.catalogProperties()가
  * 단일 진원지 — architecture.md 3절, TODO ③),
  * table=changelog_dz.cdc_auto_100, from-ts-ms=1753300000000,
- * key-columns=ID[,COL2], bootstrap=localhost:9092, topic=dz-recovery.cdc_auto_100
+ * key-columns=ID[,COL2], bootstrap=localhost:9092, topic=dz-recovery.cdc_auto_100,
+ * field-schema-file=/path/to/hint.json (선택 — 결함 R1, 컬럼 논리 타입 힌트, 없으면 힌트 없이 진행)
  *
  * <p>
  * 수정 내역
@@ -57,6 +59,11 @@ import org.slf4j.LoggerFactory;
  * |                          | 반복 인자로 전환하고 `openCatalog`가 `CatalogUtil.buildIcebergCatalog`로
  * |                          | 프로파일에 맞는 카탈로그(JDBC 또는 REST)를 연다 — backend의
  * |                          | IcebergProperties.catalogProperties()와 같은 속성 이름을 그대로 쓴다.
+ * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | 결함 R1 수정(feature/recovery-type-hints): 선택 인자
+ * |                          | field-schema-file을 읽어 FieldHint 맵을 ConnectJsonAssembler에
+ * |                          | 넘긴다(loadFieldHints) — PostgreSQL timestamptz 등 Iceberg가
+ * |                          | 보존하지 못하는 Debezium 논리 타입명을 재조립 envelope에 복원한다.
  * --------------------------------------------------
  */
 public final class RecoveryJob {
@@ -108,7 +115,7 @@ public final class RecoveryJob {
             log.info("재발행 대상 {}건 (from-ts-ms={}, scan-from-ts-ms={}, table={})",
                     replay.size(), fromTsMs, scanFromTsMs, tableName);
 
-            ConnectJsonAssembler assembler = new ConnectJsonAssembler();
+            ConnectJsonAssembler assembler = new ConnectJsonAssembler(loadFieldHints(args));
             Properties props = new Properties();
             props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, require(args, "bootstrap"));
             props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
@@ -173,6 +180,27 @@ public final class RecoveryJob {
         }
         // sink·backend와 같은 카탈로그 이름이어야 같은 테이블이 보인다
         return CatalogUtil.buildIcebergCatalog("iceberg", props, null);
+    }
+
+    /**
+     * 결함 R1 수정 — backend가 넘긴 컬럼별 논리 타입 힌트 파일(선택 인자, 없으면 빈 맵으로
+     * 힌트 없이 진행). 로드 실패(파일 없음·형식 깨짐 등)도 예외를 삼키고 빈 맵으로 — 힌트는
+     * 있으면 좋은 보조 정보일 뿐 복구 자체를 막을 이유가 아니다(backend 쪽도 같은 원칙,
+     * RecoveryService.writeFieldSchemaHint).
+     */
+    private static Map<String, FieldHint> loadFieldHints(Map<String, String> args) {
+        String file = args.get("field-schema-file");
+        if (file == null || file.isBlank()) {
+            return Map.of();
+        }
+        try {
+            Map<String, FieldHint> hints = FieldHint.load(java.nio.file.Path.of(file));
+            log.info("논리 타입 힌트 {}건 로드: {}", hints.size(), file);
+            return hints;
+        } catch (Exception e) {
+            log.warn("논리 타입 힌트 파일 로드 실패({}) — 힌트 없이 진행: {}", file, e.getMessage());
+            return Map.of();
+        }
     }
 
     static Map<String, String> catalogProperties(Map<String, String> args) {
