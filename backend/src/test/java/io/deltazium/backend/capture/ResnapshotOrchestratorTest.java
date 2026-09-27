@@ -44,6 +44,9 @@ import static org.mockito.Mockito.when;
  * |                          | 바뀌어 소스 커넥션 mock(topicPrefix="dz") 추가, redeployWithSnapshotMode
  * |                          | 시그니처에 sourceConnectionId 추가
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | SnapshotNotificationPoller가 소스별(topicPrefix별) 상태로 바뀌며
+ * |                          | notifications.status() 스텁을 status("dz")로 수정
+ * --------------------------------------------------
  */
 class ResnapshotOrchestratorTest {
 
@@ -80,7 +83,7 @@ class ResnapshotOrchestratorTest {
         when(connections.get(10L)).thenReturn(source);
         when(connections.get(20L)).thenReturn(target);
         when(metrics.groupLag(anyString(), anyString())).thenReturn(0L);
-        when(notifications.status()).thenReturn(
+        when(notifications.status("dz")).thenReturn(
                 new SnapshotNotificationPoller.SnapshotStatus("COMPLETED", null,
                         java.util.Map.of("ORCL.CDC.T1", 5L), 1L, 2L));
         when(connect.status(anyString())).thenReturn(JSON.readTree("""

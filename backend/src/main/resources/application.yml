@@ -26,6 +26,9 @@ deltazium:
   # 워치독·경고 센터(SystemWarningService) 디스크 사용률 판정 대상 경로 — deploy/env.sh DZ_RT와 일치
   runtime-dir: ${DZ_RT:${user.home}/deltazium-runtime}
   disk-warn-pct: 85
+  # 테이블 lag 경고 임계(레코드 건수) — 대시보드 KPI·테이블 모니터링 그리드가 공유.
+  # GET /api/system/settings로 UI에 내려준다(하드코딩 금지, 2026-09-27)
+  lag-warn-records: 100
   # changelog 저장소 (Deltazium 자체 인프라 — 사용자 등록 대상 아님, deploy/env.sh와 일치)
   # 저장소 프로파일(MinIO/R2, architecture.md 2.2·3절, TODO ③) — DZ_STORAGE_PROFILE(deploy/env.sh)이
   # 단일 진원지. minio 프로파일 키만 쓰면 종전과 완전히 동일하게 동작한다(IcebergProperties.minio 경로).
