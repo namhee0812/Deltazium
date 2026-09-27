@@ -216,8 +216,14 @@
       타깃 조합에서 `DdlEventService.rewriteForTarget`이 Oracle 원문 DDL 구문(괄호 ADD 절·
       NUMBER/VARCHAR2 타입 키워드)을 그대로 재사용해 SingleStore에 문법이 안 맞을 수 있다 —
       인용 부호만 고쳐서는 근본 해결이 아니라 손대지 않았다(설계 판단 필요).
-- [ ] **SingleStore 소스 지원 검토** (OBSERVE 기반 커넥터 — SingleStore CDC용 Kafka Connect
-      소스 커넥터, 현재는 타깃 전용만 지원. 기성 커넥터 존재 여부·설정 확인부터)
+- [x] **SingleStore 소스 지원 검토 — 진행하지 않음으로 결론** (2026-09-28 실험,
+      docs/experiments/2026-09-28-singlestore-source-feasibility.md)
+      `com.singlestore:singlestore-debezium-connector` 0.1.9를 실제 배포해 검증: 기본 캡처·
+      notification은 되지만 **DELETE의 before·after가 둘 다 null**(값은 Kafka 키에만)이라
+      changelog에서 키를 복원할 수 없어 복구 재발행 시 삭제가 통째로 누락된다(5.1 불변식·6.1 위반).
+      **DDL 후 커넥터가 RUNNING인 채로 조용히 멈추는** 문제도 있다(소스에 미구현 TODO 주석).
+      둘 다 커넥터 쪽 결함이고 자체 커넥터 작성은 절대 규칙 금지라 우회 경로가 없다.
+      커넥터가 1.0대로 올라오고 위 둘이 해결되면 재검토. 실험 플러그인은 삭제했다.
 - [ ] **SingleStore 타깃 후속** (2026-09-28 실배선 검증 완료 — docs/experiments/2026-09-28-singlestore-target.md)
       남은 것: DATETIME에 타임존이 없어 timestamptz가 UTC로 저장되는 점의 문서화·정책, 타입 매핑
       정밀도(numeric(12,2) → DECIMAL(65,30)), Oracle 소스 + SingleStore 타깃의 schema change topic
