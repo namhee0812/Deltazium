@@ -15,7 +15,7 @@
   - 남은 갭: watchdog·경고 센터는 감지·재기동까지다. 디스크가 실제로 가득 차는
     근본 원인(로그 보존 정책, 파티션 분리 등)은 미해결 — 아래 Prometheus 도입과
     함께 재검토
-- [ ] **Prometheus + Grafana 도입** (2026-08-06 결정: 추후 학습 겸 도입)
+- [ ] **Prometheus + Grafana 도입** (2026-08-06 결정: 추후 학습 겸 도입 — **2026-09-27 재확인: 지금은 보류, 추후**)
   - Kafka·Connect에 JMX exporter 붙여 JVM(힙·GC)·커넥터 메트릭 노출
   - 현재 자체 경량 수집(1분 샘플러 → PG)과 병행 비교 후 대체 여부 판단
   - Debezium 커넥터 자체 메트릭(스냅샷·스트리밍 lag)도 JMX로 노출됨
@@ -30,7 +30,7 @@
     2026-09-05 확정 결정: `_pos` struct {partition, offset} 1개 / namespace 단일 레벨
     `changelog_<prefix>` / 기존 changelog는 이전 없이 재등록(재스냅샷, **삭제 전 사용자 확인**) /
     UI는 시각·`_pos` 기본, SCN·LSN은 참고 텍스트 / rule-check.sh에 `source` 내부 필드 참조 차단 추가
-  - [ ] **① changelog 중립 계약** — DW 없이 단독 가치(scn 정렬은 장기 트랜잭션에서 커밋 순서와 어긋남, 5.1)
+  - [x] **① changelog 중립 계약** — DW 없이 단독 가치(scn 정렬은 장기 트랜잭션에서 커밋 순서와 어긋남, 5.1)
     - **진행 상태 (2026-09-05)**: 코드 병합 완료(e0164e0, 테스트 140건 통과·통합 테스트 통과). 남은 것:
       실 배선 스모크(Oracle 테스트 테이블 DDL·DML 필요 — 사용자 실행), 기존 등록 테이블 4개
       해제·재등록(기존 changelog 삭제 수반 — 사용자 확인 후), 구 `dz-iceberg-sink` 커넥터 정리
@@ -44,7 +44,7 @@
     - rule-check.sh: recovery-job·backend 수렴/복구 코드의 `source.scn` 등 참조 차단 (코드 전환과 동시에)
     - 기존 등록 테이블 해제·재등록 절차 (operations.md에 기록)
     - 확인: 소스 토픽 파티션 수(브로커 기본값) — 1이면 `_pos.partition`은 항상 0, 컬럼은 유지
-  - [ ] **② 두 번째 소스·타깃: PostgreSQL** — 캡처 층 분기 증명 (2026-09-07 구체화·위임)
+  - [x] **② 두 번째 소스·타깃: PostgreSQL** — 캡처 층 분기 증명 (2026-09-07 구체화·위임)
     - **진행 상태 (2026-09-07)**: 코드 구현 완료(feature/pg-source 병합, main). 라이브 전환
       완료 — backend 재기동·기존 등록 테이블 4개 해제·재등록·PostgreSQL 소스 준비까지
       메인 세션이 수행. **PG 소스 실 배선 스모크 실행** — PG→Oracle 타깃 적재, changelog
@@ -121,7 +121,7 @@
     - **docs**: architecture.md 4절 이름 규칙·7절 감지 방식·8절 PG 점검 확정치, operations.md
       재등록(커넥터 이름 전환) 절차, internals.md 지문 감지 구현 판단
     - 검증: 단위·통합 테스트, PG 소스 실 배선 스모크(사용자 실행 후) — PG→Oracle 타깃 + changelog `_pos`
-  - [ ] **③ 저장소 프로파일: MinIO / R2** — R2 프로파일 = Cloudflare R2(10GB·egress 무료) +
+  - [x] **③ 저장소 프로파일: MinIO / R2** — R2 프로파일 = Cloudflare R2(10GB·egress 무료) +
         R2 Data Catalog(Iceberg REST) (2026-09-07 구체화·위임)
     - **R2 규격(공식 문서 확인 2026-09-07)**: REST 카탈로그 `type=rest`, `uri`(카탈로그 활성화 시 표시),
       `warehouse`(표시값), `token`(R2 API 토큰, R2+catalog 권한 "Admin Read & Write"; 읽기 전용
@@ -185,6 +185,12 @@
       Files API 한도·COPY INTO, 무료 계정 제약.
     - 범위 밖: fan-in, DW 스키마 전파, 초 단위 스트리밍 ingest(Snowpipe Streaming 하이브리드), 고객
       클라우드 버킷 스테이징(Databricks 후속)
+- [x] **DDL 반영 정책·건너뛰기·타깃 테이블 생성** (2026-09-27, feature/ddl-policy — architecture.md 7·8절)
+      테이블별 `ddl_policy` 확인 후(기본)/자동, DDL 이력 [적용 후 재개]/[건너뛰고 재개](sink
+      `field.include.list` 재배포, changelog는 무손실)/[정지 유지], 자동 실패·초안 없음은 확인 후로
+      폴백 + 경고, 등록 시 "소스 스키마로 새로 생성"(CREATE 초안 승인). 라이브 실측: nhtest orders
+      자동 적용(`AUTO_APPLIED`)·items 건너뛰기(대소문자 결함 1건 발견·수정 268406b). 남은 갭:
+      테이블별 정책 변경 UI 없음(등록 배치 단위), AUTO 경로가 poll 스레드 동기 실행.
 - [ ] 테이블별 incremental snapshot (Kafka signal) — 기동 중 테이블 추가 시 초기적재,
       테이블 단위 reload(Qlik per-table reload에 해당). architecture.md 10절 미결
 - [ ] 컬럼 리네임의 적재 반영 방침 결정 — 스톡 sink 한계로 현재 저장만
