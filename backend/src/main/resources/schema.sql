@@ -25,6 +25,9 @@ ALTER TABLE registered_tables ADD COLUMN IF NOT EXISTS schema_fingerprint VARCHA
 -- 지문(해시)만으로는 무엇이 바뀌었는지 복원할 수 없어 diff 계산용으로 after struct 필드 목록의
 -- JSON 스냅샷을 함께 보관한다(2026-09-07 구현 판단 — SchemaFingerprintPoller 전용, docs/internals.md).
 ALTER TABLE registered_tables ADD COLUMN IF NOT EXISTS schema_fields_json VARCHAR(20000);
+-- 테이블별 DDL 반영 정책(architecture.md 7절, 2026-09-27): MANUAL(기본, 확인 후 반영) | AUTO
+-- (감지 즉시 타깃 DDL 적용 후 재개, 실패·초안 없음이면 MANUAL로 폴백). 기존 행은 전부 MANUAL로 채운다.
+ALTER TABLE registered_tables ADD COLUMN IF NOT EXISTS ddl_policy VARCHAR(16) NOT NULL DEFAULT 'MANUAL';
 
 -- 마이그레이션: 기존 설치의 UNIQUE(schema_name, table_name)를
 -- (source_connection_id, schema_name, table_name)로 교체 (멱등 — 이미 전환됐으면 둘 다 no-op).
@@ -54,6 +57,7 @@ CREATE TABLE IF NOT EXISTS table_events (
     table_name   VARCHAR(128) NOT NULL,
     event_type   VARCHAR(32)  NOT NULL,  -- REGISTERED|SUPPLOG_APPLIED|PAUSED|RESUMED|UNREGISTERED|
                                          -- DDL_DETECTED|DDL_APPROVED|DDL_REJECTED|
+                                         -- DDL_AUTO_APPLIED|DDL_AUTO_FALLBACK|DDL_SKIPPED|
                                          -- RECOVERY_STARTED|RECOVERY_DONE|RECOVERY_FAILED|
                                          -- CONNECTOR_FAILED|CONNECTOR_RECOVERED
     severity     VARCHAR(8)   NOT NULL,  -- INFO | WARN | ERROR
@@ -72,7 +76,7 @@ CREATE TABLE IF NOT EXISTS ddl_events (
     schema_name  VARCHAR(128),
     table_name   VARCHAR(128),
     ddl_text     VARCHAR(100000) NOT NULL,
-    state        VARCHAR(16)  NOT NULL,  -- SNAPSHOT | DETECTED | APPROVED | REJECTED
+    state        VARCHAR(16)  NOT NULL,  -- SNAPSHOT | DETECTED | APPROVED | REJECTED | AUTO_APPLIED | SKIPPED
     note         VARCHAR(1000),
     decided_at   TIMESTAMP
 );

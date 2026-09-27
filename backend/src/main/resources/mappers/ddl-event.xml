@@ -27,6 +27,14 @@
         SELECT * FROM ddl_events WHERE id = #{id}
     </select>
 
+    <select id="findByOffset" resultMap="ddlEvent">
+        SELECT * FROM ddl_events WHERE kafka_offset = #{kafkaOffset}
+    </select>
+
+    <select id="findByState" resultMap="ddlEvent">
+        SELECT * FROM ddl_events WHERE state = #{state} ORDER BY id DESC
+    </select>
+
     <select id="countByOffset" resultType="_int">
         SELECT COUNT(*) FROM ddl_events WHERE kafka_offset = #{kafkaOffset}
     </select>

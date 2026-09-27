@@ -5,9 +5,12 @@ import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.deltazium.backend.dictionary.TableColumn;
+import io.deltazium.backend.registry.DbType;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 파일명 : SchemaFingerprintTest.java
@@ -22,6 +25,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 09. 07.       | 최남희  | 최초 생성 — 다중 소스·다중 타깃 ②
+ * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | mapNativeType·draftCreateTable 테스트 추가 — 등록 시 "소스
+ * |                          | 스키마로 새로 생성" 옵션(architecture.md 8절) 전용 CREATE TABLE 초안
  * --------------------------------------------------
  */
 class SchemaFingerprintTest {
@@ -212,5 +218,88 @@ class SchemaFingerprintTest {
         assertThat(SchemaFingerprint.fromJson(null)).isEmpty();
         assertThat(SchemaFingerprint.fromJson("")).isEmpty();
         assertThat(SchemaFingerprint.fromJson("not json")).isEmpty();
+    }
+
+    @Test
+    void 오라클에서_포스트그레스로_컬럼_타입을_매핑한다() {
+        assertThat(SchemaFingerprint.mapNativeType(DbType.ORACLE, DbType.POSTGRESQL, "VARCHAR2"))
+                .isEqualTo("TEXT");
+        assertThat(SchemaFingerprint.mapNativeType(DbType.ORACLE, DbType.POSTGRESQL, "NUMBER"))
+                .isEqualTo("NUMERIC");
+        assertThat(SchemaFingerprint.mapNativeType(DbType.ORACLE, DbType.POSTGRESQL, "DATE"))
+                .isEqualTo("TIMESTAMP");
+        assertThat(SchemaFingerprint.mapNativeType(DbType.ORACLE, DbType.POSTGRESQL, "RAW"))
+                .isEqualTo("BYTEA");
+    }
+
+    @Test
+    void 포스트그레스에서_오라클로_컬럼_타입을_매핑한다() {
+        assertThat(SchemaFingerprint.mapNativeType(DbType.POSTGRESQL, DbType.ORACLE, "character varying"))
+                .isEqualTo("VARCHAR2(4000)");
+        assertThat(SchemaFingerprint.mapNativeType(DbType.POSTGRESQL, DbType.ORACLE, "boolean"))
+                .isEqualTo("NUMBER(1)");
+        assertThat(SchemaFingerprint.mapNativeType(DbType.POSTGRESQL, DbType.ORACLE, "bytea"))
+                .isEqualTo("RAW(2000)");
+        assertThat(SchemaFingerprint.mapNativeType(DbType.POSTGRESQL, DbType.ORACLE, "integer"))
+                .isEqualTo("NUMBER(10)");
+    }
+
+    @Test
+    void 동종_DB는_원문_타입을_그대로_돌려준다() {
+        assertThat(SchemaFingerprint.mapNativeType(DbType.ORACLE, DbType.ORACLE, "NUMBER(10,2)"))
+                .isEqualTo("NUMBER(10,2)");
+    }
+
+    @Test
+    void 매핑_불가_타입은_null을_돌려준다() {
+        assertThat(SchemaFingerprint.mapNativeType(DbType.ORACLE, DbType.POSTGRESQL, "XMLTYPE")).isNull();
+    }
+
+    @Test
+    void 오라클_소스로_포스트그레스_타깃_CREATE_TABLE_초안을_만든다() {
+        var columns = List.of(
+                new TableColumn("ID", "NUMBER", true),
+                new TableColumn("NAME", "VARCHAR2", false));
+
+        String ddl = SchemaFingerprint.draftCreateTable(DbType.ORACLE, DbType.POSTGRESQL,
+                "cdc_tmp", "orders", columns);
+
+        assertThat(ddl).isEqualTo(
+                "CREATE TABLE \"cdc_tmp\".\"orders\" (\"ID\" NUMERIC, \"NAME\" TEXT, PRIMARY KEY (\"ID\"))");
+    }
+
+    @Test
+    void 포스트그레스_소스로_오라클_타깃_CREATE_TABLE_초안을_만든다() {
+        var columns = List.of(
+                new TableColumn("id", "integer", true),
+                new TableColumn("active", "boolean", false));
+
+        String ddl = SchemaFingerprint.draftCreateTable(DbType.POSTGRESQL, DbType.ORACLE,
+                "CDC_TMP", "ORDERS", columns);
+
+        assertThat(ddl).isEqualTo(
+                "CREATE TABLE \"CDC_TMP\".\"ORDERS\" (\"ID\" NUMBER(10), \"ACTIVE\" NUMBER(1), PRIMARY KEY (\"ID\"))");
+    }
+
+    @Test
+    void 매핑_불가_컬럼이_있으면_초안_생성을_거부한다() {
+        var columns = List.of(
+                new TableColumn("ID", "NUMBER", true),
+                new TableColumn("DOC", "XMLTYPE", false));
+
+        assertThatThrownBy(() -> SchemaFingerprint.draftCreateTable(DbType.ORACLE, DbType.POSTGRESQL,
+                "cdc_tmp", "orders", columns))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("DOC(XMLTYPE)");
+    }
+
+    @Test
+    void PK가_없으면_초안_생성을_거부한다() {
+        var columns = List.of(new TableColumn("NAME", "VARCHAR2", false));
+
+        assertThatThrownBy(() -> SchemaFingerprint.draftCreateTable(DbType.ORACLE, DbType.POSTGRESQL,
+                "cdc_tmp", "orders", columns))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("PK");
     }
 }

@@ -143,6 +143,124 @@ consumer lag가 수십만 건까지 정상적으로 치솟는다(실측: `NH_CDC
 **문자열 리터럴 안의 테이블명은 구분하지 못한다** — 정확한 해법은 파서(ANTLR,
 Debezium ddl-parser)이고 현재 범위 밖으로 선언.
 
+## DDL 반영 정책 — AUTO 자동 적용·SKIPPED 매핑 처리 (2026-09-27)
+
+architecture.md 7절 개정(테이블별 DDL 반영 정책)의 "어떻게 구현했는가" 기록.
+
+**감지와 정책 분기를 분리한 이유.** `DdlEventPoller`(schema change topic)와
+`SchemaFingerprintPoller`(스키마 지문)는 지금까지 하던 대로 전부 적재만 하고,
+`DdlEventService.handleNewEvent(eventId)`라는 단일 진입점을 이벤트 적재 직후 호출한다.
+정책 판단(등록 테이블 존재·ddlPolicy 조회)과 실제 적용(TargetDdlExecutor·ConnectClient)을
+가진 곳이 이미 `DdlEventService`(승인/거부 워크플로)라서, 감지 쪽에 정책 로직을 복제하지
+않고 감지가 "새 이벤트 하나 생겼다"는 신호만 넘기는 형태로 나눴다 — approve()·skip()과
+같은 실행 경로(rewriteForTarget·executor.execute·connect.resumeAfterDdl)를 그대로
+재사용한다.
+
+**`insertIfAbsent`의 시그니처를 바꾸지 않은 이유.** AUTO 분기에는 방금 적재한 이벤트의 id가
+필요한데, `DdlEventRepository.insertIfAbsent`(schema change topic 경로)는 boolean만
+돌려주고 `DdlEventServiceTest`의 기존 회귀 테스트(`같은_offset은_중복_적재되지_않는다`)가
+이 반환값에 의존한다. 시그니처를 바꾸는 대신 `findByOffset(kafkaOffset)`을 추가해 삽입
+직후 그 행을 다시 찾아 id를 얻는다 — 쿼리 한 번이 더 들지만 기존 테스트·호출부를 건드리지
+않는다. `SchemaFingerprintPoller`쪽(`insertFingerprintEvent`)은 원래 `useGeneratedKeys`로
+id를 즉시 돌려주므로 이 우회가 필요 없다.
+
+**AUTO의 "초안 없음" 폴백 범위.** SchemaFingerprintPoller가 타입 변경(초안 없음)을 만나면
+지금까지처럼 상태를 `SNAPSHOT`으로 적재한다(정보성, 승인 대상 아님) — 이는 MANUAL 정책
+테이블에서 여전히 유효한 동작이다. 문제는 AUTO 정책 테이블이 이 SNAPSHOT을 만나면 아무
+데도 나타나지 않고 조용히 방치된다는 것 — 그래서 `handleNewEvent`는 AUTO 정책 + origin=
+FINGERPRINT + state=SNAPSHOT + ddl_text 빈 문자열(초안 없음의 신호) 조합만 별도로 잡아
+`DETECTED`로 끌어올린다. SCHEMA_TOPIC origin의 SNAPSHOT(커넥터 초기 스냅샷 시점의 구조
+덤프 — 실제 변경이 아님)은 이 승격 대상이 아니다. 두 SNAPSHOT은 의미가 전혀 다르므로
+origin으로 구분해야 한다.
+
+**skip의 컬럼 인식 — 정규식 최소 구현.** `DdlSkipParser`는 ddl_text에서 ADD/DROP 키워드가
+정확히 하나만 있고(둘 다 있으면 ADD+DROP 복합 ALTER, 둘 다 없으면 인식 불가), 컬럼이
+하나뿐인(쉼표 없음) 경우만 컬럼명을 뽑는다. 정확한 해법은 SQL 파서이고, 위 "DDL 치환의
+한계"와 같은 이유로 범위 밖 — 인식하지 못하면 매핑을 건드리지 않고 재개만 한다(설계
+지시 원문: "ADD/DROP COLUMN 단순 형태만 정규식으로, 그 외는 재개만"). ddl_text 형태는
+두 경로가 다르다: SCHEMA_TOPIC은 소스가 실행한 원문 DDL(따옴표·대소문자 불특정),
+FINGERPRINT는 `SchemaFingerprint.draftDdl`이 이미 정규화해 만든 문장 — 정규식이 둘 다
+느슨하게 매칭하도록(따옴표 유무·괄호 유무 모두 허용) 짰다.
+
+**skip의 컬럼 매핑 변경과 changelog 무손실의 관계.** ADD COLUMN을 건너뛰면 새 컬럼을
+`registered_columns`에 `enabled=false`로 추가한 뒤 `RegistrationService.
+fieldIncludeConfig`가 그 컬럼을 jdbc-sink `field.include.list`에서 뺀다 — **타깃에는
+반영되지 않지만 Iceberg sink는 스키마 진화를 자동 수용하므로 changelog는 새 컬럼을 포함한
+전체 레코드를 계속 받는다.** 나중에 매핑을 `enabled=true`로 바꾸고 재배포하면(현재는 수동
+DB 갱신 — UI 편집은 이번 범위 밖) 그 시점 이후의 변경분부터 타깃에 반영되기 시작한다.
+과거분까지 채우려면 6절 재발행 경로(changelog는 전체를 보존하고 있으므로 원본은 있다)를
+쓴다 — skip 자체는 재발행을 트리거하지 않는다. DROP COLUMN을 건너뛰면 기존 매핑을
+`enabled=false`로만 바꾸고 컬럼 자체는 지우지 않는다(7절: "타깃 컬럼은 남긴다") — 이후
+소스에 같은 이름 컬럼이 다시 생기면 매핑이 이미 있어 재활성화만 하면 된다.
+
+**재배포 범위를 테이블 하나로 좁힌 이유.** `RegistrationService.redeployJdbcSinkOnly`는
+그 테이블의 jdbc-sink 하나만 Connect REST로 다시 배포한다. 기존 `deploySource`는 소스
+전체(그 소스의 source·iceberg-sink + 모든 테이블의 jdbc-sink)를 재배포하는데, skip은
+컬럼 매핑이 바뀐 테이블 하나에만 영향을 줘야 하므로 이 넓은 재배포를 그대로 쓰면 같은
+소스의 다른 테이블까지 불필요하게 다시 배포된다(원칙: "다른 테이블 무영향").
+
+**AUTO 적용 후 sink 재개 — 실패·정지 양쪽을 한 메서드로.** `ConnectClient.resumeAfterDdl`은
+상태를 조회해 FAILED면 `restartFailed`, PAUSED면 `resume`을 부른다. approve·skip·
+autoApply 세 경로가 전부 "DDL 반영 후 sink를 정상으로 되돌린다"는 같은 요구라 한 곳에
+모았다 — `SystemWarningService`·`ConnectorHealthWatcher`가 이미 각자 목적으로 중복
+정의해 둔 `effectiveState` 판정 로직을 세 번째로 중복했다(목적이 셋 다 달라 공유
+유틸리티로 뽑지 않았다 — 상태 조회 후 액션까지 갖는 것은 이 메서드뿐이다).
+
+**AUTO_APPLIED를 경고 센터에 노출하는 방식.** DdlEventService가 SystemWarningService를
+직접 호출하는 대신, `SystemWarningService.checkAutoAppliedDdl`이 다른 점검 항목과 같은
+pull 방식으로 `DdlEventRepository.findByState("AUTO_APPLIED")`를 30초 폴링에서 조회한다.
+이렇게 하면 DdlEventService가 SystemWarningService에 의존할 필요가 없다(반대 방향 의존은
+이미 있다 — SystemWarningService가 ConnectClient를 참조하는 것과 같은 패턴). id는
+`ddl-auto-applied:<eventId>` — 기존 `system_warning_acks` 테이블·ack API를 그대로
+재사용한다(스키마 변경 없음).
+
+## 타깃 테이블 생성 옵션 — 타입 매핑 (2026-09-27)
+
+architecture.md 8절 "타깃 테이블 생성 옵션"의 구현 판단 기록.
+
+**타입 매핑을 `SchemaFingerprint`에 두고 새 클래스를 만들지 않은 이유.** 이미 그 클래스에
+Debezium 논리 타입 → 타깃 DDL 타입 매핑(`mapType`, ADD/DROP COLUMN 초안 전용)이 있다.
+`mapNativeType`(신규)은 입력 도메인이 다르다 — 소스 딕셔너리가 돌려주는 원문 타입 이름
+(`TableColumn.dataType`, 예: Oracle `VARCHAR2`·PostgreSQL `character varying`)을 받는다.
+그래도 "타입 매핑은 한 곳에서" 원칙(지시 원문)에 따라 같은 클래스에 두 매핑을 나란히
+둔다 — 매핑 규칙이 바뀔 때 찾아볼 곳이 하나다.
+
+**미리보기와 실제 생성이 같은 함수를 쓰는 이유.** `RegistrationService.
+previewTargetTableDdl`(미리보기 API)과 `createTargetTable`(등록 트랜잭션 내 실행)이 둘 다
+`SchemaFingerprint.draftCreateTable`을 호출한다 — 클라이언트가 미리보기에서 받은 DDL
+문자열을 등록 요청에 실어 보내 그대로 실행하게 하지 않는다(임의 DDL 실행 경로를 열어주지
+않기 위함). 대신 두 호출 모두 같은 입력(소스 컬럼·PK·폴딩된 타깃 스키마/테이블명)에서
+같은 함수로 다시 조립하므로 "본 초안 그대로 실행된다"가 서버 쪽에서 결정론적으로
+보장된다.
+
+**길이·정밀도를 다루지 않는 이유.** `TableColumn`(딕셔너리 조회 결과)은 원문 타입 이름만
+가지고 있고 `VARCHAR2(4000)`처럼 길이·정밀도는 없다(Oracle `all_tab_columns`의
+`data_length`·`data_precision`·`data_scale`, PostgreSQL `information_schema.columns`의
+`character_maximum_length`·`numeric_precision` 등은 별도 컬럼인데 현재 조회 SQL이
+가져오지 않는다). 그래서 매핑 결과는 문자열은 `TEXT`/`VARCHAR2(4000)`처럼 고정 상한,
+숫자는 `NUMERIC`/`NUMBER`처럼 무제한 정밀도로 최소 구현했다 — "8절 최소 매핑" 지시 범위
+안에서의 근사치다. 정확한 길이·정밀도 보존이 필요해지면 `TableColumn`에 필드를 추가하고
+두 `SourceDictionary` 구현의 조회 SQL을 확장하는 별도 작업이 된다(`docs/TODO.md`).
+
+**bytea↔RAW 크기.** Oracle `RAW`는 버전에 따라 상한이 다르다(2000바이트가 보수적으로
+항상 안전한 값, 12c+ extended data types면 32767까지 가능하나 데이터베이스 설정에
+의존). 길이 정보가 없는 이 최소 구현에서는 보수적으로 `RAW(2000)`을 고정 사용한다 — 더
+큰 값이 필요하면 사용자가 생성 초안을 확인한 뒤 직접 컬럼 타입을 조정해야 한다(현재는
+초안이 곧 실행문이라 조정 UI가 없음 — 필요해지면 초안 편집 기능으로 확장).
+
+**Oracle NUMBER의 boolean 판별 불가.** Oracle은 boolean 타입이 없어 `NUMBER(1)`로
+흉내내는 관례가 흔하지만, `TableColumn.dataType`은 정밀도(precision/scale)를 담지 않아
+"NUMBER인데 사실 boolean"인지 구분할 수 없다. Oracle→PostgreSQL 방향은 그래서 `NUMBER`를
+항상 `NUMERIC`으로만 매핑하고(boolean으로 좁히지 않음), 반대 방향(PostgreSQL `boolean` →
+Oracle `NUMBER(1)`)만 명시 지원한다 — 정보가 있는 쪽만 정확하게 다루고 없는 쪽은 안전한
+상위 타입으로 근사한다.
+
+**Oracle·PostgreSQL 외 조합은 아예 null.** `mapNativeType`은 두 DbType 모두 Oracle 또는
+PostgreSQL일 때만 매핑 테이블을 타고, 그 외(MySQL 포함)는 무조건 null(초안 생성 거부)을
+돌려준다 — MySQL은 아직 `DbType.supported()=false`라 등록 자체가 안 되므로 실질적으로
+도달하지 않는 경로지만, 나중에 지원 DB가 늘어날 때 "지원하지 않는 조합은 명시적으로
+거부"가 기본값이 되도록 이렇게 짰다(암묵적 매핑 실패보다 안전).
+
 ## changelog `_pos` 위치 컬럼 도입 (다중 소스·다중 타깃 ①, 2026-09-05)
 
 architecture.md 5.1·6.2절 확정 사항의 구현 판단 기록. 설계 자체(왜 `_pos`가 필요한가,

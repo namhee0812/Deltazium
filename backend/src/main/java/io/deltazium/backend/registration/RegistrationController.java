@@ -35,6 +35,9 @@ import org.springframework.web.bind.annotation.RestController;
  * |                          | 전환, supplemental-logging → capture-setup/preview·apply로
  * |                          | 교체, GET 목록을 RegisteredTableView(소스 topicPrefix 포함)로
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | target-table/preview 추가 — "소스 스키마로 새로 생성" 옵션의
+ * |                          | CREATE TABLE 초안 미리보기(architecture.md 8절)
+ * --------------------------------------------------
  */
 @RestController
 @RequestMapping("/api/registrations")
@@ -46,6 +49,11 @@ public class RegistrationController {
     public record RegisterRequest(long sourceConnectionId, long targetConnectionId,
                                   List<RegistrationService.TableSpec> tables,
                                   String snapshotMode) {
+    }
+
+    /** "소스 스키마로 새로 생성" 미리보기 요청 — sourceTable은 SCHEMA.TABLE 형식. */
+    public record TargetTablePreviewRequest(long sourceConnectionId, String sourceTable,
+                                            long targetConnectionId, String targetSchema, String targetTable) {
     }
 
     private final RegistrationService service;
@@ -95,6 +103,13 @@ public class RegistrationController {
     @PostMapping("/capture-setup/apply")
     public Map<String, String> applyCaptureSetup(@RequestBody TablesRequest req) {
         return service.applyCaptureSetup(req.sourceConnectionId(), req.tables());
+    }
+
+    /** "소스 스키마로 새로 생성" 초안 미리보기 — 등록 요청은 아니고 화면 확인용(8절). */
+    @PostMapping("/target-table/preview")
+    public Map<String, String> previewTargetTable(@RequestBody TargetTablePreviewRequest req) {
+        return Map.of("ddl", service.previewTargetTableDdl(req.sourceConnectionId(), req.sourceTable(),
+                req.targetConnectionId(), req.targetSchema(), req.targetTable()));
     }
 
     /** 등록 확정 + source·jdbc-sink 배포. snapshotMode: INITIAL(기본) | NO_DATA. */

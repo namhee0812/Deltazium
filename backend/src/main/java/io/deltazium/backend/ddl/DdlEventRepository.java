@@ -27,6 +27,11 @@ import org.apache.ibatis.annotations.Param;
  * |                          | 파라미터 추가 — diff 요약을 note에, ddl_text는 실행 가능한
  * |                          | 단일 문장(또는 초안 없으면 빈 문자열)만 담게 분리(ORA-00900 수정)
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | findByOffset·findByState 추가 — 각각 DDL 반영 정책(AUTO) 감지
+ * |                          | 직후 방금 적재한 이벤트를 id 없이도 찾아 dispatch하기 위함
+ * |                          | (DdlEventPoller), 자동 적용된 DDL을 경고 센터가 조회하기 위함
+ * |                          | (SystemWarningService, architecture.md 7절)
+ * --------------------------------------------------
  */
 @Mapper
 public interface DdlEventRepository {
@@ -34,6 +39,10 @@ public interface DdlEventRepository {
     List<DdlEvent> findAll();
 
     Optional<DdlEvent> findById(long id);
+
+    Optional<DdlEvent> findByOffset(@Param("kafkaOffset") long kafkaOffset);
+
+    List<DdlEvent> findByState(@Param("state") String state);
 
     int countByOffset(long kafkaOffset);
 

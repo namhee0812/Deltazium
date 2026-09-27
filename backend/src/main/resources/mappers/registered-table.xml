@@ -15,6 +15,7 @@
             <arg column="snapshot_mode" javaType="String"/>
             <arg column="schema_fingerprint" javaType="String"/>
             <arg column="schema_fields_json" javaType="String"/>
+            <arg column="ddl_policy" javaType="String"/>
         </constructor>
     </resultMap>
 
@@ -36,9 +37,9 @@
     <insert id="insertRow" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
         INSERT INTO registered_tables
           (schema_name, table_name, source_connection_id, target_connection_id,
-           target_schema_name, target_table_name, snapshot_mode)
+           target_schema_name, target_table_name, snapshot_mode, ddl_policy)
         VALUES (#{schemaName}, #{tableName}, #{sourceConnectionId}, #{targetConnectionId},
-                #{targetSchemaName}, #{targetTableName}, #{snapshotMode})
+                #{targetSchemaName}, #{targetTableName}, #{snapshotMode}, #{ddlPolicy})
     </insert>
 
     <delete id="deleteRow">

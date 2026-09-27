@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 import io.deltazium.backend.connect.ConnectorDeployService;
+import io.deltazium.backend.ddl.TargetDdlExecutor;
 import io.deltazium.backend.dictionary.DictionaryRouter;
 import io.deltazium.backend.dictionary.OracleDictionaryService;
 import io.deltazium.backend.dictionary.PostgresDictionaryService;
@@ -78,6 +79,10 @@ import static org.mockito.Mockito.when;
  * 26. 09. 23.       | 최남희  | 결함 2 회귀 테스트 추가 — PG 소스 마지막 테이블 해제 시
  * |                          | PostgresReplicationCleaner 호출/미호출 3케이스
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | 테이블별 DDL 반영 정책·타깃 테이블 생성 옵션(architecture.md 7·8절)
+ * |                          | 테스트 추가 — TargetDdlExecutor mock 추가(생성자 의존성), ddlPolicy
+ * |                          | 저장 검증, createTarget 성공/존재 시 거부/매핑 불가 타입 거부
+ * --------------------------------------------------
  */
 @EnableConfigurationProperties(IcebergProperties.class)
 class RegistrationServiceTest {
@@ -109,6 +114,9 @@ class RegistrationServiceTest {
 
     @MockitoBean
     PostgresReplicationCleaner replicationCleaner;
+
+    @MockitoBean
+    TargetDdlExecutor targetDdlExecutor;
 
     long srcId;
     long tgtId;
@@ -262,6 +270,76 @@ class RegistrationServiceTest {
                 new RegistrationService.TableSpec("CDC.T1", null, null, columns))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("변환식 구문 오류");
+    }
+
+    @Test
+    void ddlPolicy를_지정하면_저장된다() {
+        mockTable("CDC.T1", true, true);
+
+        RegisteredTable t = service.register(srcId, tgtId, List.of(
+                new RegistrationService.TableSpec("CDC.T1", null, null, null, false, "AUTO"))).get(0);
+
+        assertThat(t.ddlPolicy()).isEqualTo("AUTO");
+    }
+
+    @Test
+    void ddlPolicy_미지정이면_MANUAL이_기본값이다() {
+        mockTable("CDC.T1", true, true);
+
+        RegisteredTable t = service.register(srcId, tgtId, List.of(spec("CDC.T1"))).get(0);
+
+        assertThat(t.ddlPolicy()).isEqualTo("MANUAL");
+    }
+
+    @Test
+    void 잘못된_ddlPolicy는_거부된다() {
+        assertThatThrownBy(() -> new RegistrationService.TableSpec("CDC.T1", null, null, null, false, "SOMETIMES"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("ddlPolicy");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void createTarget이면_타깃에_CREATE_TABLE을_실행하고_동일명_전체_매핑으로_등록한다() {
+        mockTable("CDC.T1", true, true);
+        // 타깃엔 아직 테이블이 없음 — listColumns가 빈 목록을 돌려주면 "존재하지 않음"으로 판정
+        when(dictionary.listColumns(any(), eq("NEWSCHEMA"), eq("NEWTAB"))).thenReturn(List.of());
+
+        RegisteredTable t = service.register(srcId, tgtId, List.of(
+                new RegistrationService.TableSpec("CDC.T1", "NEWSCHEMA", "NEWTAB", null, true, "MANUAL")))
+                .get(0);
+
+        ArgumentCaptor<String> ddl = ArgumentCaptor.forClass(String.class);
+        verify(targetDdlExecutor).execute(any(), ddl.capture());
+        assertThat(ddl.getValue()).startsWith("CREATE TABLE \"NEWSCHEMA\".\"NEWTAB\"");
+        assertThat(t.targetSchemaName()).isEqualTo("NEWSCHEMA");
+        assertThat(t.targetTableName()).isEqualTo("NEWTAB");
+        assertThat(service.mappings(t.id())).extracting(ColumnMapping::targetColumn)
+                .containsExactly("ID", "AMOUNT", "STATUS");
+        assertThat(service.mappings(t.id())).allMatch(ColumnMapping::enabled);
+    }
+
+    @Test
+    void createTarget인데_타깃_테이블이_이미_있으면_등록을_거부한다() {
+        mockTable("CDC.T1", true, true);
+        // 타깃 컬럼 조회가 비어 있지 않음 — 이미 존재하는 것으로 판정
+        when(dictionary.listColumns(any(), eq("CDC"), eq("T1"))).thenReturn(List.of(
+                new TableColumn("ID", "NUMBER", true)));
+
+        assertThatThrownBy(() -> service.register(srcId, tgtId, List.of(
+                new RegistrationService.TableSpec("CDC.T1", "CDC", "T1", null, true, "MANUAL"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("이미 존재");
+    }
+
+    @Test
+    void 소스_스키마로_새로_생성_미리보기는_DDL_초안을_돌려준다() {
+        mockTable("CDC.T1", true, true);
+
+        String ddl = service.previewTargetTableDdl(srcId, "CDC.T1", tgtId, "NEWSCHEMA", "NEWTAB");
+
+        assertThat(ddl).contains("CREATE TABLE \"NEWSCHEMA\".\"NEWTAB\"")
+                .contains("PRIMARY KEY (\"ID\")");
     }
 
     @Test

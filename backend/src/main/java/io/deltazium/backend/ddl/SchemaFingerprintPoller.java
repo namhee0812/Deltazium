@@ -56,6 +56,10 @@ import org.springframework.stereotype.Component;
  * |                          | ORA-00900이 났다(실측 ddl_events id=39) — ddl_text는 실행
  * |                          | 가능한 단일 문장(또는 빈 문자열)만, 요약은 note로 분리
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | 테이블별 DDL 반영 정책(architecture.md 7절 개정) — recordChange가
+ * |                          | 이벤트를 적재한 직후 DdlEventService.handleNewEvent를 불러 AUTO
+ * |                          | 정책 자동 적용을 즉시 시도한다
+ * --------------------------------------------------
  */
 @Component
 @ConditionalOnProperty(name = "deltazium.fingerprint-poller.enabled", havingValue = "true", matchIfMissing = true)
@@ -69,6 +73,7 @@ public class SchemaFingerprintPoller {
     private final RegisteredTableRepository registrations;
     private final DbConnectionService connections;
     private final DdlEventRepository ddlEvents;
+    private final DdlEventService ddlEventService;
     private final String bootstrap;
     /** 상주 consumer — @Scheduled(fixedDelay)는 이전 실행이 끝나야 다음이 시작되므로
      * 항상 스케줄러의 같은 스레드 하나에서만 이 필드를 건드린다(@PreDestroy 예외). */
@@ -80,10 +85,12 @@ public class SchemaFingerprintPoller {
     public SchemaFingerprintPoller(RegisteredTableRepository registrations,
                                    DbConnectionService connections,
                                    DdlEventRepository ddlEvents,
+                                   DdlEventService ddlEventService,
                                    @Value("${deltazium.kafka.bootstrap}") String bootstrap) {
         this.registrations = registrations;
         this.connections = connections;
         this.ddlEvents = ddlEvents;
+        this.ddlEventService = ddlEventService;
         this.bootstrap = bootstrap;
     }
 
@@ -188,6 +195,7 @@ public class SchemaFingerprintPoller {
         registrations.updateFingerprint(t.id(), newFingerprint, SchemaFingerprint.toJson(newFields));
         log.info("스키마 지문 변경 — {}.{} (ddl_event id={}, state={})",
                 t.schemaName(), t.tableName(), id, payload.state());
+        ddlEventService.handleNewEvent(id); // DDL 반영 정책(AUTO) 즉시 분기
     }
 
     /** ddl_events에 저장할 (ddl_text, note, state) — 순수 조립만 분리해 단위 테스트로 검증한다. */

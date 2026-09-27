@@ -21,6 +21,11 @@
  * |                          | suppLogAll → captureReady, 배포 요약 커넥터명을 소스 topicPrefix
  * |                          | 기준으로 동적 표시
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | DDL 반영 정책 라디오(검토·배포 단계) 추가, 컬럼 매핑 단계에
+ * |                          | "소스 스키마로 새로 생성" 옵션 추가(타깃 컬럼 조회 대신 미리보기
+ * |                          | API로 CREATE TABLE 초안 확인 → 등록 시 createTarget으로 전송,
+ * |                          | architecture.md 7·8절)
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
@@ -77,6 +82,11 @@ interface TableMapping {
   sourceColumns: TableColumn[] | null
   rows: MappingRow[] | null
   loadError: string | null
+  /** true면 기존 테이블 대신 소스 스키마로 새로 생성한다(architecture.md 8절). */
+  createTarget: boolean
+  /** createTarget 미리보기 결과(CREATE TABLE 초안) — 없으면 아직 미리보기 전. */
+  createDdlPreview: string | null
+  createDdlError: string | null
 }
 
 const STEPS = ['소스', '테이블', '타깃', '컬럼 매핑', '사전 점검', '검토·배포'] as const
@@ -113,6 +123,7 @@ export function RegistrationWizard({
   const [suppResults, setSuppResults] = useState<Record<string, string> | null>(null)
 
   const [snapshotMode, setSnapshotMode] = useState<'INITIAL' | 'NO_DATA'>('INITIAL')
+  const [ddlPolicy, setDdlPolicy] = useState<'MANUAL' | 'AUTO'>('MANUAL')
   const [existingCount, setExistingCount] = useState(0)
 
   const [busy, setBusy] = useState(false)
@@ -132,6 +143,7 @@ export function RegistrationWizard({
     setCaptureSetupPreview(null)
     setSuppResults(null)
     setSnapshotMode('INITIAL')
+    setDdlPolicy('MANUAL')
     setError(null)
     api<DbConnection[]>('/api/connections').then(setConnections).catch(() => setConnections([]))
     api<unknown[]>('/api/registrations')
@@ -177,6 +189,9 @@ export function RegistrationWizard({
             sourceColumns: null,
             rows: null,
             loadError: null,
+            createTarget: false,
+            createDdlPreview: null,
+            createDdlError: null,
           }
         }
       }
@@ -220,6 +235,44 @@ export function RegistrationWizard({
       }
     })
 
+  /** "소스 스키마로 새로 생성" 미리보기 — 소스 컬럼을 조회해 동일명 전부 활성 매핑을 만들고,
+   * 같은 정보로 backend가 조립한 CREATE TABLE 초안을 받아온다(등록 시 그대로 실행되는 초안과
+   * 항상 일치 — RegistrationService.previewTargetTableDdl과 같은 함수). */
+  const loadCreateTargetPreview = (q: string) =>
+    run(async () => {
+      const entry = mappings[q]
+      try {
+        const sourceColumns = await api<TableColumn[]>(
+          `/api/registrations/columns/${sourceId}?table=${encodeURIComponent(q)}`,
+        )
+        const preview = await api<{ ddl: string }>('/api/registrations/target-table/preview', {
+          method: 'POST',
+          body: JSON.stringify({
+            sourceConnectionId: sourceId,
+            sourceTable: q,
+            targetConnectionId: targetId,
+            targetSchema: entry.targetSchema,
+            targetTable: entry.targetTable,
+          }),
+        })
+        const rows: MappingRow[] = sourceColumns.map((c) => ({
+          targetColumn: c.name,
+          dataType: c.dataType,
+          enabled: true,
+          sourceExpr: `\${${c.name}}`,
+        }))
+        patchMapping(q, {
+          sourceColumns,
+          rows,
+          loadError: null,
+          createDdlPreview: preview.ddl,
+          createDdlError: null,
+        })
+      } catch (e) {
+        patchMapping(q, { createDdlPreview: null, createDdlError: (e as Error).message })
+      }
+    })
+
   const patchRow = (q: string, idx: number, patch: Partial<MappingRow>) =>
     setMappings((m) => {
       const rows = [...(m[q].rows ?? [])]
@@ -233,6 +286,9 @@ export function RegistrationWizard({
     if (!entry) return ['매핑 미로드']
     if (!entry.targetSchema.trim() || !entry.targetTable.trim())
       return ['타깃 스키마·테이블명을 입력하세요']
+    if (entry.createTarget) {
+      return entry.createDdlPreview ? [] : ['생성 초안을 미리보기하세요']
+    }
     if (!entry.rows) return ['타깃 컬럼을 불러오세요']
     const errors: string[] = []
     const sourceNames = new Set((entry.sourceColumns ?? []).map((c) => c.name.toUpperCase()))
@@ -309,6 +365,8 @@ export function RegistrationWizard({
                 sourceExpr: r.sourceExpr,
                 enabled: r.enabled,
               })),
+              createTarget: m.createTarget,
+              ddlPolicy,
             }
           }),
         }),
@@ -516,18 +574,71 @@ export function RegistrationWizard({
                         className="w-40 font-mono"
                         placeholder="타깃 테이블"
                       />
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={busy}
-                        onClick={() => void loadColumns(q)}
-                      >
-                        타깃 컬럼 불러오기
-                      </Button>
+                      {!entry.createTarget && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() => void loadColumns(q)}
+                        >
+                          타깃 컬럼 불러오기
+                        </Button>
+                      )}
+                    </div>
+
+                    <div className="mb-2 flex items-center gap-4 text-xs">
+                      <label className="flex cursor-pointer items-center gap-1.5">
+                        <input
+                          type="radio"
+                          checked={!entry.createTarget}
+                          onChange={() =>
+                            patchMapping(q, {
+                              createTarget: false,
+                              createDdlPreview: null,
+                              createDdlError: null,
+                              rows: null,
+                            })
+                          }
+                        />
+                        기존 테이블 선택
+                      </label>
+                      <label className="flex cursor-pointer items-center gap-1.5">
+                        <input
+                          type="radio"
+                          checked={entry.createTarget}
+                          onChange={() =>
+                            patchMapping(q, {
+                              createTarget: true,
+                              createDdlPreview: null,
+                              createDdlError: null,
+                              rows: null,
+                            })
+                          }
+                        />
+                        소스 스키마로 새로 생성
+                      </label>
+                      {entry.createTarget && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() => void loadCreateTargetPreview(q)}
+                        >
+                          생성 초안 미리보기
+                        </Button>
+                      )}
                     </div>
 
                     {entry.loadError && (
                       <p className="text-xs text-destructive">{entry.loadError}</p>
+                    )}
+                    {entry.createDdlError && (
+                      <p className="text-xs text-destructive">{entry.createDdlError}</p>
+                    )}
+                    {entry.createTarget && entry.createDdlPreview && (
+                      <pre className="mb-2 overflow-x-auto rounded-lg border border-border bg-secondary p-2 font-mono text-[11px] leading-relaxed">
+                        {entry.createDdlPreview}
+                      </pre>
                     )}
 
                     {entry.rows && (
@@ -557,6 +668,7 @@ export function RegistrationWizard({
                                   <input
                                     type="checkbox"
                                     checked={row.enabled}
+                                    disabled={entry.createTarget}
                                     onChange={(e) =>
                                       patchRow(q, idx, { enabled: e.target.checked })
                                     }
@@ -570,7 +682,7 @@ export function RegistrationWizard({
                                   <div className="flex items-center gap-2">
                                     <Input
                                       value={row.sourceExpr}
-                                      disabled={!row.enabled}
+                                      disabled={!row.enabled || entry.createTarget}
                                       onChange={(e) =>
                                         patchRow(q, idx, { sourceExpr: e.target.value })
                                       }
@@ -691,6 +803,40 @@ export function RegistrationWizard({
           {step === 5 && (
             <div className="grid gap-3 text-sm">
               <div className="rounded-[10px] border border-border p-3.5">
+                <div className="mb-2 text-[13px] font-semibold">DDL 반영</div>
+                <div className="grid gap-2">
+                  <label className="flex cursor-pointer items-start gap-2">
+                    <input
+                      type="radio"
+                      className="mt-1"
+                      checked={ddlPolicy === 'MANUAL'}
+                      onChange={() => setDdlPolicy('MANUAL')}
+                    />
+                    <span>
+                      <b className="text-[13px]">확인 후 (기본)</b>
+                      <span className="block text-xs text-muted-foreground">
+                        확인 후: apply 정지 후 DDL 이력에서 결정
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex cursor-pointer items-start gap-2">
+                    <input
+                      type="radio"
+                      className="mt-1"
+                      checked={ddlPolicy === 'AUTO'}
+                      onChange={() => setDdlPolicy('AUTO')}
+                    />
+                    <span>
+                      <b className="text-[13px]">자동</b>
+                      <span className="block text-xs text-muted-foreground">
+                        자동: 감지 즉시 타깃에 DDL 적용 후 재개
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="rounded-[10px] border border-border p-3.5">
                 <div className="mb-2 text-[13px] font-semibold">시작 방식 (초기 스냅샷)</div>
                 {existingCount > 0 ? (
                   <p className="text-xs leading-relaxed text-muted-foreground">
@@ -745,6 +891,7 @@ export function RegistrationWizard({
                   return (
                     <div key={q}>
                       {q} → {m.targetSchema}.{m.targetTable} ({enabled}/{m.rows?.length ?? 0} 컬럼)
+                      {m.createTarget && <span className="text-warn"> (새로 생성)</span>}
                     </div>
                   )
                 })}

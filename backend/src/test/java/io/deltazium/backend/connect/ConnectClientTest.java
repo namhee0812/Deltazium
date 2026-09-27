@@ -10,6 +10,7 @@ import org.springframework.web.client.RestClient;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.http.HttpMethod.POST;
 import static org.springframework.http.HttpMethod.PUT;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
@@ -27,6 +28,8 @@ import org.springframework.http.MediaType;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 07. 24.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | resumeAfterDdl 테스트 추가 — FAILED/PAUSED/RUNNING 분기
  * --------------------------------------------------
  */
 class ConnectClientTest {
@@ -58,6 +61,46 @@ class ConnectClientTest {
         JsonNode config = new ObjectMapper().readTree("{\"connector.class\":\"x\"}");
         JsonNode result = client.upsert("src-1", config);
         assertThat(result.get("name").asText()).isEqualTo("src-1");
+        server.verify();
+    }
+
+    @Test
+    void resumeAfterDdl_FAILED이면_restartFailed를_호출한다() {
+        server.expect(requestTo("http://connect-test/connectors/x/status"))
+                .andRespond(withSuccess(
+                        "{\"connector\":{\"state\":\"RUNNING\"},\"tasks\":[{\"state\":\"FAILED\"}]}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo("http://connect-test/connectors/x/restart?includeTasks=true&onlyFailed=true"))
+                .andExpect(method(POST))
+                .andRespond(withSuccess());
+
+        client.resumeAfterDdl("x");
+
+        server.verify();
+    }
+
+    @Test
+    void resumeAfterDdl_PAUSED면_resume을_호출한다() {
+        server.expect(requestTo("http://connect-test/connectors/x/status"))
+                .andRespond(withSuccess("{\"connector\":{\"state\":\"PAUSED\"},\"tasks\":[]}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo("http://connect-test/connectors/x/resume"))
+                .andExpect(method(PUT))
+                .andRespond(withSuccess());
+
+        client.resumeAfterDdl("x");
+
+        server.verify();
+    }
+
+    @Test
+    void resumeAfterDdl_RUNNING이면_아무것도_하지_않는다() {
+        server.expect(requestTo("http://connect-test/connectors/x/status"))
+                .andRespond(withSuccess("{\"connector\":{\"state\":\"RUNNING\"},\"tasks\":[]}",
+                        MediaType.APPLICATION_JSON));
+
+        client.resumeAfterDdl("x");
+
         server.verify();
     }
 }

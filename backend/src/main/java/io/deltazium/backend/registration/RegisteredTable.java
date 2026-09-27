@@ -22,6 +22,9 @@ import java.util.Locale;
  * |                          | 복원 불가한 diff 계산용 필드 스냅샷(구현 판단, docs/internals.md).
  * |                          | 기존 생성자는 유지해 null로 위임(하위 호환)
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | ddlPolicy 필드 추가(MANUAL|AUTO, 테이블별 DDL 반영 정책,
+ * |                          | architecture.md 7절 개정) — 기존 생성자는 "MANUAL"로 위임(하위 호환)
+ * --------------------------------------------------
  */
 public record RegisteredTable(
         Long id,
@@ -33,20 +36,21 @@ public record RegisteredTable(
         String targetTableName,
         String snapshotMode,
         String schemaFingerprint,
-        String schemaFieldsJson) {
+        String schemaFieldsJson,
+        String ddlPolicy) {
 
     public RegisteredTable(Long id, String schemaName, String tableName,
                            long sourceConnectionId, long targetConnectionId,
                            String targetSchemaName, String targetTableName) {
         this(id, schemaName, tableName, sourceConnectionId, targetConnectionId,
-                targetSchemaName, targetTableName, "INITIAL", null, null);
+                targetSchemaName, targetTableName, "INITIAL", null, null, "MANUAL");
     }
 
     public RegisteredTable(Long id, String schemaName, String tableName,
                            long sourceConnectionId, long targetConnectionId,
                            String targetSchemaName, String targetTableName, String snapshotMode) {
         this(id, schemaName, tableName, sourceConnectionId, targetConnectionId,
-                targetSchemaName, targetTableName, snapshotMode, null, null);
+                targetSchemaName, targetTableName, snapshotMode, null, null, "MANUAL");
     }
 
     public String qualified() {

@@ -43,6 +43,12 @@ import org.springframework.stereotype.Component;
  * |                          | (한계) 시작 후 추가된 소스는 backend 재기동 전까지 구독되지 않는다 —
  * |                          | 다른 poller들(SnapshotNotificationPoller 등)과 같은 기존 패턴.
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | 테이블별 DDL 반영 정책(architecture.md 7절 개정) — 새로 적재된
+ * |                          | 이벤트마다 DdlEventService.handleNewEvent를 불러 AUTO 정책
+ * |                          | 자동 적용을 즉시 시도한다. insertIfAbsent는 그대로(boolean) 두고
+ * |                          | 방금 넣은 행을 kafka_offset으로 다시 찾아 id를 얻는다 — 기존
+ * |                          | insertIfAbsent 시그니처·회귀 테스트를 건드리지 않기 위함
+ * --------------------------------------------------
  */
 @Component
 @ConditionalOnProperty(name = "deltazium.ddl-poller.enabled", havingValue = "true", matchIfMissing = true)
@@ -52,6 +58,7 @@ public class DdlEventPoller {
 
     private final DdlEventRepository repository;
     private final DbConnectionService connections;
+    private final DdlEventService ddlEventService;
     private final String bootstrap;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private KafkaConsumer<String, String> consumer;
@@ -59,9 +66,11 @@ public class DdlEventPoller {
 
     public DdlEventPoller(DdlEventRepository repository,
                           DbConnectionService connections,
+                          DdlEventService ddlEventService,
                           @Value("${deltazium.kafka.bootstrap}") String bootstrap) {
         this.repository = repository;
         this.connections = connections;
+        this.ddlEventService = ddlEventService;
         this.bootstrap = bootstrap;
     }
 
@@ -120,8 +129,15 @@ public class DdlEventPoller {
                     var p = parsed.get();
                     String state = p.snapshot() ? "SNAPSHOT"
                             : DdlEventParser.ignorable(p.ddl()) ? "IGNORED" : "DETECTED";
-                    stored |= repository.insertIfAbsent(rec.offset(), p.tsMs(), p.scn(),
+                    boolean insertedNow = repository.insertIfAbsent(rec.offset(), p.tsMs(), p.scn(),
                             p.schemaName(), p.tableName(), p.ddl(), state);
+                    stored |= insertedNow;
+                    if (insertedNow) {
+                        // DDL 반영 정책(AUTO) 즉시 분기 — id는 useGeneratedKeys 없는 insertIfAbsent가
+                        // 돌려주지 않으므로 방금 넣은 행을 offset으로 다시 찾는다.
+                        repository.findByOffset(rec.offset())
+                                .ifPresent(ev -> ddlEventService.handleNewEvent(ev.id()));
+                    }
                 }
                 if (!records.isEmpty()) {
                     consumer.commitSync();

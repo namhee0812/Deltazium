@@ -21,6 +21,9 @@ import org.springframework.web.client.RestClient;
  * --------------------------------------------------
  * 26. 08. 04.       | 최남희  | restartFailed 추가 — FAILED task 재시작 (KIP-745)
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | resumeAfterDdl 추가 — DDL 승인·건너뛰기·자동 적용 후 sink 재개를
+ * |                          | 한곳에서(FAILED면 restartFailed, PAUSED면 resume, architecture.md 7절)
+ * --------------------------------------------------
  */
 @Component
 public class ConnectClient {
@@ -77,5 +80,31 @@ public class ConnectClient {
 
     public void delete(String name) {
         rest.delete().uri("/connectors/{name}", name).retrieve().toBodilessEntity();
+    }
+
+    /**
+     * DDL 승인·건너뛰기(SKIPPED)·자동 적용 후 sink 재개 공용 진입점(architecture.md 7절) —
+     * 상태를 조회해 FAILED면 restartFailed, PAUSED면 resume, 그 외(RUNNING 등)는 이미 정상이라
+     * 아무것도 하지 않는다.
+     */
+    public void resumeAfterDdl(String name) {
+        String state = effectiveState(status(name));
+        if ("FAILED".equals(state)) {
+            restartFailed(name);
+        } else if ("PAUSED".equals(state)) {
+            resume(name);
+        }
+    }
+
+    /** 커넥터 자체 또는 태스크 중 하나라도 FAILED면 FAILED로 본다 — SystemWarningService·
+     * ConnectorHealthWatcher와 같은 판정이지만 목적이 달라 각자 중복 정의돼 있다(docs/internals.md). */
+    private static String effectiveState(JsonNode status) {
+        String state = status.path("connector").path("state").asText("UNKNOWN");
+        for (JsonNode task : status.path("tasks")) {
+            if ("FAILED".equals(task.path("state").asText())) {
+                return "FAILED";
+            }
+        }
+        return state;
     }
 }

@@ -56,6 +56,9 @@
  * |                          | 제외하고 상태 칩을 중립색 "스냅샷 적재 중"으로 표시 — 스냅샷이
  * |                          | 쏟아내는 대량 이벤트를 장애로 오인하지 않도록(docs/internals.md)
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | 상세 drawer 상태 kv에 "DDL 반영"(정책: 자동/확인 후) 표시 추가
+ * |                          | (architecture.md 7절 — 정책 변경 UI는 이번 범위 밖)
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -116,6 +119,8 @@ interface RegisteredTable {
   targetTableName: string | null
   /** 소스 커넥션의 topic.prefix — 커넥터 이름 조립(dz-jdbc-sink-<prefix>-<suffix>)에 필요 */
   sourceTopicPrefix: string | null
+  /** DDL 반영 정책 — MANUAL(확인 후) | AUTO(감지 즉시 적용). 변경 UI는 이번 범위 밖(architecture.md 7절) */
+  ddlPolicy: string
 }
 
 interface TableEvent {
@@ -146,6 +151,7 @@ interface Row {
   targetName: string | null
   targetSchema: string
   targetTable: string
+  ddlPolicy: string
   metrics: TableMetrics | null
 }
 
@@ -243,6 +249,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       targetName: nameOf.get(r.targetConnectionId) ?? null,
       targetSchema: r.targetSchemaName || r.schemaName,
       targetTable: r.targetTableName || r.tableName,
+      ddlPolicy: r.ddlPolicy,
       metrics: byTopic.get(`${r.sourceTopicPrefix}.${r.schemaName}.${r.tableName}`) ?? null,
     }))
   }, [registered, metrics, connections])
@@ -805,6 +812,10 @@ function TableDetailDrawer({
             <span className="text-ink-3">이벤트/s</span>
             <span className="font-mono text-[12px]">
               {row.metrics ? row.metrics.eventsPerSec.toFixed(1) : '—'}
+            </span>
+            <span className="text-ink-3">DDL 반영</span>
+            <span className="font-mono text-[12px]">
+              {row.ddlPolicy === 'AUTO' ? '자동' : '확인 후'}
             </span>
           </div>
         </div>

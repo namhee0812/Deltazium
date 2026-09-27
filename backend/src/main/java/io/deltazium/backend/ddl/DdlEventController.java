@@ -25,6 +25,9 @@ import org.springframework.web.bind.annotation.RestController;
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | skip 추가 — 타깃엔 적용하지 않고 sink를 재개(SKIPPED,
+ * |                          | architecture.md 7절 개정 — 테이블별 DDL 반영 정책의 MANUAL 3액션)
+ * --------------------------------------------------
  */
 @RestController
 @RequestMapping("/api/ddl-events")
@@ -49,6 +52,12 @@ public class DdlEventController {
     @PostMapping("/{id}/reject")
     public DdlEvent reject(@PathVariable long id) {
         return service.reject(id);
+    }
+
+    /** 건너뛰고 재개 — 타깃엔 적용하지 않는다(SKIPPED). */
+    @PostMapping("/{id}/skip")
+    public DdlEvent skip(@PathVariable long id) {
+        return service.skip(id);
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

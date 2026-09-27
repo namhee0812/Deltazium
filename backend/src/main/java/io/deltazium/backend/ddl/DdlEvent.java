@@ -21,6 +21,9 @@ import java.time.LocalDateTime;
  * |                          | PostgreSQL 등 schema change topic 미발행 소스). scn은 SCHEMA_TOPIC
  * |                          | 전용 참고 문자열이라 FINGERPRINT 행은 항상 null(위치 무관, 7절)
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | state에 AUTO_APPLIED(DDL 반영 정책=자동, 감지 즉시 적용)·SKIPPED
+ * |                          | (건너뛰고 재개, 매핑만 조정) 추가 — architecture.md 7절 개정
+ * --------------------------------------------------
  */
 public record DdlEvent(
         Long id,
@@ -30,7 +33,9 @@ public record DdlEvent(
         String schemaName,
         String tableName,
         String ddlText,
-        String state,   // SNAPSHOT(스냅샷 시 구조 덤프·정보성) | DETECTED(승인 대기) | APPROVED | REJECTED
+        // SNAPSHOT(스냅샷 시 구조 덤프·정보성) | DETECTED(승인 대기) | APPROVED | REJECTED |
+        // AUTO_APPLIED(정책=자동, 감지 즉시 적용) | SKIPPED(건너뛰고 재개)
+        String state,
         String note,
         LocalDateTime decidedAt,
         String origin) { // SCHEMA_TOPIC | FINGERPRINT
