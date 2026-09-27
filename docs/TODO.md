@@ -80,7 +80,17 @@
       타깃 ②" 절 — 소스·타깃 공통) / **PG 체크섬은 2026-09-23 결함 1
       수정으로 완료**(위 참고 — Oracle↔Oracle·PostgreSQL↔PostgreSQL만 지원, 이종 조합은
       범위 밖) / 미검증 항목: 사용자가 따옴표로 만든 mixed-case 타깃 테이블, 타입 매핑 경계
-      (numeric 정밀도·bytea·array), 복구 재발행(recovery-sink)의 PG 타깃, 대량 배치.
+      (numeric 정밀도·bytea·array), 대량 배치.
+      **복구 재발행(recovery-sink)의 PG 타깃 — 리허설 실행, 결함 발견 (2026-09-27,
+      `docs/experiments/2026-09-27-pg2pg-recovery-rehearsal.md`)**: items(타임스탬프 컬럼 없음)는
+      6.4 ①~⑤ 통과 — `field.include.list` 상속, `_pos` 순서, 멱등 재실행, go-live 확인.
+      orders(`updated_at timestamptz`)는 **recovery-sink apply 실패 — 미해결**:
+      R1 재조립 envelope에서 `io.debezium.time.ZonedTimestamp` 논리 타입명이 빠져 JDBC sink가
+      varchar로 바인딩(SQLSTATE 42804) → PG 타깃의 timestamptz 테이블은 changelog 복구 불가.
+      R2 실패 task는 재트리거로 회복 안 됨(task restart 경로 없음). R3 apply 실패 시 실행 상태가
+      DONE으로 30분 고착. 수정 방향(assembler에서 논리 타입 복원 vs changelog 스키마에 타입 힌트
+      보존)은 5.1 불변식과 맞물려 **사용자 결정 필요**. Oracle 타깃 TIMESTAMP WITH TIME ZONE,
+      PG `timestamp`/`date` 컬럼은 미검증.
       **타깃 테이블 생성 방침 완료 (2026-09-27, feature/ddl-policy)**: 등록 위저드에
       "기존 테이블 선택 / 소스 스키마로 새로 생성" 옵션 추가 — 생성 선택 시
       `POST /api/registrations/target-table/preview`로 CREATE TABLE 초안(타입 매핑은
