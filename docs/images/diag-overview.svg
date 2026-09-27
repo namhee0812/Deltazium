@@ -4,11 +4,11 @@
 <polygon points="42,26.5 39.60,27.65 39.60,25.35" fill="#2f5a8a"/>
 <path d="M34,46.5 L39.6,46.5" fill="none" stroke="#2f5a8a" stroke-width="0.55" stroke-linejoin="round"/>
 <polygon points="42,46.5 39.60,47.65 39.60,45.35" fill="#2f5a8a"/>
-<path d="M68,37 L73.6,37.0" fill="none" stroke="#2f5a8a" stroke-width="0.55" stroke-linejoin="round"/>
-<polygon points="76,37 73.60,38.15 73.60,35.85" fill="#2f5a8a"/>
-<path d="M100,37 L103,37 L103,12.5 L105.6,12.5" fill="none" stroke="#2f5a8a" stroke-width="0.55" stroke-linejoin="round"/>
+<path d="M68,37 L69.6,37.0" fill="none" stroke="#2f5a8a" stroke-width="0.55" stroke-linejoin="round"/>
+<polygon points="72,37 69.60,38.15 69.60,35.85" fill="#2f5a8a"/>
+<path d="M102,37 L104.5,37 L104.5,12.5 L105.6,12.5" fill="none" stroke="#2f5a8a" stroke-width="0.55" stroke-linejoin="round"/>
 <polygon points="108,12.5 105.60,13.65 105.60,11.35" fill="#2f5a8a"/>
-<path d="M100,37 L103,37 L103,73.5 L105.6,73.5" fill="none" stroke="#2f5a8a" stroke-width="0.55" stroke-linejoin="round"/>
+<path d="M102,37 L104.5,37 L104.5,73.5 L105.6,73.5" fill="none" stroke="#2f5a8a" stroke-width="0.55" stroke-linejoin="round"/>
 <polygon points="108,73.5 105.60,74.65 105.60,72.35" fill="#2f5a8a"/>
 <path d="M133,12.5 L136.6,12.5" fill="none" stroke="#2f5a8a" stroke-width="0.55" stroke-linejoin="round"/>
 <polygon points="139,12.5 136.60,13.65 136.60,11.35" fill="#2f5a8a"/>
@@ -25,7 +25,7 @@
 <rect x="4" y="20" width="30" height="13" rx="2.4" fill="#eef2f7" stroke="#1c2e4a" stroke-width="0.4"/>
 <rect x="4" y="40" width="30" height="13" rx="2.4" fill="#eef2f7" stroke="#1c2e4a" stroke-width="0.4"/>
 <rect x="42" y="24" width="26" height="26" rx="2.4" fill="#eef2f7" stroke="#1c2e4a" stroke-width="0.4"/>
-<rect x="76" y="30" width="24" height="14" rx="2.4" fill="#eef2f7" stroke="#1c2e4a" stroke-width="0.4"/>
+<rect x="72" y="30" width="30" height="14" rx="2.4" fill="#eef2f7" stroke="#1c2e4a" stroke-width="0.4"/>
 <rect x="108" y="6" width="25" height="13" rx="2.4" fill="#eef2f7" stroke="#1c2e4a" stroke-width="0.4"/>
 <rect x="139" y="6" width="31" height="13" rx="2.4" fill="#dce7f2" stroke="#1c2e4a" stroke-width="0.4"/>
 <rect x="139" y="26" width="31" height="13" rx="2.4" fill="#eef2f7" stroke="#1c2e4a" stroke-width="0.4"/>
