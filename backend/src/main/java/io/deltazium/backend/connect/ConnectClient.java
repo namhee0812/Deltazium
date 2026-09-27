@@ -21,7 +21,7 @@ import org.springframework.web.client.RestClient;
  * --------------------------------------------------
  * 26. 08. 04.       | 최남희  | restartFailed 추가 — FAILED task 재시작 (KIP-745)
  * --------------------------------------------------
- * 26. 09. 27.       | 최남희  | resumeAfterDdl 추가 — DDL 승인·건너뛰기·자동 적용 후 sink 재개를
+ * 26. 09. 27.       | 최남희  | resumeAfterDdl 추가 — DDL 승인·건너뛰기·자동 적용 후 sink 재개를 (보완: 커넥터 생성 직후 status 404를 최대 10초 재시도 — 복구 sink 재배포 시 500 실측)
  * |                          | 한곳에서(FAILED면 restartFailed, PAUSED면 resume, architecture.md 7절)
  * --------------------------------------------------
  */
@@ -88,7 +88,21 @@ public class ConnectClient {
      * 아무것도 하지 않는다.
      */
     public void resumeAfterDdl(String name) {
-        String state = effectiveState(status(name));
+        JsonNode status = null;
+        // 커넥터를 막 만든 직후(복구 sink 재배포)엔 Connect가 status를 아직 안 만들어 404가 난다 —
+        // 최대 10초 재시도 후에도 없으면 resume만 시도한다(2026-09-27 복구 재트리거 500 실측)
+        for (int i = 0; i < 20 && status == null; i++) {
+            try {
+                status = status(name);
+            } catch (org.springframework.web.client.HttpClientErrorException.NotFound e) {
+                try { Thread.sleep(500); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
+            }
+        }
+        if (status == null) {
+            resume(name);
+            return;
+        }
+        String state = effectiveState(status);
         if ("FAILED".equals(state)) {
             restartFailed(name);
         } else if ("PAUSED".equals(state)) {
