@@ -12,6 +12,8 @@ import java.util.stream.Collectors;
 
 import io.deltazium.backend.connect.ConnectorDeployService;
 import io.deltazium.backend.connect.ConnectorNames;
+import io.deltazium.backend.ddl.SchemaFingerprint;
+import io.deltazium.backend.ddl.TargetDdlExecutor;
 import io.deltazium.backend.dictionary.DictionaryRouter;
 import io.deltazium.backend.dictionary.PrecheckItem;
 import io.deltazium.backend.dictionary.SourceDictionary;
@@ -90,13 +92,48 @@ import org.springframework.transaction.annotation.Transactional;
  * |                          | 슬롯·publication 이름 리터럴("dz_"+prefix)을
  * |                          | ConnectorNames.replicationSlot/Publication으로 단일화
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | DDL 반영 정책(ddlPolicy)·타깃 테이블 생성 옵션(createTarget)
+ * |                          | 추가(architecture.md 7·8절). TableSpec에 두 필드 추가(기존 4-arg
+ * |                          | 생성자는 MANUAL·false로 위임). createTarget이면 소스 스키마로
+ * |                          | CREATE TABLE을 등록 트랜잭션 안에서 실행(previewTargetTableDdl과
+ * |                          | 같은 함수로 조립 — 클라이언트가 보낸 DDL 문자열은 신뢰하지 않는다)
+ * |                          | 하고 컬럼 매핑은 동일명 전부 활성으로 고정한다. DDL 건너뛰기
+ * |                          | (SKIPPED, DdlEventService 전용)를 위해 redeployJdbcSinkOnly·
+ * |                          | addDisabledColumn·disableColumn 추가 — 소스 전체 재배포
+ * |                          | (deploySource)는 다른 테이블까지 건드려 과도하므로 테이블 하나의
+ * |                          | jdbc-sink만 다시 배포한다
+ * --------------------------------------------------
  */
 @Service
 public class RegistrationService {
 
-    /** 등록 요청의 테이블 한 건. target·columns가 비면 소스와 동일/전 컬럼으로 저장한다. */
+    /**
+     * 등록 요청의 테이블 한 건. target·columns가 비면 소스와 동일/전 컬럼으로 저장한다.
+     * @param createTarget true면 소스 스키마로 타깃 테이블을 새로 생성한다(8절) — 이미 존재하면
+     *                      등록 거부. 이때 columns는 무시되고 동일명 전부 활성으로 고정된다.
+     * @param ddlPolicy MANUAL(기본, 확인 후 반영) | AUTO(감지 즉시 적용 후 재개, 7절).
+     */
     public record TableSpec(String source, String targetSchema, String targetTable,
-                            List<ColumnMapping> columns) {
+                            List<ColumnMapping> columns, boolean createTarget, String ddlPolicy) {
+
+        public TableSpec {
+            ddlPolicy = normalizeDdlPolicy(ddlPolicy);
+        }
+
+        public TableSpec(String source, String targetSchema, String targetTable, List<ColumnMapping> columns) {
+            this(source, targetSchema, targetTable, columns, false, "MANUAL");
+        }
+
+        private static String normalizeDdlPolicy(String raw) {
+            if (raw == null || raw.isBlank()) {
+                return "MANUAL";
+            }
+            String up = raw.toUpperCase(Locale.ROOT);
+            if (!up.equals("MANUAL") && !up.equals("AUTO")) {
+                throw new IllegalArgumentException("ddlPolicy는 MANUAL 또는 AUTO여야 한다: " + raw);
+            }
+            return up;
+        }
     }
 
     private final RegisteredTableRepository repository;
@@ -108,6 +145,7 @@ public class RegistrationService {
     private final IcebergProperties iceberg;
     private final TableEventService events;
     private final PostgresReplicationCleaner replicationCleaner;
+    private final TargetDdlExecutor targetDdlExecutor;
     private final String kafkaBootstrap;
 
     public RegistrationService(RegisteredTableRepository repository,
@@ -119,6 +157,7 @@ public class RegistrationService {
                                IcebergProperties iceberg,
                                TableEventService events,
                                PostgresReplicationCleaner replicationCleaner,
+                               TargetDdlExecutor targetDdlExecutor,
                                @Value("${deltazium.kafka.bootstrap}") String kafkaBootstrap) {
         this.repository = repository;
         this.columnRepository = columnRepository;
@@ -129,6 +168,7 @@ public class RegistrationService {
         this.iceberg = iceberg;
         this.events = events;
         this.replicationCleaner = replicationCleaner;
+        this.targetDdlExecutor = targetDdlExecutor;
         this.kafkaBootstrap = kafkaBootstrap;
     }
 
@@ -205,6 +245,8 @@ public class RegistrationService {
         DbConnection source = requireRole(sourceConnectionId, "SOURCE");
         DbConnection target = requireRole(targetConnectionId, "TARGET");
         SourceDictionary dictionary = dictionaryRouter.forConnection(source);
+        DbType sourceType = DbType.find(source.dbType())
+                .orElseThrow(() -> new IllegalArgumentException("알 수 없는 소스 DB 종류: " + source.dbType()));
         DbType targetType = DbType.find(target.dbType())
                 .orElseThrow(() -> new IllegalArgumentException("알 수 없는 타깃 DB 종류: " + target.dbType()));
         if (specs == null || specs.isEmpty()) {
@@ -221,12 +263,21 @@ public class RegistrationService {
             SourceTableInfo info = validateTable(source, dictionary, spec.source());
             infos.add(info);
             List<TableColumn> sourceColumns = dictionary.listColumns(source, info.schema(), info.table());
-            List<ColumnMapping> mappings = normalizeMappings(spec, sourceColumns);
+            String foldedTargetSchema = foldTargetIdentifier(targetType, spec.targetSchema(), info.schema());
+            String foldedTargetTable = foldTargetIdentifier(targetType, spec.targetTable(), info.table());
+
+            List<ColumnMapping> mappings;
+            if (spec.createTarget()) {
+                createTargetTable(target, sourceType, targetType, sourceColumns,
+                        foldedTargetSchema, foldedTargetTable);
+                mappings = defaultMappings(sourceColumns);
+            } else {
+                mappings = normalizeMappings(spec, sourceColumns);
+            }
 
             long tableId = repository.insert(info.schema(), info.table(),
                     sourceConnectionId, targetConnectionId,
-                    foldTargetIdentifier(targetType, spec.targetSchema(), info.schema()),
-                    foldTargetIdentifier(targetType, spec.targetTable(), info.table()), mode);
+                    foldedTargetSchema, foldedTargetTable, mode, spec.ddlPolicy());
             columnRepository.insertAll(tableId, mappings);
         }
 
@@ -279,9 +330,7 @@ public class RegistrationService {
 
         List<ColumnMapping> mappings = spec.columns();
         if (mappings == null || mappings.isEmpty()) {
-            return sourceColumns.stream()
-                    .map(c -> new ColumnMapping(c.name(), "${" + c.name() + "}", true))
-                    .toList();
+            return defaultMappings(sourceColumns);
         }
 
         Set<String> enabledIdentityCols = new java.util.HashSet<>();
@@ -310,6 +359,62 @@ public class RegistrationService {
                     "소스 PK 컬럼은 전부 동일명으로 매핑·활성화돼야 한다 (upsert key 전제): PK=" + pkNames);
         }
         return normalized;
+    }
+
+    /** 전 컬럼 동일명 매핑(전부 활성) — 매핑 미지정 시 기본값이자, "소스 스키마로 새로 생성"
+     * (createTarget) 옵션의 고정 매핑(8절: "매핑은 동일명 전부 활성으로 고정"). */
+    private static List<ColumnMapping> defaultMappings(List<TableColumn> sourceColumns) {
+        return sourceColumns.stream()
+                .map(c -> new ColumnMapping(c.name(), "${" + c.name() + "}", true))
+                .toList();
+    }
+
+    /**
+     * 등록 시 "소스 스키마로 새로 생성" 옵션(8절) — 타깃에 이미 같은 이름의 테이블이 있으면
+     * 등록을 거부한다(존재 여부는 딕셔너리 컬럼 조회로 판정 — 컬럼이 하나도 안 잡히면 없는
+     * 것으로 본다, 위저드의 "타깃 컬럼 불러오기"와 같은 방식). DDL은 previewTargetTableDdl과
+     * 같은 함수(SchemaFingerprint.draftCreateTable)로 조립한다 — 클라이언트가 보낸 DDL 문자열은
+     * 신뢰하지 않고 서버가 유일한 진원지가 되도록 한다.
+     */
+    private void createTargetTable(DbConnection target, DbType sourceType, DbType targetType,
+                                   List<TableColumn> sourceColumns, String targetSchema, String targetTable) {
+        boolean exists = !dictionaryRouter.forConnection(target)
+                .listColumns(target, targetSchema, targetTable).isEmpty();
+        if (exists) {
+            throw new IllegalArgumentException("타깃 테이블이 이미 존재한다: " + targetSchema + "." + targetTable);
+        }
+        String ddl = SchemaFingerprint.draftCreateTable(sourceType, targetType, targetSchema, targetTable,
+                sourceColumns);
+        targetDdlExecutor.execute(target, ddl);
+    }
+
+    /**
+     * "소스 스키마로 새로 생성" 미리보기 — 등록 전 화면에 보여줄 CREATE TABLE 초안
+     * (POST /api/registrations/target-table/preview). createTargetTable과 같은 함수로 조립해
+     * 미리보기와 실제 생성이 항상 일치한다. 매핑 불가 타입이 있으면 거부(사유 포함) —
+     * SchemaFingerprint.draftCreateTable이 던진다.
+     */
+    public String previewTargetTableDdl(long sourceConnectionId, String sourceQualifiedTable,
+                                        long targetConnectionId, String targetSchema, String targetTable) {
+        DbConnection source = requireRole(sourceConnectionId, "SOURCE");
+        DbConnection target = requireRole(targetConnectionId, "TARGET");
+        DbType sourceType = DbType.find(source.dbType())
+                .orElseThrow(() -> new IllegalArgumentException("알 수 없는 소스 DB 종류: " + source.dbType()));
+        DbType targetType = DbType.find(target.dbType())
+                .orElseThrow(() -> new IllegalArgumentException("알 수 없는 타깃 DB 종류: " + target.dbType()));
+        int dot = sourceQualifiedTable == null ? -1 : sourceQualifiedTable.indexOf('.');
+        if (dot <= 0) {
+            throw new IllegalArgumentException("SCHEMA.TABLE 형식이어야 한다: " + sourceQualifiedTable);
+        }
+        String schema = sourceQualifiedTable.substring(0, dot);
+        String table = sourceQualifiedTable.substring(dot + 1);
+        List<TableColumn> sourceColumns = dictionaryRouter.forConnection(source).listColumns(source, schema, table);
+        if (sourceColumns.isEmpty()) {
+            throw new IllegalArgumentException("소스 컬럼을 찾을 수 없다: " + sourceQualifiedTable);
+        }
+        String foldedSchema = foldTargetIdentifier(targetType, targetSchema, schema);
+        String foldedTable = foldTargetIdentifier(targetType, targetTable, table);
+        return SchemaFingerprint.draftCreateTable(sourceType, targetType, foldedSchema, foldedTable, sourceColumns);
     }
 
     /**
@@ -582,6 +687,53 @@ public class RegistrationService {
         return repository.findAll().stream()
                 .filter(t -> t.id() == registeredTableId).findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("등록 테이블 없음: id=" + registeredTableId));
+    }
+
+    /**
+     * 해당 테이블의 jdbc-sink만 다시 배포한다 — DDL 건너뛰기(SKIPPED, DdlEventService 전용)로
+     * 컬럼 매핑이 바뀐 뒤 반영에 쓴다. deploySource()는 그 소스의 source·iceberg-sink와 다른
+     * 테이블들의 jdbc-sink까지 전부 재배포해 이 용도엔 과도하다(다른 테이블 무영향 원칙).
+     */
+    public void redeployJdbcSinkOnly(long registeredTableId) {
+        RegisteredTable t = find(registeredTableId);
+        String prefix = connections.get(t.sourceConnectionId()).topicPrefix();
+        DbConnection target = connections.get(t.targetConnectionId());
+        List<ColumnMapping> mappings = columnRepository.findByTable(t.id());
+        Map<String, String> vars = new HashMap<>();
+        vars.put("connector_name", ConnectorNames.jdbcSink(prefix, t.suffix()));
+        vars.put("topics", ConnectorNames.captureTopic(prefix, t.schemaName(), t.tableName()));
+        vars.put("target_jdbc_url", target.jdbcUrl());
+        vars.put("target_user", target.username());
+        vars.put("target_password", target.password());
+        vars.put("collection_name", t.targetQualified());
+        deploy.deploy("jdbc-sink", vars, fieldIncludeConfig(mappings));
+    }
+
+    /**
+     * DDL 건너뛰기(SKIPPED) — ADD COLUMN: 새 컬럼을 비활성 매핑으로 추가하고 재배포한다.
+     * jdbc-sink field.include.list에서 빠져 타깃엔 반영되지 않지만, changelog(Iceberg)는
+     * 스키마 진화를 자동 수용해 그대로 받으므로 나중에 활성화하면 소급 없이 반영을 시작할 수
+     * 있다(architecture.md 7절 SKIPPED 의미, docs/internals.md). 이미 매핑돼 있으면 그대로 둔다
+     * (멱등 — 같은 이벤트를 다시 건너뛰어도 안전).
+     */
+    public void addDisabledColumn(long registeredTableId, String columnName) {
+        RegisteredTable t = find(registeredTableId);
+        List<ColumnMapping> existing = columnRepository.findByTable(t.id());
+        boolean already = existing.stream().anyMatch(m -> m.targetColumn().equalsIgnoreCase(columnName));
+        if (!already) {
+            columnRepository.insertAll(t.id(), List.of(new ColumnMapping(columnName, "${" + columnName + "}", false)));
+        }
+        redeployJdbcSinkOnly(registeredTableId);
+    }
+
+    /**
+     * DDL 건너뛰기(SKIPPED) — DROP COLUMN: 소스에서 사라진 컬럼의 매핑을 비활성화하고
+     * 재배포한다. 타깃 컬럼 자체는 지우지 않는다(7절: "타깃 컬럼은 남긴다").
+     */
+    public void disableColumn(long registeredTableId, String columnName) {
+        RegisteredTable t = find(registeredTableId);
+        columnRepository.updateEnabled(t.id(), columnName, false);
+        redeployJdbcSinkOnly(registeredTableId);
     }
 
     private DbConnection requireRole(long connectionId, String role) {

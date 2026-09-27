@@ -16,13 +16,18 @@
  * |                          | 추가 — PostgreSQL 등 schema change topic이 없는 소스는 스키마
  * |                          | 지문 비교로 감지된다(architecture.md 7절)
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | 테이블별 DDL 반영 정책(architecture.md 7절 개정): state에
+ * |                          | AUTO_APPLIED·SKIPPED 추가, DETECTED 카드 버튼을 [적용 후 재개]
+ * |                          | [건너뛰고 재개](신규 skip API) [정지 유지] 3개로, 카드에 정책
+ * |                          | 배지(자동/확인 후 — /api/registrations 조회)를 추가했다
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
 
 /* DDL 타임라인 (ui-reference v3) — 실데이터: backend가 schema change topic을 상시 소비해
-   적재한 이벤트. 승인=타깃 DDL 적용, 거부=jdbc-sink에서 해당 테이블 토픽 제외 (7절) */
+   적재한 이벤트. 적용 후 재개=타깃 DDL 적용, 건너뛰고 재개=매핑만 조정, 정지 유지=거부(7절) */
 
 interface DdlEvent {
   id: number
@@ -32,10 +37,17 @@ interface DdlEvent {
   schemaName: string | null
   tableName: string | null
   ddlText: string
-  state: 'SNAPSHOT' | 'DETECTED' | 'APPROVED' | 'REJECTED' | 'IGNORED'
+  state: 'SNAPSHOT' | 'DETECTED' | 'APPROVED' | 'REJECTED' | 'IGNORED' | 'AUTO_APPLIED' | 'SKIPPED'
   note: string | null
   decidedAt: string | null
   origin: 'SCHEMA_TOPIC' | 'FINGERPRINT'
+}
+
+/** 테이블 정책 배지 표시용 — /api/registrations(RegisteredTableView)의 일부만 쓴다. */
+interface RegisteredTableForPolicy {
+  schemaName: string
+  tableName: string
+  ddlPolicy: string
 }
 
 const originLabel: Record<DdlEvent['origin'], string> = {
@@ -49,6 +61,8 @@ const stateColor: Record<DdlEvent['state'], string> = {
   REJECTED: 'text-crit bg-crit/10',
   SNAPSHOT: 'text-muted-foreground bg-secondary',
   IGNORED: 'text-muted-foreground bg-secondary',
+  AUTO_APPLIED: 'text-ok bg-ok/10',
+  SKIPPED: 'text-muted-foreground bg-secondary',
 }
 
 const dotColor: Record<DdlEvent['state'], string> = {
@@ -57,6 +71,8 @@ const dotColor: Record<DdlEvent['state'], string> = {
   REJECTED: 'var(--crit)',
   SNAPSHOT: 'var(--chart-dim)',
   IGNORED: 'var(--chart-dim)',
+  AUTO_APPLIED: 'var(--ok)',
+  SKIPPED: 'var(--chart-dim)',
 }
 
 const stateLabel: Record<DdlEvent['state'], string> = {
@@ -65,12 +81,17 @@ const stateLabel: Record<DdlEvent['state'], string> = {
   REJECTED: 'rejected',
   SNAPSHOT: 'snapshot',
   IGNORED: '무시됨',
+  AUTO_APPLIED: '자동 적용됨',
+  SKIPPED: '건너뜀',
 }
 
-const FILTERS = ['all', 'DETECTED', 'APPROVED', 'REJECTED', 'SNAPSHOT', 'IGNORED'] as const
+const FILTERS = [
+  'all', 'DETECTED', 'APPROVED', 'REJECTED', 'AUTO_APPLIED', 'SKIPPED', 'SNAPSHOT', 'IGNORED',
+] as const
 
 export function DdlPanel() {
   const [events, setEvents] = useState<DdlEvent[] | null>(null)
+  const [tables, setTables] = useState<RegisteredTableForPolicy[]>([])
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>('all')
   const [open, setOpen] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -83,6 +104,7 @@ export function DdlPanel() {
         setError(null)
       })
       .catch((e: Error) => setError(e.message))
+    api<RegisteredTableForPolicy[]>('/api/registrations').then(setTables).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -91,7 +113,16 @@ export function DdlPanel() {
     return () => clearInterval(id)
   }, [load])
 
-  const decide = async (id: number, action: 'approve' | 'reject') => {
+  /** 이벤트가 가리키는 테이블의 DDL 반영 정책 — 등록 정보가 아직 없으면(미등록 테이블의
+   * DDL 등) 배지를 생략한다. */
+  const policyOf = (e: DdlEvent): string | null =>
+    tables.find(
+      (t) =>
+        e.schemaName?.toUpperCase() === t.schemaName.toUpperCase()
+        && e.tableName?.toUpperCase() === t.tableName.toUpperCase(),
+    )?.ddlPolicy ?? null
+
+  const decide = async (id: number, action: 'approve' | 'reject' | 'skip') => {
     setBusy(true)
     setError(null)
     try {
@@ -173,12 +204,17 @@ export function DdlPanel() {
                       </pre>
                       <div className="mt-2 flex flex-wrap items-center gap-3 font-mono text-[11px] text-muted-foreground">
                         <span className="rounded bg-secondary px-1.5 py-0.5">{originLabel[e.origin]}</span>
+                        {policyOf(e) && (
+                          <span className="rounded bg-secondary px-1.5 py-0.5">
+                            정책: {policyOf(e) === 'AUTO' ? '자동' : '확인 후'}
+                          </span>
+                        )}
                         {e.scn && <span>SCN {e.scn}</span>}
                         {e.kafkaOffset != null && <span>offset {e.kafkaOffset}</span>}
                         {e.note && <span className="text-foreground">{e.note}</span>}
                       </div>
                       {e.state === 'DETECTED' && (
-                        <div className="mt-3 flex gap-2">
+                        <div className="mt-3 flex flex-wrap gap-2">
                           <Button
                             size="sm"
                             disabled={busy}
@@ -187,7 +223,18 @@ export function DdlPanel() {
                               void decide(e.id, 'approve')
                             }}
                           >
-                            승인 — 타깃에 적용
+                            적용 후 재개
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busy}
+                            onClick={(ev) => {
+                              ev.stopPropagation()
+                              void decide(e.id, 'skip')
+                            }}
+                          >
+                            건너뛰고 재개
                           </Button>
                           <Button
                             size="sm"
@@ -198,7 +245,7 @@ export function DdlPanel() {
                               void decide(e.id, 'reject')
                             }}
                           >
-                            거부 — apply 정지
+                            정지 유지
                           </Button>
                         </div>
                       )}

@@ -1,6 +1,7 @@
 package io.deltazium.backend.registration;
 
 import java.util.List;
+import java.util.Locale;
 
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -24,6 +25,9 @@ import org.apache.ibatis.annotations.Param;
  * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: 중복 판정을 (source_connection_id, schema,
  * |                          | table) 기준으로 전환 — 소스가 다르면 동일 schema.table도 별개.
  * |                          | findBySource·updateFingerprint 추가(스키마 지문 감지용)
+ * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | insert()에 ddlPolicy 파라미터 추가(테이블별 DDL 반영 정책,
+ * |                          | 기본 MANUAL) — 기존 오버로드는 MANUAL로 위임(하위 호환)
  * --------------------------------------------------
  */
 @Mapper
@@ -50,17 +54,24 @@ public interface RegisteredTableRepository {
         public String targetSchemaName;
         public String targetTableName;
         public String snapshotMode;
+        public String ddlPolicy;
     }
 
     void insertRow(InsertRow row);
 
     default long insert(String schema, String table, long sourceConnId, long targetConnId,
                         String targetSchema, String targetTable) {
-        return insert(schema, table, sourceConnId, targetConnId, targetSchema, targetTable, "INITIAL");
+        return insert(schema, table, sourceConnId, targetConnId, targetSchema, targetTable, "INITIAL", "MANUAL");
     }
 
     default long insert(String schema, String table, long sourceConnId, long targetConnId,
                         String targetSchema, String targetTable, String snapshotMode) {
+        return insert(schema, table, sourceConnId, targetConnId, targetSchema, targetTable, snapshotMode, "MANUAL");
+    }
+
+    /** @param ddlPolicy MANUAL(기본, 확인 후 반영) | AUTO(감지 즉시 적용 후 재개, 7절). */
+    default long insert(String schema, String table, long sourceConnId, long targetConnId,
+                        String targetSchema, String targetTable, String snapshotMode, String ddlPolicy) {
         InsertRow row = new InsertRow();
         row.schemaName = schema;
         row.tableName = table;
@@ -69,6 +80,7 @@ public interface RegisteredTableRepository {
         row.targetSchemaName = targetSchema;
         row.targetTableName = targetTable;
         row.snapshotMode = snapshotMode;
+        row.ddlPolicy = ddlPolicy == null || ddlPolicy.isBlank() ? "MANUAL" : ddlPolicy.toUpperCase(Locale.ROOT);
         insertRow(row);
         return row.id;
     }

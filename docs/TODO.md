@@ -77,13 +77,17 @@
       `./gradlew :backend:test` 통과.
       남은 것(이번 브랜치 범위 밖): **D3** 새 소스 등록 후 스냅샷 notification 구독이
       backend 재기동 전까지 안 보이는 한계(기존 기록, docs/internals.md "다중 소스·다중
-      타깃 ②" 절 — 소스·타깃 공통) / 타깃 테이블 생성 방침 — 현재는 사전 수동 생성이
-      전제(등록 흐름에 타깃 DDL 초안·자동 생성 없음, sink는 schema.evolution=none이라
-      만들지 않음) — 사전 점검에 "타깃 테이블 존재·컬럼 일치" 항목을 추가할지 결정 필요
-      (현재는 위저드가 타깃 컬럼 조회 실패로만 알려줌) / **PG 체크섬은 2026-09-23 결함 1
+      타깃 ②" 절 — 소스·타깃 공통) / **PG 체크섬은 2026-09-23 결함 1
       수정으로 완료**(위 참고 — Oracle↔Oracle·PostgreSQL↔PostgreSQL만 지원, 이종 조합은
       범위 밖) / 미검증 항목: 사용자가 따옴표로 만든 mixed-case 타깃 테이블, 타입 매핑 경계
       (numeric 정밀도·bytea·array), 복구 재발행(recovery-sink)의 PG 타깃, 대량 배치.
+      **타깃 테이블 생성 방침 완료 (2026-09-27, feature/ddl-policy)**: 등록 위저드에
+      "기존 테이블 선택 / 소스 스키마로 새로 생성" 옵션 추가 — 생성 선택 시
+      `POST /api/registrations/target-table/preview`로 CREATE TABLE 초안(타입 매핑은
+      `SchemaFingerprint.mapNativeType`, Oracle↔PostgreSQL 최소 지원)을 보여주고 확인 후
+      등록 트랜잭션 안에서 실행(존재하면 400, 매핑 불가 타입은 거부). architecture.md 8절,
+      docs/internals.md "타깃 테이블 생성 옵션 — 타입 매핑" 절. 길이·정밀도 보존은 범위
+      밖(TableColumn이 원문 타입 이름만 가짐 — 확장 필요 시 별도 작업).
     - **소스 식별자를 커넥션 속성으로**: `db_connections.topic_prefix`(소스 커넥션 필수, 유일,
       `[a-z][a-z0-9_]*`, 기본값 = 이름 슬러그). 전역 `deltazium.topic-prefix` 제거. 기존 소스
       커넥션(orcl225)은 마이그레이션으로 `dz` 유지

@@ -244,12 +244,35 @@ Snowflake·Databricks에는 Debezium JDBC sink의 dialect가 없고, 행 단위 
 - 미확인(구현 전 공식 문서 확인): Snowflake JDBC PUT/COPY 사용법·내부 스테이지 권한, Databricks
   Files API(UC Volume) 업로드 한도·COPY INTO 문법·SQL warehouse 자격, 무료/트라이얼 계정 제약.
 
-## 7. DDL 승인 워크플로 (확정)
+## 7. DDL 승인 워크플로 (확정, 2026-09-27 테이블별 DDL 반영 정책 개정)
 
-1. **감지**: backend가 Debezium schema change topic 구독 → DDL 이벤트를 메타데이터 DB에 기록, UI에 경고 표시.
-2. **승인**: 사용자가 [적용] 클릭 → backend가 타깃에 DDL 적용 → 해당 테이블 CDC 계속.
-3. **거부**: 사용자가 [거부] 클릭 → **jdbc-sink 설정에서 해당 테이블 토픽 제외** (Connect REST 설정 갱신) → 해당 테이블 apply만 정지. 사용자가 수동으로 스키마 정리.
-4. **재개**: 정리 후 [재개] → 토픽 복원 → 밀린 것부터 캐치업. **정지 중에도 changelog는 Kafka·Iceberg에 계속 축적**되므로 데이터 유실 없음. retention 초과분은 6.3절 재발행 경로로 캐치업.
+1. **감지**: backend가 Debezium schema change topic 구독(또는 PostgreSQL 등은 스키마 지문
+   비교, 아래 참고) → DDL 이벤트를 메타데이터 DB에 기록(state=DETECTED), UI에 경고 표시.
+2. **테이블별 DDL 반영 정책** (`registered_tables.ddl_policy`, 등록 시 선택, 기본 `MANUAL`):
+   - **MANUAL(확인 후, 기본)**: 감지되면 지금까지처럼 대기(DETECTED) — 사용자가 DDL 이력에서
+     아래 3액션 중 하나를 고른다.
+     1. **적용 후 재개**(`POST /{id}/approve`) — 타깃에 DDL 적용 → 해당 테이블 jdbc-sink 재개
+        (상태가 FAILED면 restartFailed, PAUSED면 resume — 승인 한 번으로 재개까지 끝난다).
+     2. **건너뛰고 재개**(`POST /{id}/skip`, 신규) — 타깃엔 DDL을 적용하지 않고 sink를
+        이어간다. ddl_text에서 단순 단일 ADD/DROP COLUMN을 인식하면(그 외 형태는 인식하지
+        않음, docs/internals.md) 컬럼 매핑을 조정한 뒤 재배포한다: ADD COLUMN이면 새 컬럼을
+        **비활성 매핑**으로 추가해 jdbc-sink `field.include.list`에서 제외하고, DROP
+        COLUMN이면 기존 매핑을 비활성화한다(**타깃 컬럼 자체는 남긴다**). changelog(Iceberg)는
+        스키마 진화를 자동 수용해 컬럼을 그대로 받으므로, 나중에 매핑을 활성화하면 소급 재처리
+        없이 반영을 시작할 수 있다. 인식하지 못하는 형태(타입 변경·다중 컬럼 등)는 매핑을
+        건드리지 않고 재개만 하며 "타깃 타입 불일치 가능"을 note에 남긴다.
+     3. **정지 유지**(`POST /{id}/reject`) — 기존과 동일: jdbc-sink pause, changelog는 계속
+        축적. 사용자가 수동으로 타깃 스키마를 정리한 뒤 재개.
+   - **AUTO(자동)**: 감지 직후 backend가 위 "적용 후 재개"와 같은 실행 경로를 즉시 자동으로
+     탄다 — 사용자 개입 없이 타깃에 DDL을 적용하고 sink를 재개한다. 성공하면 상태
+     `AUTO_APPLIED` + 운영 이벤트(INFO) + 경고 센터 INFO 알림(`ddl-auto-applied:<eventId>`,
+     ack 가능 — 기존 PAUSED와 같은 INFO/ack 구조 재사용). **실행 가능한 초안이 없거나(스키마
+     지문 경로의 타입 변경) 실행이 실패하면 MANUAL로 폴백**한다 — 상태를 DETECTED로
+     유지/승격해 사람이 보게 하고, note에 사유를 남기고 WARN 운영 이벤트를 기록한다(조용히
+     묻히지 않게 하기 위함).
+3. **재개**: 정리 후 재개 → 토픽 복원 → 밀린 것부터 캐치업. **정지 중에도 changelog는
+   Kafka·Iceberg에 계속 축적**되므로 데이터 유실 없음. retention 초과분은 6.3절 재발행
+   경로로 캐치업.
 
 - Iceberg sink 쪽은 스키마 진화를 자동 수용 (ADD COLUMN 등) — 정지 대상은 jdbc-sink만.
 - **감지 입구는 소스 타입별 (2026-09-07 결정, 구현 완료).** schema change topic을 발행하는 소스
@@ -267,7 +290,11 @@ Snowflake·Databricks에는 Debezium JDBC sink의 dialect가 없고, 행 단위 
   핸들러가 Schema 객체 동일성으로 같은 지문을 인라인 비교하며, 지문 저장·diff·승인·타깃 적용은
   두 모드가 공유한다.
 - UI 표현은 ui-reference v3의 DDL 타임라인 패턴 (ADD=자동 승인 후보, DROP/TRUNCATE=승인 대기).
-  origin 배지로 SCHEMA_TOPIC/FINGERPRINT를 구분 표시한다.
+  origin 배지로 SCHEMA_TOPIC/FINGERPRINT를 구분 표시하고, 정책 배지(자동/확인 후)를 함께
+  보여준다. state는 SNAPSHOT·DETECTED·APPROVED·REJECTED·**AUTO_APPLIED**(신규)·
+  **SKIPPED**(신규)·IGNORED — 대시보드 "미승인 DDL"·rail 배지는 지금처럼 DETECTED만 센다
+  (AUTO_APPLIED·SKIPPED는 이미 처리된 건이라 승인 대기가 아니다). 테이블별 정책 자체의
+  변경 UI는 등록 이후 범위 밖(테이블 모니터링 drawer에 표시만 한다) — 바꾸려면 재등록.
 
 ## 8. 테이블 등록과 사전 점검
 
@@ -329,6 +356,26 @@ DDL 승인이 존재하지 않는 스키마를 찾아 실패한다. 사용자가
   생성·PUT 권한과 웨어하우스 사용 권한, Databricks는 UC Volume 쓰기(또는 고객 버킷 접근)와
   SQL warehouse 실행 권한. 저장소 프로파일과는 무관(6.5). 통과 시 최종·스테이징 테이블 DDL
   초안을 보여주고 승인 후 생성.
+
+**타깃 테이블 생성 옵션 (2026-09-27 확정 — 종전 "사전 수동 생성 전제"의 후속):** 등록
+위저드가 타깃 테이블 단계에서 "기존 테이블 선택(현행)" 또는 "**소스 스키마로 새로
+생성**"을 선택하게 한다.
+
+- 생성 선택 시 `POST /api/registrations/target-table/preview`(소스 컬럼·PK →
+  타깃 DbType 타입 매핑으로 `CREATE TABLE` 초안 조립, PK 포함)로 초안을 보여주고 사용자
+  확인을 받은 뒤, 등록 요청에 `createTarget: true`를 실어 보내면 등록 트랜잭션 안에서
+  같은 함수로 다시 조립해 실행한다(미리보기와 실행이 항상 일치 — 클라이언트가 보낸 DDL
+  문자열은 신뢰하지 않는다). 타깃에 이미 같은 이름의 테이블이 있으면 등록을 거부한다(400).
+- 식별자 폴딩·따옴표 규칙은 `SchemaFingerprint.draftDdl`(7절 ADD/DROP COLUMN 초안)과
+  동일 — 타깃이 Oracle이면 대문자, 그 외는 원문. 컬럼 매핑은 소스와 동일명 전부 활성으로
+  고정된다(존재하지 않던 테이블이라 리네임·비활성 선택의 의미가 없다).
+- 타입 매핑은 `SchemaFingerprint`에 있는 소형 매핑을 확장해 **한 곳에서** 관리한다
+  (Oracle↔PostgreSQL 양방향 최소: 문자·정수·소수·날짜/시각·boolean·bytea/RAW). 매핑 불가
+  타입이 하나라도 있으면 초안 생성 자체를 거부하고 사유(컬럼명·원본 타입)를 보여준다 —
+  나중에 컬럼을 못 맞추는 반쪽 테이블을 남기지 않기 위함. Oracle·PostgreSQL 외 조합(MySQL
+  등)은 이 옵션을 지원하지 않는다(8절 지원 DB 범위와 동일).
+- 상세 구현 판단(길이·정밀도를 다루지 않는 이유 등): docs/internals.md "타깃 테이블 생성
+  옵션 — 타입 매핑" 절.
 
 ## 9. 리스크와 검증 순서
 

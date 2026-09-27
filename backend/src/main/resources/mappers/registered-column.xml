@@ -26,4 +26,9 @@
         VALUES (#{tableId}, #{m.targetColumn}, #{m.sourceExpr}, #{m.enabled})
     </insert>
 
+    <update id="updateEnabled">
+        UPDATE registered_columns SET enabled = #{enabled}
+         WHERE registered_table_id = #{tableId} AND UPPER(target_column) = UPPER(#{targetColumn})
+    </update>
+
 </mapper>

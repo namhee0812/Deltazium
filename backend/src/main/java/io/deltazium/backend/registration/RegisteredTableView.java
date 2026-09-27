@@ -15,6 +15,9 @@ package io.deltazium.backend.registration;
  * --------------------------------------------------
  * 26. 09. 07.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | ddlPolicy 추가 — 테이블 모니터링 drawer가 정책(자동/확인 후)을
+ * |                          | 표시한다(architecture.md 7절, 변경 UI는 이번 범위 밖)
+ * --------------------------------------------------
  */
 public record RegisteredTableView(
         Long id,
@@ -25,11 +28,12 @@ public record RegisteredTableView(
         String targetSchemaName,
         String targetTableName,
         String snapshotMode,
-        String sourceTopicPrefix) {
+        String sourceTopicPrefix,
+        String ddlPolicy) {
 
     public static RegisteredTableView of(RegisteredTable t, String sourceTopicPrefix) {
         return new RegisteredTableView(t.id(), t.schemaName(), t.tableName(), t.sourceConnectionId(),
                 t.targetConnectionId(), t.targetSchemaName(), t.targetTableName(), t.snapshotMode(),
-                sourceTopicPrefix);
+                sourceTopicPrefix, t.ddlPolicy());
     }
 }

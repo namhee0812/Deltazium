@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -14,6 +15,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.deltazium.backend.dictionary.TableColumn;
+import io.deltazium.backend.registry.DbType;
 
 /**
  * 파일명 : SchemaFingerprint.java
@@ -30,6 +33,12 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 09. 07.       | 최남희  | 최초 생성 — 다중 소스·다중 타깃 ② 스키마 지문 감지
+ * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | mapNativeType·draftCreateTable 추가 — 등록 시 "소스 스키마로
+ * |                          | 새로 생성" 옵션(architecture.md 8절) 전용 CREATE TABLE 초안.
+ * |                          | 위 mapType()과 입력 도메인이 다르지만(Debezium 논리 타입 vs 소스
+ * |                          | 딕셔너리 원문 타입) "타입 매핑은 한 곳에서" 원칙에 따라 같은
+ * |                          | 클래스에 둔다(RegistrationService.previewTargetTableDdl 전용)
  * --------------------------------------------------
  */
 public final class SchemaFingerprint {
@@ -257,5 +266,89 @@ public final class SchemaFingerprint {
                  "io.debezium.time.ZonedTimestamp" -> "TIMESTAMP";
             default -> null; // struct/array, org.apache.kafka.connect.data.Decimal(정밀도 필요) 등 — 확인 필요
         };
+    }
+
+    /**
+     * 소스 네이티브 컬럼 타입(TableColumn.dataType, 딕셔너리 원문) → 타깃 DbType 컬럼 타입
+     * 매핑 — 등록 시 "소스 스키마로 새로 생성" 옵션 전용(architecture.md 8절). Oracle↔PostgreSQL
+     * 양방향 최소 지원(문자·정수·소수·날짜/시각·boolean·bytea/RAW). 길이·정밀도는 다루지 않는다
+     * (TableColumn이 원문 타입 이름만 가지고 있어 자리수 정보가 없음 — 2026-09-27 최소 구현,
+     * 필요해지면 TableColumn에 length/precision을 추가하는 확장으로 다룬다). 매핑 불가·미지원
+     * DB 조합(Oracle·PostgreSQL 외)은 null — 호출측이 초안 생성을 거부한다.
+     */
+    public static String mapNativeType(DbType sourceType, DbType targetType, String sourceColumnType) {
+        if (sourceType == targetType) {
+            return sourceColumnType; // 동종 DB — 원문 타입 그대로 유효
+        }
+        String base = sourceColumnType == null ? "" : sourceColumnType.trim().toUpperCase(Locale.ROOT);
+        int paren = base.indexOf('(');
+        if (paren >= 0) {
+            base = base.substring(0, paren).trim();
+        }
+        if (sourceType == DbType.ORACLE && targetType == DbType.POSTGRESQL) {
+            return switch (base) {
+                case "VARCHAR2", "NVARCHAR2", "CHAR", "NCHAR", "CLOB", "NCLOB" -> "TEXT";
+                case "NUMBER", "FLOAT" -> "NUMERIC";
+                case "BINARY_FLOAT", "BINARY_DOUBLE" -> "DOUBLE PRECISION";
+                case "DATE", "TIMESTAMP" -> "TIMESTAMP";
+                case "RAW", "LONG RAW", "BLOB" -> "BYTEA";
+                default -> null;
+            };
+        }
+        if (sourceType == DbType.POSTGRESQL && targetType == DbType.ORACLE) {
+            return switch (base) {
+                case "CHARACTER VARYING", "VARCHAR", "CHARACTER", "CHAR", "TEXT" -> "VARCHAR2(4000)";
+                case "NUMERIC", "DECIMAL" -> "NUMBER";
+                case "SMALLINT" -> "NUMBER(5)";
+                case "INTEGER" -> "NUMBER(10)";
+                case "BIGINT" -> "NUMBER(19)";
+                case "REAL", "DOUBLE PRECISION" -> "BINARY_DOUBLE";
+                case "BOOLEAN" -> "NUMBER(1)";
+                case "DATE" -> "DATE";
+                case "TIMESTAMP WITHOUT TIME ZONE", "TIMESTAMP WITH TIME ZONE" -> "TIMESTAMP";
+                case "BYTEA" -> "RAW(2000)";
+                default -> null;
+            };
+        }
+        return null; // Oracle·PostgreSQL 외 조합은 미지원(8절 지원 DB 범위)
+    }
+
+    /**
+     * 등록 시 "소스 스키마로 새로 생성" 초안 — 소스 컬럼·PK를 타깃 DDL 타입으로 매핑해
+     * CREATE TABLE 문 하나를 만든다(architecture.md 8절). 식별자 폴딩·따옴표 규칙은 draftDdl과
+     * 동일(호출측이 이미 DbType.foldIdentifier로 접은 스키마·테이블명을 넘긴다는 전제 — 타깃이
+     * Oracle이면 컬럼명도 대문자, 그 외는 원문). 매핑 불가 컬럼이 하나라도 있으면 부분 생성
+     * 대신 초안 자체를 거부한다(8절: "매핑 불가 타입은 초안 생성 거부 + 사유") — 나중에 컬럼을
+     * 못 맞추는 반쪽 테이블을 남기지 않기 위함. PK가 없으면 등록 규칙(공통 PK 필수)과 모순이라
+     * 마찬가지로 거부한다.
+     */
+    public static String draftCreateTable(DbType sourceType, DbType targetType, String targetSchema,
+                                          String targetTable, List<TableColumn> sourceColumns) {
+        boolean oracle = targetType == DbType.ORACLE;
+        List<String> colDefs = new ArrayList<>();
+        List<String> pkCols = new ArrayList<>();
+        List<String> unsupported = new ArrayList<>();
+        for (TableColumn c : sourceColumns) {
+            String mapped = mapNativeType(sourceType, targetType, c.dataType());
+            if (mapped == null) {
+                unsupported.add(c.name() + "(" + c.dataType() + ")");
+                continue;
+            }
+            String col = oracle ? c.name().toUpperCase(Locale.ROOT) : c.name();
+            colDefs.add("\"%s\" %s".formatted(col, mapped));
+            if (c.pk()) {
+                pkCols.add("\"%s\"".formatted(col));
+            }
+        }
+        if (!unsupported.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "타깃 타입 매핑이 없는 컬럼이 있어 생성 초안을 만들 수 없다: " + String.join(", ", unsupported));
+        }
+        if (pkCols.isEmpty()) {
+            throw new IllegalArgumentException("PK 컬럼이 없어 생성 초안을 만들 수 없다 (등록 규칙상 PK 필수)");
+        }
+        String qualified = "\"%s\".\"%s\"".formatted(targetSchema, targetTable);
+        return "CREATE TABLE %s (%s, PRIMARY KEY (%s))"
+                .formatted(qualified, String.join(", ", colDefs), String.join(", ", pkCols));
     }
 }

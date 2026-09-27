@@ -2,6 +2,7 @@ package io.deltazium.backend.ddl;
 
 import io.deltazium.backend.connect.ConnectClient;
 import io.deltazium.backend.registration.RegisteredTableRepository;
+import io.deltazium.backend.registration.RegistrationService;
 import io.deltazium.backend.registry.DbConnection;
 import io.deltazium.backend.registry.DbConnectionRepository;
 import io.deltazium.backend.registry.DbConnectionService;
@@ -19,7 +20,11 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 @MybatisTest
@@ -42,6 +47,11 @@ import static org.mockito.Mockito.verify;
  * --------------------------------------------------
  * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: jdbc-sink 커넥터명에 소스 topicPrefix가
  * |                          | 들어가 소스 커넥션에 명시 topicPrefix("dz")를 지정
+ * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | 테이블별 DDL 반영 정책(architecture.md 7절 개정) 테스트 추가 —
+ * |                          | 승인의 sink 재개 통합, skip(ADD/DROP 인식·재배포 mock 검증,
+ * |                          | 인식 불가 폴백), AUTO 정책 자동 적용 성공·실패 폴백·초안 없음 폴백.
+ * |                          | RegistrationService는 mock(skip의 매핑·재배포 호출 검증 전용)
  * --------------------------------------------------
  */
 class DdlEventServiceTest {
@@ -67,15 +77,20 @@ class DdlEventServiceTest {
     @MockitoBean
     OracleConnectionTester tester;
 
+    @MockitoBean
+    RegistrationService registration;
+
+    long sourceId;
     long targetId;
+    long tableId;
 
     @BeforeEach
     void setUp() {
-        long sourceId = connections.create(new DbConnection(null, "dz", "ORACLE", "SOURCE",
+        sourceId = connections.create(new DbConnection(null, "dz", "ORACLE", "SOURCE",
                 "h", 1521, "SRC", "u", "p", "dz")).id();
         targetId = connections.create(new DbConnection(null, "t", "ORACLE", "TARGET",
                 "h", 1521, "TGT", "u", "p")).id();
-        registrations.insert("CDC", "AUTO_100", sourceId, targetId, null, null);
+        tableId = registrations.insert("CDC", "AUTO_100", sourceId, targetId, null, null);
         events.insertIfAbsent(10, 1L, "100", "CDC", "AUTO_100",
                 "ALTER TABLE CDC.AUTO_100 ADD (X NUMBER)", "DETECTED");
     }
@@ -91,6 +106,52 @@ class DdlEventServiceTest {
         verify(executor).execute(any(), eq("ALTER TABLE CDC.AUTO_100 ADD (X NUMBER)"));
         assertThat(result.state()).isEqualTo("APPROVED");
         assertThat(result.decidedAt()).isNotNull();
+    }
+
+    @Test
+    void 승인하면_해당_테이블_jdbc_sink를_재개한다() {
+        service.approve(eventId());
+
+        verify(connect).resumeAfterDdl("dz-jdbc-sink-dz-cdc_auto_100");
+    }
+
+    @Test
+    void 건너뛰면_ADD_COLUMN을_비활성_매핑으로_추가하고_재배포한_뒤_재개한다() {
+        DdlEvent result = service.skip(eventId());
+
+        verify(registration).addDisabledColumn(tableId, "X");
+        verify(connect).resumeAfterDdl("dz-jdbc-sink-dz-cdc_auto_100");
+        assertThat(result.state()).isEqualTo("SKIPPED");
+        assertThat(result.note()).contains("X");
+    }
+
+    @Test
+    void 건너뛰면_DROP_COLUMN_매핑을_비활성화하고_재배포한_뒤_재개한다() {
+        events.insertIfAbsent(11, 2L, "101", "CDC", "AUTO_100",
+                "ALTER TABLE CDC.AUTO_100 DROP (Y)", "DETECTED");
+        long dropId = events.findAll().stream()
+                .filter(e -> e.ddlText().contains("DROP")).findFirst().orElseThrow().id();
+
+        DdlEvent result = service.skip(dropId);
+
+        verify(registration).disableColumn(tableId, "Y");
+        assertThat(result.state()).isEqualTo("SKIPPED");
+    }
+
+    @Test
+    void 인식_불가_DDL은_건너뛰면_재배포_없이_재개만_한다() {
+        events.insertIfAbsent(12, 3L, "102", "CDC", "AUTO_100",
+                "ALTER TABLE CDC.AUTO_100 MODIFY (X NUMBER)", "DETECTED");
+        long modifyId = events.findAll().stream()
+                .filter(e -> e.ddlText().contains("MODIFY")).findFirst().orElseThrow().id();
+
+        DdlEvent result = service.skip(modifyId);
+
+        verify(registration, never()).addDisabledColumn(anyLong(), anyString());
+        verify(registration, never()).disableColumn(anyLong(), anyString());
+        verify(connect).resumeAfterDdl("dz-jdbc-sink-dz-cdc_auto_100");
+        assertThat(result.state()).isEqualTo("SKIPPED");
+        assertThat(result.note()).contains("재개만");
     }
 
     @Test
@@ -156,5 +217,64 @@ class DdlEventServiceTest {
         assertThat(events.insertIfAbsent(10, 1L, "100", "CDC", "AUTO_100", "dup", "DETECTED"))
                 .isFalse();
         assertThat(events.findAll()).hasSize(1);
+    }
+
+    // ── DDL 반영 정책 = AUTO (handleNewEvent, architecture.md 7절 개정) ──
+
+    private long autoTableId() {
+        return registrations.insert("CDC", "AUTO_200", sourceId, targetId, null, null, "INITIAL", "AUTO");
+    }
+
+    @Test
+    void AUTO_정책이면_감지_즉시_타깃에_적용하고_재개한_뒤_AUTO_APPLIED가_된다() {
+        autoTableId();
+        long id = events.insertFingerprintEvent(System.currentTimeMillis(), "CDC", "AUTO_200",
+                "ALTER TABLE \"TGT\".\"AUTO_200\" ADD (\"X\" NUMBER)", "DETECTED", "추가: X(int32)");
+
+        service.handleNewEvent(id);
+
+        verify(executor).execute(any(), eq("ALTER TABLE \"TGT\".\"AUTO_200\" ADD (\"X\" NUMBER)"));
+        verify(connect).resumeAfterDdl("dz-jdbc-sink-dz-cdc_auto_200");
+        DdlEvent result = events.findById(id).orElseThrow();
+        assertThat(result.state()).isEqualTo("AUTO_APPLIED");
+    }
+
+    @Test
+    void AUTO_정책이어도_MANUAL_테이블은_건드리지_않는다() {
+        // setUp의 CDC.AUTO_100은 기본 MANUAL 정책 — DETECTED 그대로 남아야 한다.
+        service.handleNewEvent(eventId());
+
+        verify(executor, never()).execute(any(), anyString());
+        assertThat(events.findById(eventId()).orElseThrow().state()).isEqualTo("DETECTED");
+    }
+
+    @Test
+    void AUTO_정책에서_실행_실패시_MANUAL로_폴백한다() {
+        autoTableId();
+        doThrow(new IllegalStateException("타깃 접속 실패")).when(executor).execute(any(), anyString());
+        long id = events.insertFingerprintEvent(System.currentTimeMillis(), "CDC", "AUTO_200",
+                "ALTER TABLE \"TGT\".\"AUTO_200\" ADD (\"X\" NUMBER)", "DETECTED", "추가: X(int32)");
+
+        service.handleNewEvent(id);
+
+        verify(connect, never()).resumeAfterDdl(anyString());
+        DdlEvent result = events.findById(id).orElseThrow();
+        assertThat(result.state()).isEqualTo("DETECTED");
+        assertThat(result.note()).contains("자동 적용 실패");
+    }
+
+    @Test
+    void AUTO_정책에서_지문_경로_타입변경으로_초안이_없으면_확인후로_전환한다() {
+        autoTableId();
+        long id = events.insertFingerprintEvent(System.currentTimeMillis(), "CDC", "AUTO_200",
+                "", "SNAPSHOT", "타입변경: X int32→int64 (자동 초안 없음 — 확인 후 수동 DDL 필요)");
+
+        service.handleNewEvent(id);
+
+        verify(executor, never()).execute(any(), anyString());
+        verify(connect, never()).resumeAfterDdl(anyString());
+        DdlEvent result = events.findById(id).orElseThrow();
+        assertThat(result.state()).isEqualTo("DETECTED");
+        assertThat(result.note()).contains("확인 후 처리 필요");
     }
 }

@@ -18,6 +18,9 @@ import org.apache.ibatis.annotations.Param;
  * --------------------------------------------------
  * 26. 07. 29.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | updateEnabled 추가 — DDL 건너뛰기(SKIPPED, architecture.md 7절)의
+ * |                          | DROP COLUMN 처리에서 기존 매핑을 비활성화할 때 쓴다
+ * --------------------------------------------------
  */
 @Mapper
 public interface RegisteredColumnRepository {
@@ -33,4 +36,8 @@ public interface RegisteredColumnRepository {
             insertOne(registeredTableId, m);
         }
     }
+
+    /** 대소문자 무관 컬럼명 매칭(소스 DB에 따라 대문자·소문자가 섞일 수 있다). */
+    void updateEnabled(@Param("tableId") long registeredTableId, @Param("targetColumn") String targetColumn,
+                       @Param("enabled") boolean enabled);
 }

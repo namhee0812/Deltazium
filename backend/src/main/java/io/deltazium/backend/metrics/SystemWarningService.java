@@ -13,6 +13,8 @@ import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import io.deltazium.backend.connect.ConnectClient;
+import io.deltazium.backend.ddl.DdlEvent;
+import io.deltazium.backend.ddl.DdlEventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -47,6 +49,10 @@ import org.springframework.stereotype.Service;
  * |                          | knownInfoIds가 비어 있어 판정이 무력화되던 결함 수정. ack 여부도
  * |                          | 같은 observed 스냅숏에서 계산해 조회당 findAll() 중복 호출 제거
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | checkAutoAppliedDdl 추가 — DDL 반영 정책=자동으로 감지 즉시
+ * |                          | 타깃에 적용된 건을 INFO(ack 가능, ddl-auto-applied:eventId)로
+ * |                          | 노출한다(architecture.md 7절 개정, 기존 PAUSED와 같은 INFO/ack 구조 재사용)
+ * --------------------------------------------------
  */
 @Service
 public class SystemWarningService {
@@ -62,6 +68,7 @@ public class SystemWarningService {
     private final KafkaMetricsService metrics;
     private final ConnectClient connect;
     private final SystemWarningAckRepository acks;
+    private final DdlEventRepository ddlEvents;
     private final String runtimeDir;
     private final int diskWarnPct;
     /** 경고 id → 최초 감지 시각(epoch ms). 해소되면 다음 조회에서 제거한다. backend 재기동 시 리셋됨.
@@ -71,11 +78,13 @@ public class SystemWarningService {
     public SystemWarningService(KafkaMetricsService metrics,
                                 ConnectClient connect,
                                 SystemWarningAckRepository acks,
+                                DdlEventRepository ddlEvents,
                                 @Value("${deltazium.runtime-dir}") String runtimeDir,
                                 @Value("${deltazium.disk-warn-pct:85}") int diskWarnPct) {
         this.metrics = metrics;
         this.connect = connect;
         this.acks = acks;
+        this.ddlEvents = ddlEvents;
         this.runtimeDir = runtimeDir;
         this.diskWarnPct = diskWarnPct;
     }
@@ -127,6 +136,11 @@ public class SystemWarningService {
             checkConnectors(active, now);
         } catch (Exception e) {
             log.warn("커넥터 상태 점검 실패", e);
+        }
+        try {
+            checkAutoAppliedDdl(active, now);
+        } catch (Exception e) {
+            log.warn("DDL 자동 적용 이력 조회 실패", e);
         }
 
         // 이번 조회에서 잡히지 않은(해소된) 경고는 firstSeen에서 제거 — 재발 시 sinceMs가 새로 시작되게.
@@ -243,6 +257,22 @@ public class SystemWarningService {
                 addWarning(out, now, "connector-no-tasks:" + name, "WARN",
                         name + " task 없음", "커넥터는 RUNNING이지만 task가 0개 — 소비 정지 상태");
             }
+        }
+    }
+
+    /**
+     * DDL 반영 정책=자동(architecture.md 7절)으로 감지 즉시 타깃에 적용된 건 — 사람이 누른
+     * 승인이 아니므로 "확인 후 없앨 수 있는 알림"(INFO)으로 노출한다. AUTO_APPLIED 이벤트는
+     * 상태가 다시 바뀌지 않는 한 계속 조회되므로, 재개된 PAUSED와 달리 ack 이후엔 영구히
+     * 사라진다(같은 이벤트가 또 자동 적용될 일이 없다는 전제, 7절).
+     */
+    private void checkAutoAppliedDdl(List<SystemWarning> out, long now) {
+        for (DdlEvent e : ddlEvents.findByState("AUTO_APPLIED")) {
+            String schema = e.schemaName() == null ? "-" : e.schemaName();
+            String table = e.tableName() == null ? "-" : e.tableName();
+            addWarning(out, now, "ddl-auto-applied:" + e.id(), "INFO",
+                    schema + "." + table + " DDL 자동 적용",
+                    e.note() != null ? e.note() : "DDL 반영 정책=자동 — 감지 즉시 타깃에 적용됨");
         }
     }
 

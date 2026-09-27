@@ -8,6 +8,7 @@ import java.util.NoSuchElementException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.deltazium.backend.connect.ConnectClient;
+import io.deltazium.backend.ddl.DdlEventRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -35,6 +36,9 @@ import static org.mockito.Mockito.when;
  * --------------------------------------------------
  * 26. 09. 23.       | 최남희  | 리뷰 반영: 재기동 직후(knownInfoIds 초기화) 해소 판정이 무력화되던
  * |                          | 결함의 회귀 테스트 추가
+ * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | SystemWarningService 생성자에 DdlEventRepository 추가(DDL 반영
+ * |                          | 정책=자동 이력 조회) — mock으로 빈 목록 스텁, 기존 생성자 호출부 갱신
  * --------------------------------------------------
  */
 class SystemWarningServiceTest {
@@ -73,6 +77,7 @@ class SystemWarningServiceTest {
     private ConnectClient connect;
     private KafkaMetricsService metrics;
     private FakeAckRepository acks;
+    private DdlEventRepository ddlEvents;
     private SystemWarningService service;
 
     @BeforeEach
@@ -80,9 +85,12 @@ class SystemWarningServiceTest {
         connect = mock(ConnectClient.class);
         metrics = mock(KafkaMetricsService.class);
         acks = new FakeAckRepository();
+        ddlEvents = mock(DdlEventRepository.class);
         when(metrics.reachable()).thenReturn(true);
+        when(ddlEvents.findByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(List.of());
         // diskWarnPct=101 — 테스트 환경 실제 디스크 사용률과 무관하게 디스크 경고가 섞이지 않게 한다.
-        service = new SystemWarningService(metrics, connect, acks, System.getProperty("java.io.tmpdir"), 101);
+        service = new SystemWarningService(metrics, connect, acks, ddlEvents,
+                System.getProperty("java.io.tmpdir"), 101);
     }
 
     private void stubConnector(String name, String state) throws Exception {
@@ -156,7 +164,8 @@ class SystemWarningServiceTest {
         assertThat(service.warnings().warnings()).isEmpty();
 
         SystemWarningService restarted =
-                new SystemWarningService(metrics, connect, acks, System.getProperty("java.io.tmpdir"), 101);
+                new SystemWarningService(metrics, connect, acks, ddlEvents,
+                        System.getProperty("java.io.tmpdir"), 101);
         assertThat(restarted.warnings().warnings()).isEmpty();
     }
 
@@ -179,7 +188,8 @@ class SystemWarningServiceTest {
         // 공유하는 새 서비스 인스턴스로 바로 넘어간다.
         stubConnector(name, "RUNNING");
         SystemWarningService restarted =
-                new SystemWarningService(metrics, connect, acks, System.getProperty("java.io.tmpdir"), 101);
+                new SystemWarningService(metrics, connect, acks, ddlEvents,
+                        System.getProperty("java.io.tmpdir"), 101);
 
         // 재기동 후 첫 조회 — 해소된 관측 행이 DB 기준 판정으로 지워져야 한다.
         assertThat(restarted.warnings().warnings()).isEmpty();
