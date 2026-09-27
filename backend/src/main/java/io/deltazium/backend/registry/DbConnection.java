@@ -20,6 +20,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  * |                          | dbType별로 분기(PostgreSQL 지원). 기존 9-인자 생성자는 유지해
  * |                          | topicPrefix=null(TARGET 등)로 호출부 하위 호환
  * --------------------------------------------------
+ * 26. 09. 28.       | 최남희  | SingleStore 타깃 지원 — jdbcUrl()에 SINGLESTORE 분기 추가
+ * |                          | (mysql-connector-j, useSSL=false&allowPublicKeyRetrieval=true —
+ * |                          | 개발 환경 실측 기준, architecture.md 8절)
+ * --------------------------------------------------
  */
 public record DbConnection(
         Long id,
@@ -48,6 +52,8 @@ public record DbConnection(
         DbType type = DbType.find(dbType).orElse(DbType.ORACLE);
         return switch (type) {
             case POSTGRESQL -> "jdbc:postgresql://%s:%d/%s".formatted(host, port, databaseName);
+            case SINGLESTORE -> "jdbc:mysql://%s:%d/%s?useSSL=false&allowPublicKeyRetrieval=true"
+                    .formatted(host, port, databaseName);
             default -> "jdbc:oracle:thin:@//%s:%d/%s".formatted(host, port, databaseName);
         };
     }

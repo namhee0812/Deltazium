@@ -23,6 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * --------------------------------------------------
  * 26. 09. 23.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 28.       | 최남희  | SingleStore rowCountOnly 케이스 추가 — 타깃 전용이라 동종 조합이
+ * |                          | 없고 항상 행수만 비교(docs/internals.md)
+ * --------------------------------------------------
  */
 class ChecksumSqlTest {
 
@@ -100,6 +103,10 @@ class ChecksumSqlTest {
                 .isEqualTo("SELECT COUNT(*) FROM CDC.T1");
         assertThat(ChecksumSql.rowCountOnly(DbType.POSTGRESQL, "cdc", "t1"))
                 .isEqualTo("SELECT COUNT(*) FROM \"cdc\".\"t1\"");
+        // SingleStore는 foldIdentifier가 원문을 유지하므로 저장값 자체가 실제 카탈로그
+        // 대소문자와 같다 — unquoted로 참조해도 그대로 일치한다(Oracle과 같은 분기).
+        assertThat(ChecksumSql.rowCountOnly(DbType.SINGLESTORE, "cdc", "MixedCase"))
+                .isEqualTo("SELECT COUNT(*) FROM cdc.MixedCase");
     }
 
     private static int countOccurrences(String haystack, String needle) {

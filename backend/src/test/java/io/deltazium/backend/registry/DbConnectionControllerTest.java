@@ -32,6 +32,9 @@ import org.springframework.http.MediaType;
  * --------------------------------------------------
  * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: PostgreSQL 활성화로 지원 목록이 2종이 됨
  * --------------------------------------------------
+ * 26. 09. 28.       | 최남희  | SingleStore(타깃 전용) 추가로 지원 목록이 3종이 됨 —
+ * |                          | sourceCapable 필드 검증 추가
+ * --------------------------------------------------
  */
 @WebMvcTest(DbConnectionController.class)
 class DbConnectionControllerTest {
@@ -57,11 +60,16 @@ class DbConnectionControllerTest {
     void db_types는_지원_목록만_내려준다() throws Exception {
         mvc.perform(get("/api/connections/db-types"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$.length()").value(3))
                 .andExpect(jsonPath("$[0].code").value("ORACLE"))
                 .andExpect(jsonPath("$[0].label").value("Oracle"))
+                .andExpect(jsonPath("$[0].sourceCapable").value(true))
                 .andExpect(jsonPath("$[1].code").value("POSTGRESQL"))
-                .andExpect(jsonPath("$[1].label").value("PostgreSQL"));
+                .andExpect(jsonPath("$[1].label").value("PostgreSQL"))
+                .andExpect(jsonPath("$[1].sourceCapable").value(true))
+                .andExpect(jsonPath("$[2].code").value("SINGLESTORE"))
+                .andExpect(jsonPath("$[2].label").value("SingleStore"))
+                .andExpect(jsonPath("$[2].sourceCapable").value(false));
     }
 
     @Test

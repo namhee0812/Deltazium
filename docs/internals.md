@@ -255,11 +255,38 @@ previewTargetTableDdl`(미리보기 API)과 `createTargetTable`(등록 트랜잭
 Oracle `NUMBER(1)`)만 명시 지원한다 — 정보가 있는 쪽만 정확하게 다루고 없는 쪽은 안전한
 상위 타입으로 근사한다.
 
-**Oracle·PostgreSQL 외 조합은 아예 null.** `mapNativeType`은 두 DbType 모두 Oracle 또는
-PostgreSQL일 때만 매핑 테이블을 타고, 그 외(MySQL 포함)는 무조건 null(초안 생성 거부)을
-돌려준다 — MySQL은 아직 `DbType.supported()=false`라 등록 자체가 안 되므로 실질적으로
-도달하지 않는 경로지만, 나중에 지원 DB가 늘어날 때 "지원하지 않는 조합은 명시적으로
-거부"가 기본값이 되도록 이렇게 짰다(암묵적 매핑 실패보다 안전).
+**Oracle·PostgreSQL·SingleStore 외 조합은 아예 null.** `mapNativeType`은 지원하는 조합
+(Oracle↔PostgreSQL 양방향, Oracle→SingleStore, PostgreSQL→SingleStore)일 때만 매핑
+테이블을 타고, 그 외(MySQL 포함, SingleStore→그 무엇도 — SingleStore는 소스가 될 수 없다)는
+무조건 null(초안 생성 거부)을 돌려준다 — MySQL은 아직 `DbType.supported()=false`라 등록
+자체가 안 되므로 실질적으로 도달하지 않는 경로지만, 나중에 지원 DB가 늘어날 때 "지원하지
+않는 조합은 명시적으로 거부"가 기본값이 되도록 이렇게 짰다(암묵적 매핑 실패보다 안전).
+
+**SingleStore 타깃 타입 매핑 (2026-09-28 추가).** Oracle·PostgreSQL→SingleStore 두 방향만
+있다(SingleStore는 `sourceCapable=false`라 반대 방향은 존재하지 않는다). 대응은 문자→TEXT,
+정수→PostgreSQL 쪽은 원래 정밀도를 아는 만큼 정확히(SMALLINT/INT/BIGINT), Oracle NUMBER는
+정밀도 정보가 없어(위 "Oracle NUMBER의 boolean 판별 불가" 절과 같은 제약) 소수와 함께
+DECIMAL로 근사, boolean→BOOL(MySQL 계열의 TINYINT(1) 별칭), 날짜/시각→DATE 또는
+DATETIME(6), 바이너리→BLOB이다.
+
+- **DECIMAL은 반드시 정밀도를 명시한다 — `DECIMAL(65,30)`.** Oracle NUMBER·PostgreSQL
+  NUMERIC은 정밀도를 생략하면 "무제한"으로 동작해 기존 Oracle↔PostgreSQL 매핑은 `NUMERIC`·
+  `NUMBER`를 그냥 썼다. MySQL/SingleStore의 DECIMAL은 다르다 — 정밀도를 생략하면
+  `DECIMAL(10,0)`으로 묵시 적용되어 소수부가 그대로 잘린다(예: 123.45 → 123). 이건 단순히
+  "부정확"이 아니라 조용한 데이터 손상이라 더 위험하다고 판단해, MySQL/SingleStore 문서의
+  정밀도 상한(precision 65, scale 30)을 그대로 명시했다 — 표현 가능한 값의 폭을 최대로
+  넓혀 절삭 위험을 실질적으로 없앤다. 트레이드오프: 매우 큰 자릿수·초정밀 계산 컬럼은 여전히
+  이론상 잘릴 수 있다(65자리 초과) — 이 프로젝트 규모에서는 발생 가능성을 낮게 보고
+  받아들였다.
+- **날짜 매핑이 소스에 따라 갈린다.** Oracle DATE는 시각 성분을 포함한다(ANSI DATE와
+  다름) — Oracle→SingleStore는 DATE·TIMESTAMP 둘 다 DATETIME(6)으로 매핑한다(기존
+  Oracle→PostgreSQL의 "DATE·TIMESTAMP 모두 TIMESTAMP" 판단과 같은 근거). PostgreSQL
+  DATE는 진짜로 시각이 없으므로 PostgreSQL→SingleStore는 DATE를 DATE로, TIMESTAMP류만
+  DATETIME(6)으로 매핑한다.
+- **바이너리는 길이 대신 BLOB.** PostgreSQL→Oracle 방향은 `BYTEA`를 `RAW(2000)`(길이
+  고정)으로 매핑했지만, SingleStore는 길이를 안 줘도 되는 BLOB이 있어 Oracle
+  RAW/LONG RAW/BLOB·PostgreSQL BYTEA 전부 BLOB 하나로 통일했다 — RAW(2000)식 임의
+  상한을 따로 정할 필요가 없어 더 단순하고 절삭 위험도 없다.
 
 ## changelog `_pos` 위치 컬럼 도입 (다중 소스·다중 타깃 ①, 2026-09-05)
 
@@ -649,6 +676,42 @@ unquoted 폴딩 규칙 하나로만 저장하므로 애초에 표현할 수 없�
 검증(2026-09-23 결함 1 수정으로 해소 — 아래 "정합 검증 체크섬" 절), mixed-case 타깃·타입
 매핑 경계·복구 재발행의 PG 타깃 실측.
 
+### SingleStore 타깃 — foldIdentifier 3분기·quoteIdentifier 도입 (2026-09-28)
+
+SingleStore 타깃 지원(architecture.md 2.2·8절)을 추가하며 `foldIdentifier`가 기존
+Oracle/PostgreSQL 이분법에서 3분기로 바뀌었다. **SingleStore는 식별자 대소문자를 그대로
+보존한다** — Oracle(대문자로 접음)·PostgreSQL(소문자로 접음) 중 어느 쪽도 아니다. 실측
+근거(9.0.44, 개발 컨테이너 `singlestoredb-dev`): `CREATE TABLE MixedCase(...)` 후
+`SELECT * FROM mixedcase`가 1146(테이블 없음) 오류 — unquoted 참조도 대소문자를 구분한다.
+그래서 SingleStore의 `foldIdentifier`는 원문을 그대로 돌려준다 — "접는 형태"가 없는 DB라
+원문 유지가 유일하게 항상 일치하는 선택이다(등록 시 사용자가 입력한 스키마·테이블명 그대로
+저장되고, 그 값 그대로 실제 카탈로그 식별자와 일치한다).
+
+**quoteIdentifier 신설 — 인용 부호가 DbType마다 다르다는 걸 처음으로 코드에 반영.**
+D1(위 절)을 고칠 때는 Oracle·PostgreSQL 둘 다 표준 SQL 큰따옴표를 쓰므로 하드코딩된
+`"\"%s\""`로 충분했다. SingleStore(MySQL 계열)는 식별자 구분자로 백틱(`` ` ``)을 쓰고
+큰따옴표는 기본적으로 문자열 리터럴로 해석된다 — 기존 하드코딩을 그대로 두면 SingleStore
+타깃의 DDL 승인 초안(`SchemaFingerprint.draftDdl`)·타깃 테이블 생성 초안
+(`draftCreateTable`)이 전부 문법 오류가 난다. `DbType.quoteIdentifier(String)`을 추가해
+두 함수 모두 이 메서드로 인용하도록 바꿨다 — Oracle·PostgreSQL은 큰따옴표, SingleStore는
+백틱. 점검한 범위: `SchemaFingerprint`(초안 조립)와 `ChecksumSql`(체크섬 SQL) 두 곳뿐이다.
+`DdlEventService.rewriteForTarget`(schema change topic origin DDL의 타깃 치환)는 **의도적으로
+손대지 않았다** — 그 경로는 소스가 캡처한 원문 DDL 텍스트(현재는 Oracle 소스 전용, DDL
+자체가 Oracle 방언)를 거의 그대로 실행하는 구조라, 인용 부호만 백틱으로 바꿔도 Oracle
+전용 절(`ADD (col TYPE)` 괄호 문법, `NUMBER`/`VARCHAR2` 같은 타입 키워드)은 여전히
+SingleStore에서 무효 DDL이 된다 — 부분 수정이 "고쳐졌다"는 착각을 줄 위험이 더 크다고
+판단했다. Oracle 소스 + SingleStore 타깃 조합에서 schema change topic 기반 DDL 승인은
+현재 범위 밖(결정 필요 — 메인 세션 판단, `docs/TODO.md`에 등재).
+
+**타깃 컬럼 조회는 SourceDictionary 인터페이스를 "반쪽만" 구현.** `SingleStoreDictionaryService`
+는 `listColumns`만 `information_schema.columns`+`table_constraints`로 실제 조회하고(
+PostgresDictionaryService와 같은 패턴), 나머지 소스 전용 메서드(`listTables`·
+`databaseChecks`·`privilegeChecks`·`captureSetupLabel`·`captureSetupPreview`·
+`applyCaptureSetup`)는 전부 `UnsupportedOperationException`을 던진다. SingleStore는
+`DbType.sourceCapable()=false`라 `DbConnectionService.validate()`가 SOURCE 등록 자체를
+막으므로 이 메서드들은 실제로 호출될 일이 없지만, 인터페이스 계약상 구현은 필요하다 —
+빈 목록을 조용히 돌려주면 "왜 캡처가 안 되지"로 오해를 낳을 수 있어 즉시 실패를 택했다.
+
 ## 정합 검증 체크섬 — 컬럼별 해시·PG 지원·이종 DB 제한 (2026-09-23, 결함 1)
 
 `RecoveryService.verify()`(architecture.md 6.4절 ⑤)의 체크섬 SQL이 전 컬럼을
@@ -695,6 +758,18 @@ DbType이면 각자의 DbType에 맞는 속성으로 접속한다.
 **범위 밖으로 남긴 것** (`docs/TODO.md` ② 기록): 이종 DB 조합의 체크섬(알고리즘을
 맞추는 것 자체가 별도 설계 — 예: 양쪽 다 md5 기반으로 통일하려면 Oracle 쪽도 `DBMS_CRYPTO`
 등을 검토해야 한다).
+
+**SingleStore 전용 체크섬 SQL을 추가하지 않은 이유 (2026-09-28).** 동종 조합 체크섬은
+`sourceType == targetType`일 때만 계산된다(위). SingleStore는 `DbType.sourceCapable=false`
+— 소스로 등록될 수 없으므로 `sourceType`이 SINGLESTORE인 경우 자체가 없고, 따라서
+`SingleStore↔SingleStore` 조합은 애초에 존재하지 않는다. SingleStore가 타깃이면 소스는
+항상 Oracle 아니면 PostgreSQL이라 매번 이종 조합이고, 기존 "이종은 행수만 비교" 규칙이
+자동으로 적용된다 — `RecoveryService.verify()`·`ChecksumSql`을 SingleStore 대응으로
+고칠 필요가 없었다(변경한 곳은 `countAndChecksum`의 JDBC 접속 타임아웃 속성 분기뿐 — 이건
+어느 SQL을 쓰든 필요한 연결 설정이라 별개). `ChecksumSql.fromClause`의 "PostgreSQL 외"
+분기(unquoted 참조)도 SingleStore를 그대로 커버한다 — SingleStore는 폴딩이 원문 유지라
+저장값 자체가 실제 카탈로그 대소문자와 같고, unquoted 참조도 그 대소문자로 해석되므로
+Oracle과 같은 처리로 충분하다.
 
 ## PG 복제 슬롯 정리 — 등록 해제 시점 자동 정리 (2026-09-23, 결함 2)
 

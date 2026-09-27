@@ -29,6 +29,9 @@ import org.springframework.stereotype.Service;
  * |                          | 고정, 수정 시 기존 값 유지. 소스마다 손으로 준 prefix(dz·pg·nhtest)가
  * |                          | 규칙 없이 흩어져 토픽 이름 기준이 안 보이던 문제. 검증 정규식은 유지.
  * --------------------------------------------------
+ * 26. 09. 28.       | 최남희  | SingleStore(타깃 전용) 지원 — role=SOURCE인데 dbType이
+ * |                          | sourceCapable=false면 거부(architecture.md 8절)
+ * --------------------------------------------------
  */
 @Service
 public class DbConnectionService {
@@ -139,6 +142,9 @@ public class DbConnectionService {
                     .orElseThrow(() -> new IllegalArgumentException("알 수 없는 DB 종류: " + c.dbType()));
             if (!type.supported()) {
                 throw new IllegalArgumentException("아직 지원하지 않는 DB 종류: " + type.label());
+            }
+            if ("SOURCE".equals(c.role()) && !type.sourceCapable()) {
+                throw new IllegalArgumentException(type.label() + "는 소스로 지원하지 않는다(타깃 전용)");
             }
         }
         if (c.name() == null || c.name().isBlank()) {

@@ -29,6 +29,9 @@ import org.springframework.web.bind.annotation.RestController;
  * --------------------------------------------------
  * 26. 07. 25.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 09. 28.       | 최남희  | db-types 응답에 sourceCapable 추가(SingleStore 타깃 전용 —
+ * |                          | UI가 role=SOURCE 선택 시 목록에서 걸러낸다, architecture.md 8절)
+ * --------------------------------------------------
  */
 @RestController
 @RequestMapping("/api/connections")
@@ -45,11 +48,13 @@ public class DbConnectionController {
         return service.list();
     }
 
-    /** UI 선택 목록용 — 지원되는 DB 종류만 (현재 Oracle뿐, 확장 시 DbType에 추가). */
+    /** UI 선택 목록용 — 지원되는 DB 종류 전부(확장 시 DbType에 추가). sourceCapable=false인
+     * 종류(예: SingleStore)는 타깃 전용이라 UI가 role=SOURCE일 때 걸러낸다. */
     @GetMapping("/db-types")
-    public List<Map<String, String>> dbTypes() {
+    public List<Map<String, Object>> dbTypes() {
         return DbType.supportedTypes().stream()
-                .map(t -> Map.of("code", t.name(), "label", t.label()))
+                .map(t -> Map.<String, Object>of(
+                        "code", t.name(), "label", t.label(), "sourceCapable", t.sourceCapable()))
                 .toList();
     }
 

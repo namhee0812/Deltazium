@@ -12,6 +12,8 @@
  * --------------------------------------------------
  * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: topicPrefix 추가(SOURCE 전용, 소스 식별자)
  * --------------------------------------------------
+ * 26. 09. 28.       | 최남희  | SingleStore(타깃 전용) 지원 — DbTypeOption에 sourceCapable 추가
+ * --------------------------------------------------
  */
 export interface DbConnection {
   id: number | null
@@ -30,6 +32,8 @@ export interface DbConnection {
 export interface DbTypeOption {
   code: string
   label: string
+  /** false면 SOURCE 역할로 선택할 수 없다(예: SingleStore — 타깃 전용, architecture.md 8절). */
+  sourceCapable: boolean
 }
 
 export interface TestResult {

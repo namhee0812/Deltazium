@@ -32,6 +32,11 @@ import io.deltazium.backend.registry.DbType;
  * |                          | 기존 RecoveryService.checksumSql(Oracle 전용, 컬럼당 미해시)을
  * |                          | 분리·대체
  * --------------------------------------------------
+ * 26. 09. 28.       | 최남희  | SingleStore 타깃 지원 — 전용 체크섬 SQL은 추가하지 않는다
+ * |                          | (SingleStore는 소스 불가라 동종 조합이 존재하지 않고 항상
+ * |                          | rowCountOnly 경로를 탄다, docs/internals.md 참고). fromClause의
+ * |                          | 기존 "PostgreSQL 외" 분기가 SingleStore도 그대로 커버함을 명시.
+ * --------------------------------------------------
  */
 final class ChecksumSql {
 
@@ -83,7 +88,10 @@ final class ChecksumSql {
     }
 
     /** 타깃 저장값은 이미 DbType.foldIdentifier로 폴딩돼 있다(architecture.md 8절) —
-     * PostgreSQL은 폴딩된(소문자) 원문을 그대로 따옴표로 감싸면 실제 카탈로그 식별자와 일치한다. */
+     * PostgreSQL은 폴딩된(소문자) 원문을 그대로 따옴표로 감싸면 실제 카탈로그 식별자와 일치한다.
+     * Oracle·SingleStore는 unquoted로 참조한다 — Oracle은 unquoted가 대문자로 다시 접히고
+     * 저장값도 이미 대문자라 일치하며, SingleStore는 폴딩이 원문 유지라 저장값 자체가 실제
+     * 카탈로그 대소문자와 같아 unquoted로도 그대로 일치한다(2026-09-28). */
     private static String fromClause(DbType type, String schema, String table) {
         return type == DbType.POSTGRESQL
                 ? "\"" + schema + "\".\"" + table + "\""
