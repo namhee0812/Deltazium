@@ -46,6 +46,10 @@ import org.springframework.stereotype.Component;
  * |                          | 속할 때만 지원(여러 소스가 섞이면 거부). 여러 소스를 함께
  * |                          | 재스냅샷하는 시나리오는 범위 밖(TODO ② — 결정 필요 시 재논의)
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | SnapshotNotificationPoller가 소스별(topicPrefix별) 상태로
+ * |                          | 바뀌며 markRequested()·status() 호출에 run.source.topicPrefix()를
+ * |                          | 넘기도록 수정 — 다른 소스의 스냅샷과 상태가 섞이던 잠재 결함 제거
+ * --------------------------------------------------
  */
 @Component
 public class ResnapshotOrchestrator {
@@ -157,7 +161,7 @@ public class ResnapshotOrchestrator {
         DbConnection target = connections.get(tables.get(0).targetConnectionId());
         Run run = new Run(m, truncateTarget, tables, target, source);
         current.set(run);
-        notifications.markRequested();
+        notifications.markRequested(source.topicPrefix());
         events.record("-", run.sourceConnector, "RESNAPSHOT_REQUESTED", "INFO",
                 ("INITIAL".equals(m) ? "초기 스냅샷부터 재기동" : "현재 시점(no_data)부터 재기동")
                         + (truncateTarget ? " + 타깃 truncate 재구축" : ""), null);
@@ -175,7 +179,7 @@ public class ResnapshotOrchestrator {
                 r.decision, r.holdReason, r.tableCounts,
                 r.tables.stream().map(t -> "TRUNCATE TABLE " + t.targetQualified() + ";")
                         .collect(Collectors.toList()),
-                r.error, r.startedAtMs, r.finishedAtMs, notifications.status());
+                r.error, r.startedAtMs, r.finishedAtMs, notifications.status(r.source.topicPrefix()));
     }
 
     /** ③ 실행 주체 선택 — SYSTEM(시스템이 실행) | MANUAL(직접/DBA 실행 대기). */
@@ -368,7 +372,7 @@ public class ResnapshotOrchestrator {
     private void awaitSnapshotDone(Run run) throws InterruptedException {
         long deadline = System.currentTimeMillis() + 1_800_000;
         while (System.currentTimeMillis() < deadline) {
-            String snapPhase = notifications.status().phase();
+            String snapPhase = notifications.status(run.source.topicPrefix()).phase();
             if ("NO_DATA".equals(run.mode)) {
                 // no_data는 스냅샷 notification이 없다 — source RUNNING이면 곧 go-live
                 if (isSourceHealthy(run.sourceConnector)) {

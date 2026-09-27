@@ -51,6 +51,11 @@
  * |                          | 지표 매칭 키를 schema.table → 토픽으로 교체(소스가 다른 동명 테이블
  * |                          | 이 지표를 뒤섞던 잠재 결함)
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | LAG_WARN 하드코딩을 GET /api/system/settings(useSettings)로 교체.
+ * |                          | metrics.snapshotInProgress가 true인 행은 lag 경고 버킷·색상에서
+ * |                          | 제외하고 상태 칩을 중립색 "스냅샷 적재 중"으로 표시 — 스냅샷이
+ * |                          | 쏟아내는 대량 이벤트를 장애로 오인하지 않도록(docs/internals.md)
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -79,6 +84,7 @@ import { StatusPill } from '@/components/ui/status-pill'
 import type { StatusPillVariant } from '@/components/ui/status-pill'
 import { api } from '@/lib/api'
 import type { DbConnection } from '@/features/connections/types'
+import { useSettings } from '@/features/system/useSettings'
 import { causeLine, effectiveState, traceOf } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
 import { ResnapshotDialog, RUN_ACTIVE } from './ResnapshotDialog'
@@ -96,6 +102,8 @@ interface TableMetrics {
   eventsPerSec: number
   jdbcLag: number
   icebergLag: number
+  /** 소스가 초기/재스냅샷 진행 중이면 true — lag 경고 대상에서 제외한다(backend 산출) */
+  snapshotInProgress: boolean
 }
 
 interface RegisteredTable {
@@ -149,9 +157,6 @@ const COLOR = {
   dim: 'var(--chart-dim)',
 }
 
-/** JDBC lag 경고 임계(레코드 건수) — 대시보드 KPI와 동일 기준 */
-const LAG_WARN = 100
-
 type Bucket = 'all' | 'ok' | 'warn' | 'stop'
 
 const BUCKET_LABEL: Record<Bucket, string> = { all: '전체', ok: '정상', warn: '경고', stop: '정지' }
@@ -168,6 +173,7 @@ const jdbcSinkName = (m: { sourceTopicPrefix: string | null; schemaName: string;
 const METRICS_ERROR_PREFIX = '지표 조회 실패(Kafka 연결 확인): '
 
 export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
+  const { lagWarnRecords: LAG_WARN } = useSettings()
   const [registered, setRegistered] = useState<RegisteredTable[] | null>(null)
   const [metrics, setMetrics] = useState<TableMetrics[] | null>(null)
   const [connectors, setConnectors] = useState<ConnectorStates>({})
@@ -280,11 +286,13 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     return info ? effectiveState(info) : 'N/A'
   }
 
-  /** 필터 칩 버킷 판정 — 정지(PAUSED·미배포) / 경고(FAILED·lag 초과) / 정상 */
+  /** 필터 칩 버킷 판정 — 정지(PAUSED·미배포) / 경고(FAILED·lag 초과) / 정상.
+   *  스냅샷 적재 중(snapshotInProgress)엔 lag가 커도 경고로 보지 않는다(docs/internals.md). */
   const bucketOf = (r: Row): Bucket => {
     const st = sinkState(r)
     if (st === 'PAUSED' || st === 'N/A') return 'stop'
     if (st === 'FAILED') return 'warn'
+    if (r.metrics?.snapshotInProgress) return 'ok'
     if ((r.metrics?.jdbcLag ?? 0) > LAG_WARN) return 'warn'
     return 'ok'
   }
@@ -357,8 +365,12 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       header: '상태',
       cell: ({ row }) => {
         const b = bucketOf(row.original)
-        const variant: StatusPillVariant = b === 'ok' ? 'ok' : b === 'warn' ? 'warn' : 'stop'
         const st = sinkState(row.original)
+        // 스냅샷 적재 중은 경고가 아니라 중립 상태 — lag 배지와 같은 이유로 별도 pill
+        if (row.original.metrics?.snapshotInProgress && st !== 'FAILED' && st !== 'PAUSED' && st !== 'N/A') {
+          return <StatusPill variant="brand">스냅샷 적재 중</StatusPill>
+        }
+        const variant: StatusPillVariant = b === 'ok' ? 'ok' : b === 'warn' ? 'warn' : 'stop'
         const label =
           st === 'FAILED' ? '장애' : st === 'PAUSED' ? '정지' : st === 'N/A' ? '미배포' : 'streaming'
         return <StatusPill variant={variant}>{label}</StatusPill>
@@ -410,10 +422,11 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         const m = row.original.metrics
         if (!m) return <span className="block text-right font-mono text-ink-3">—</span>
         const paused = sinkState(row.original) === 'PAUSED'
+        const warn = !m.snapshotInProgress && m.jdbcLag > LAG_WARN
         return (
           <span
             className={`block text-right font-mono text-[12px] ${
-              paused ? 'text-ink-3' : m.jdbcLag > LAG_WARN ? 'font-semibold text-warn' : 'text-foreground'
+              paused ? 'text-ink-3' : warn ? 'font-semibold text-warn' : 'text-foreground'
             }`}
           >
             {m.jdbcLag.toLocaleString()}

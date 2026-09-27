@@ -26,6 +26,9 @@ import org.springframework.web.bind.annotation.RestController;
  * 26. 08. 05.       | 최남희  | 오케스트레이터 개편 — run/decision/recheck/cancel 추가,
  * |                          | 동기 resnapshot 호출을 상태 기계 시작으로 교체
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | GET /snapshot 응답을 SnapshotStatus에서 SnapshotOverview로 —
+ * |                          | 기존 필드는 유지하고 소스별(topicPrefix별) phase(bySource)를 추가
+ * --------------------------------------------------
  */
 @RestController
 @RequestMapping("/api/capture")
@@ -83,9 +86,9 @@ public class CaptureController {
         return ResponseEntity.accepted().build();
     }
 
-    /** 스냅샷 진행 상태 (Debezium notification 실측). */
+    /** 스냅샷 진행 상태 (Debezium notification 실측) — 소스가 여럿이면 bySource로 구분한다. */
     @GetMapping("/snapshot")
-    public SnapshotNotificationPoller.SnapshotStatus snapshot() {
-        return notifications.status();
+    public SnapshotNotificationPoller.SnapshotOverview snapshot() {
+        return notifications.overview();
     }
 }

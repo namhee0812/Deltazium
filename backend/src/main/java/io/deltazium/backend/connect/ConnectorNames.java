@@ -19,6 +19,10 @@ package io.deltazium.backend.connect;
  * |                          | RegistrationService의 문자열 리터럴에서 이곳으로 이관 —
  * |                          | 등록 해제 시 PostgresReplicationCleaner가 같은 이름 규칙을 쓴다
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | notificationTopic()의 역변환(topicPrefixFromNotificationTopic)
+ * |                          | 추가 — SnapshotNotificationPoller가 소스별(topicPrefix별) 스냅샷
+ * |                          | phase를 구분하는 데 필요(재스냅샷 중 lag 경고 제외, docs/internals.md)
+ * --------------------------------------------------
  */
 public final class ConnectorNames {
 
@@ -63,6 +67,15 @@ public final class ConnectorNames {
     /** Debezium notification 토픽 — <prefix>-notifications. */
     public static String notificationTopic(String topicPrefix) {
         return topicPrefix + "-notifications";
+    }
+
+    /** notificationTopic()의 역변환 — 실제 수신한 토픽명에서 topicPrefix를 복원한다
+     *  (소스별 notification 상태 구분용). 규칙에 맞지 않으면 입력을 그대로 돌려준다. */
+    public static String topicPrefixFromNotificationTopic(String notificationTopic) {
+        String suffix = "-notifications";
+        return notificationTopic != null && notificationTopic.endsWith(suffix)
+                ? notificationTopic.substring(0, notificationTopic.length() - suffix.length())
+                : notificationTopic;
     }
 
     /** PostgreSQL 소스 논리 복제 슬롯 — dz_<prefix> (source-postgresql.json.tmpl과 동일 규칙). */

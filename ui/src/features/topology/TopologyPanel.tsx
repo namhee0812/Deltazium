@@ -58,6 +58,12 @@
  * |                          | 카드가 옆 카드 높이에 맞춰 늘어나며 생기던 공백을 LineChart의
  * |                          | fill 모드로 제거
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | LAG_WARN 하드코딩을 GET /api/system/settings(useSettings)로 교체.
+ * |                          | 재스냅샷 중인 소스의 테이블은 /api/metrics/tables의
+ * |                          | snapshotInProgress로 최대 lag·주의 필요 집계에서 제외 —
+ * |                          | 스냅샷이 쏟아내는 대량 이벤트가 장애처럼 보이던 문제(2026-09-23
+ * |                          | NH_CDC_TEST_5 lag 430K 실측) 수정. 제외분은 최대 lag 카드 부제에 표기
+ * --------------------------------------------------
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
@@ -73,6 +79,7 @@ import { Segmented } from '@/components/ui/segmented'
 import { StatusPill } from '@/components/ui/status-pill'
 import type { StatusPillVariant } from '@/components/ui/status-pill'
 import { DbVendorLogo } from '@/components/DbVendorLogo'
+import { useSettings } from '@/features/system/useSettings'
 import { TopologySvg } from './TopologySvg'
 import type { NodeStatus, TopoData, TopoNode } from './TopologySvg'
 
@@ -106,6 +113,8 @@ interface TableMetrics {
   schemaName: string
   tableName: string
   jdbcLag: number
+  /** 소스가 초기/재스냅샷 진행 중이면 true — lag 경고 대상에서 제외한다(backend 산출) */
+  snapshotInProgress: boolean
 }
 
 interface DdlEvent {
@@ -115,9 +124,6 @@ interface DdlEvent {
   ddlText: string
   state: 'SNAPSHOT' | 'DETECTED' | 'APPROVED' | 'REJECTED' | 'IGNORED'
 }
-
-/** JDBC lag 경고 임계(레코드 건수) — 테이블 모니터링 화면과 동일 기준 */
-const LAG_WARN = 100
 
 /** 주기 선택 — 해상도와 조회 폭을 묶는다 (Grafana식 기간별 자동 해상도) */
 const PERIODS = [
@@ -199,6 +205,7 @@ export function TopologyPanel({
    * (App이 소유한 탭 상태를 바꾼다) */
   onNavigate?: (view: 'tables' | 'ddl' | 'connections' | 'events') => void
 }) {
+  const { lagWarnRecords: LAG_WARN } = useSettings()
   const [connectors, setConnectors] = useState<ConnectorStates | null>(null)
   const [connections, setConnections] = useState<DbConnection[]>([])
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
@@ -453,7 +460,13 @@ export function TopologyPanel({
     ? Math.max(...completeBuckets.map((r) => r.publish)) / bucketSec
     : null
 
+  // 재스냅샷 중인 소스의 테이블은 lag 경고 대상에서 제외한다 — 스냅샷이 토픽에 쏟아내는
+  // 대량 이벤트로 sink lag가 당연히 커지는 것을 장애처럼 보여주지 않기 위함(backend가 소스별
+  // phase로 판정한 snapshotInProgress, docs/internals.md). 스냅샷 COMPLETED 이후 sink가
+  // 뒤따라잡는 구간(lag는 크지만 감소 중)은 실제 밀림이라 계속 경고 대상이다.
+  const snapshottingCount = (tableMetrics ?? []).filter((m) => m.snapshotInProgress).length
   const lagRows = (tableMetrics ?? [])
+    .filter((m) => !m.snapshotInProgress)
     .map((m) => ({ name: `${m.schemaName}.${m.tableName}`, lag: m.jdbcLag }))
     .sort((a, b) => b.lag - a.lag)
   const maxLag = lagRows[0] ?? null
@@ -561,7 +574,8 @@ export function TopologyPanel({
               <div className="text-[11.5px] text-ink-3">
                 {tableMetrics === null
                   ? '지표 조회 실패'
-                  : `경고 임계 ${LAG_WARN}건 · ${lagRows.length}개 테이블 중 ${overLagCount}개 초과`}
+                  : `경고 임계 ${LAG_WARN}건 · ${lagRows.length}개 테이블 중 ${overLagCount}개 초과`
+                    + (snapshottingCount > 0 ? ` · 스냅샷 중 ${snapshottingCount}개 제외` : '')}
               </div>
             </CardContent>
           </Card>

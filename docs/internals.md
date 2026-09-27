@@ -45,6 +45,30 @@ Kafka Connect는 connector 상태와 task 상태가 분리돼 있고, **가장 �
 - **함정 (실제로 밟음)**: 워커가 JSON converter `schemas.enabled=true`라 notification도
   `{schema, payload}` 봉투에 싸여 온다 — payload 언랩 필수. 또 구독 후에 생성되는
   토픽의 첫 메시지를 놓치지 않으려면 `auto.offset.reset=earliest`.
+- 상태는 소스(topicPrefix)별로 독립이다(`Map<topicPrefix, SnapshotStatus>`, 2026-09-27) —
+  notification 토픽이 `<prefix>-notifications`라 수신 토픽명에서 prefix를 복원해
+  (`ConnectorNames.topicPrefixFromNotificationTopic`) 그 소스만의 상태를 갱신한다. 이전엔
+  전역 하나였어서, 소스가 여럿이면 서로 다른 소스의 스냅샷 진행이 상태를 덮어썼다.
+
+## 재스냅샷 중 lag 경고 제외 (2026-09-27)
+
+초기/재스냅샷은 소스가 전체 테이블을 한 번에 토픽으로 쏟아내는 작업이라, 그동안 sink
+consumer lag가 수십만 건까지 정상적으로 치솟는다(실측: `NH_CDC_TEST_5` lag 430K,
+2026-09-23). 이걸 그대로 "경고 임계 초과"로 보여주면 매 재스냅샷마다 장애처럼 보인다.
+
+- **판정**: `KafkaMetricsService.isSnapshotting(topicPrefix)` — 그 테이블 소스의
+  `SnapshotNotificationPoller.status(prefix).phase()`가 `REQUESTED`·`IN_PROGRESS`면 제외
+  대상. `/api/metrics/tables` 응답의 `TableMetrics.snapshotInProgress`로 그대로 실어
+  UI가 `/api/registrations`와 조인하지 않아도 되게 했다.
+- **COMPLETED 이후는 의도적으로 제외하지 않는다.** 스냅샷이 끝나고 sink가 쌓인 이벤트를
+  따라잡는 구간(lag는 크지만 감소 추세)은 실제로 밀려 있는 것이므로 경고가 맞다 — 별도
+  유예 기간을 두지 않고 phase가 COMPLETED로 바뀌는 즉시 일반 lag 경고 로직으로 복귀한다.
+- UI(대시보드 "최대 lag" 카드·"주의 필요" 목록·테이블 모니터링 그리드)는 이 필드로 해당
+  테이블을 경고 집계에서 빼고, 테이블 그리드 행에는 경고색이 아닌 중립(`brand`) pill
+  "스냅샷 적재 중"을 보여준다.
+- lag 경고 임계 자체(`deltazium.lag-warn-records`, 기본 100)는 이 스냅샷 판정과 별개로
+  UI 두 곳(대시보드·테이블 그리드)이 하드코딩하던 것을 `GET /api/system/settings`로
+  통일했다(`ui/src/features/system/useSettings.ts`, 조회 실패 시 100 폴백).
 
 ## 모니터링 파이프라인
 

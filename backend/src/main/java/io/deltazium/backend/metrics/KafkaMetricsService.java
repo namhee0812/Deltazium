@@ -8,6 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
+import io.deltazium.backend.capture.SnapshotNotificationPoller;
 import io.deltazium.backend.connect.ConnectorNames;
 import io.deltazium.backend.registration.RegisteredTable;
 import io.deltazium.backend.registration.RegisteredTableRepository;
@@ -50,6 +51,12 @@ import org.springframework.stereotype.Service;
  * |                          | 소스 커넥션에서 topicPrefix를 조회해 토픽·consumer group을 계산
  * |                          | (DbConnectionService 의존 추가, ConnectorNames로 이름 조립)
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | TableMetrics에 snapshotInProgress 추가 — 그 테이블 소스가
+ * |                          | 초기/재스냅샷 중(SnapshotNotificationPoller phase REQUESTED·
+ * |                          | IN_PROGRESS)이면 true. UI가 스냅샷 중 lag 폭증을 장애 경고로
+ * |                          | 오인하지 않도록 하기 위함(docs/internals.md) — 두 API를 UI에서
+ * |                          | 조인하지 않게 여기서 계산해 함께 내려준다
+ * --------------------------------------------------
  */
 @Service
 public class KafkaMetricsService {
@@ -61,7 +68,8 @@ public class KafkaMetricsService {
             long totalEvents,
             double eventsPerSec,
             long jdbcLag,
-            long icebergLag) {
+            long icebergLag,
+            boolean snapshotInProgress) {
     }
 
     private record Sample(long endOffset, long atMillis) {
@@ -69,15 +77,18 @@ public class KafkaMetricsService {
 
     private final RegisteredTableRepository registrations;
     private final DbConnectionService connections;
+    private final SnapshotNotificationPoller notifications;
     private final String bootstrap;
     private final Map<String, Sample> lastSamples = new ConcurrentHashMap<>();
     private volatile AdminClient admin;
 
     public KafkaMetricsService(RegisteredTableRepository registrations,
                                DbConnectionService connections,
+                               SnapshotNotificationPoller notifications,
                                @Value("${deltazium.kafka.bootstrap}") String bootstrap) {
         this.registrations = registrations;
         this.connections = connections;
+        this.notifications = notifications;
         this.bootstrap = bootstrap;
     }
 
@@ -123,7 +134,8 @@ public class KafkaMetricsService {
                 return new TableMetrics(
                         t.schemaName(), t.tableName(), topic, end, rate,
                         lag(end, jdbcByTable.get(t.id()).get(tp)),
-                        lag(end, icebergByPrefix.get(prefix).get(tp)));
+                        lag(end, icebergByPrefix.get(prefix).get(tp)),
+                        isSnapshotting(prefix));
             }).toList();
         } catch (ExecutionException e) {
             throw new MetricsException("Kafka 지표 조회 실패: " + e.getCause().getMessage(), e);
@@ -131,6 +143,17 @@ public class KafkaMetricsService {
             Thread.currentThread().interrupt();
             throw new MetricsException("Kafka 지표 조회 중단", e);
         }
+    }
+
+    /** 그 소스가 초기/재스냅샷 진행 중인지 — COMPLETED·ABORTED·NONE은 false다. COMPLETED 이후
+     *  sink가 따라잡는 구간(lag는 크지만 감소 중)은 의도적으로 제외하지 않는다 — 실제 밀림이므로
+     *  경고가 맞다(docs/internals.md "재스냅샷 중 lag 경고 제외" 판단 근거). */
+    boolean isSnapshotting(String topicPrefix) {
+        if (topicPrefix == null) {
+            return false;
+        }
+        String phase = notifications.status(topicPrefix).phase();
+        return "REQUESTED".equals(phase) || "IN_PROGRESS".equals(phase);
     }
 
     private String topic(RegisteredTable t, Map<Long, String> prefixByConn) {

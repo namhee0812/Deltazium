@@ -115,6 +115,11 @@ warning 색.
 
 - 임계값은 `backend/src/main/resources/application.yml`의 `deltazium.runtime-dir` /
   `deltazium.disk-warn-pct`에서 조정한다.
+- 테이블 lag 경고(대시보드 KPI "최대 lag" 카드·테이블 모니터링 그리드의 lag 배지·상태 칩)는
+  이 경고 센터(`SystemWarningService`)와는 별개 화면 판정이다 — 임계는
+  `deltazium.lag-warn-records`(기본 100건)이며 `GET /api/system/settings`로 UI에 내려간다.
+  소스가 초기/재스냅샷 진행 중인 동안은 그 소스 테이블을 이 경고에서 제외하고 "스냅샷 적재
+  중"으로 표시한다(내부 판단: docs/internals.md).
 - **API 호출 자체가 실패하면(backend가 완전히 다운)** 경고 칩을 CRITICAL로 띄우고
   "backend 연결 끊김" 경고를 클라이언트에서 합성해 보여준다 — 배너를 숨기지 않고
   오히려 가장 눈에 띄게 뜨는 것이 이 기능의 핵심이다(26-08-20 "겉보기엔 정상, 실은

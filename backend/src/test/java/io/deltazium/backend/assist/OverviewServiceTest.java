@@ -36,6 +36,9 @@ import static org.mockito.Mockito.when;
  * 26. 08. 11.       | 최남희  | 최초 생성
  * 26. 08. 11.       | 최남희  | other 버킷 검증 추가 (STOPPED·미지 상태)
  * --------------------------------------------------
+ * 26. 09. 27.       | 최남희  | TableMetrics에 snapshotInProgress 필드 추가로 생성자 인자
+ * |                          | 변경 — 이 테스트와 무관해 전부 false로 고정
+ * --------------------------------------------------
  */
 class OverviewServiceTest {
 
@@ -151,9 +154,9 @@ class OverviewServiceTest {
     void 임계_이하_테이블은_lagging에_없고_total에는_잡힌다() {
         when(metrics.tableMetrics()).thenReturn(List.of(
                 new KafkaMetricsService.TableMetrics("CDC", "OK_TBL", "dz.CDC.OK_TBL",
-                        10_000, 1.0, 1000, 999),          // 정확히 임계 = 초과 아님
+                        10_000, 1.0, 1000, 999, false),          // 정확히 임계 = 초과 아님
                 new KafkaMetricsService.TableMetrics("CDC", "SLOW_TBL", "dz.CDC.SLOW_TBL",
-                        10_000, 1.0, 1001, 0)));           // jdbcLag만 초과
+                        10_000, 1.0, 1001, 0, false)));           // jdbcLag만 초과
 
         OverviewResult.TablesSection t = service.overview().tables();
 
@@ -225,7 +228,7 @@ class OverviewServiceTest {
     void Connect가_죽어도_나머지_섹션은_정상이고_sources만_UNREACHABLE이다() {
         when(connect.listConnectors()).thenThrow(new RuntimeException("Connection refused"));
         when(metrics.tableMetrics()).thenReturn(List.of(
-                new KafkaMetricsService.TableMetrics("CDC", "T1", "dz.CDC.T1", 10, 0.0, 0, 0)));
+                new KafkaMetricsService.TableMetrics("CDC", "T1", "dz.CDC.T1", 10, 0.0, 0, 0, false)));
 
         OverviewResult result = service.overview();
 
@@ -288,7 +291,7 @@ class OverviewServiceTest {
         List<KafkaMetricsService.TableMetrics> tables = new ArrayList<>();
         for (int i = 0; i < 25; i++) {
             tables.add(new KafkaMetricsService.TableMetrics("CDC", "T" + i, "dz.CDC.T" + i,
-                    10_000, 0.0, 5000, 0));
+                    10_000, 0.0, 5000, 0, false));
         }
         when(metrics.tableMetrics()).thenReturn(tables);
 
