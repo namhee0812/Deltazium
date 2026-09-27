@@ -234,3 +234,18 @@ PGPASSWORD=nhtest psql -h 127.0.0.1 -U nhtest -d source -p 5433 -Atc "select id,
 PGPASSWORD=nhtest psql -h 192.168.4.123 -U nhtest -d target -p 5181 -Atc "select id,order_id,sku,qty from cdc_tmp.items order by id" > /tmp/t.txt
 diff /tmp/s.txt /tmp/t.txt
 ```
+
+## 재검증 (2026-09-27 22:45, feature/recovery-type-hints 병합 c349078 + 보완 6f931fc)
+
+orders(31, `updated_at timestamptz`)를 같은 시나리오로 다시 돌렸다: 타깃 훼손(1·2 DELETE, 4 변조) →
+verify 불일치(53/51) → 구 복구 sink·복구 토픽 정리 → `POST /api/recovery`(2026-09-23 00:00 KST부터,
+autoResume) → 110건 재발행 → 24초 만에 LIVE. 결과:
+
+- **R1 해소**: 복구 토픽 첫 레코드 스키마에 `after.updated_at` = `string` +
+  `name: io.debezium.time.ZonedTimestamp`(힌트 파일 경유), 값 `2026-09-22T00:11:00.000000Z`.
+  recovery-sink apply 성공, verify 53/53 체크섬 일치, 훼손 행 복원(1·2 재생성, 4 원복).
+- **R2 검증**: 재트리거 첫 시도에서 새 결함 — 복구 sink를 막 만든 직후 `resumeAfterDdl`의 status
+  조회가 404(Connect가 status를 아직 안 만듦)로 트리거 500. status 조회를 최대 10초 재시도하도록
+  보완(6f931fc) 후 정상.
+- **R3**: 이번엔 실패 경로가 없어 미발동. 단위 테스트로만 확인된 상태.
+- 복구 후 recovery-sink PAUSED(평시 정지), 라이브 sink RESUMED(go-live).
