@@ -1,0 +1,12 @@
+# GitLab CI — 1단계: shell executor 환경 확인용 최소 파이프라인
+stages: [check]
+
+env-check:
+  stage: check
+  tags: [deltazium]          # 이 태그를 가진 러너(nhchoi)에만 배정
+  script:
+    - whoami
+    - pwd
+    - echo "$PATH"
+    - java -version
+    - ./gradlew --version
