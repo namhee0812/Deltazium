@@ -348,6 +348,63 @@ Admin Read & Write) → `deploy/env.local.sh`(git-ignore)에 값 채우기.
   경우(초안 없음·실행 실패)는 확인 후로 자동 전환되고 사유가 카드에 남는다.
 - supplemental logging·GRANT 등 비전파성 DDL은 자동 무시(IGNORED) 처리
 
+## E2E 테스트 (CDC 전 구간)
+
+PostgreSQL 소스 → Kafka → PostgreSQL 타깃(+ Iceberg changelog)을 **실제 기동 중인 스택**
+(backend 8090·Connect·Kafka·PG 5433)에 대해 한 번 돌려 보는 스크립트다 (v1: PG→PG).
+
+```bash
+./deploy/e2e-cdc.sh                 # 실행 (약 2분). 성공하면 만든 객체를 정리, 실패하면 보존
+./deploy/e2e-cdc.sh --cleanup-only  # 이전 실행이 남긴 dze2e* 객체만 정리
+```
+
+- 의존: curl, jq, psql(`deploy/env.sh`의 `DZ_PG_BIN`), `dz_capture` 롤(`pg-source-setup.sh`).
+  접속 정보는 환경변수(`DZE2E_API`·`DZE2E_PG_*`·`DZ_PG_CAPTURE_PASSWORD`)로 바꿀 수 있고
+  비밀번호는 리포에 없다. 단계별 timeout은 `DZE2E_T_<CONNECTOR|SNAPSHOT|APPLY|VERIFY|CHANGELOG>`.
+- 실행마다 소스 연결 이름을 `dze2e<MMDDhhmmss>`로 만든다 — 이름이 곧 topic_prefix 슬러그라
+  커넥터(`dz-*-dze2e…`)·복제 슬롯(`dz_dze2e…`)·Iceberg namespace(`changelog_dze2e…`)가 전부
+  이 접두를 갖는다. 스키마는 `<prefix>_src` / `<prefix>_tgt`.
+
+| 단계 | 사용 API / 수단 | 판정 |
+|---|---|---|
+| 사전 확인 | `GET /api/connections`, psql | backend 응답, `dz_capture` 롤 존재 |
+| 준비 | psql | 소스 테이블(여러 타입 컬럼+PK)·초기 3행, 타깃은 스키마만 |
+| 연결 등록 | `POST /api/connections` ×2 | topicPrefix가 기대 슬러그와 동일 |
+| 사전 점검 | `GET /api/registrations/db-checks·privilege-checks/{srcId}`, `capture-setup/preview·apply` | blocking 항목 전부 ok, REPLICA IDENTITY 적용 |
+| 등록 | `POST /api/registrations` (INITIAL, createTarget=true) | 타깃 테이블은 backend가 소스 스키마로 생성 |
+| 커넥터 대기 | `GET /api/connectors/{name}/status` | source·iceberg·jdbc-sink 모두 RUNNING(FAILED면 즉시 FAIL) |
+| 스냅샷 대기 | `GET /api/capture/snapshot` → bySource[prefix].phase | COMPLETED. 단 poller 제약으로 보조 판정(아래) |
+| 소스 DML | psql | INSERT 3·UPDATE 2·DELETE 1 |
+| 반영 대기 | `GET /api/metrics/tables` polling | totalEvents ≥ 9 이고 jdbcLag = 0 |
+| 정합성 | `POST /api/recovery/verify` | 행수 일치 **and** checksumSupported **and** 체크섬 일치 |
+| changelog | `GET /api/changelog` polling | totalRecords ≥ 스냅샷 r + DML 이벤트 수 |
+
+- changelog는 정확 일치가 아니라 "이상"으로 본다 — 파이프라인이 at-least-once라 재전달 시 같은
+  이벤트가 중복 append될 수 있다(architecture.md 8절). 정확성은 체크섬(PK upsert 멱등)이 보증한다.
+  Iceberg sink가 60초 주기로 commit하므로 이 단계가 가장 오래 걸린다(약 70초).
+- 스냅샷 보조 판정: `SnapshotNotificationPoller`는 backend 기동 시점의 SOURCE 연결 토픽만 구독해
+  E2E가 실행 중 새로 만든 소스는 `bySource`에 나타나지 않는다. 그래서 notification을 먼저 보고,
+  없으면 "타깃 행수·체크섬이 초기 3행과 일치"를 완료로 본다(PASS 메시지에 어느 경로인지 표시).
+
+### 정리 정책 (데이터 삭제 예외 — 사용자 승인)
+
+- 자동 삭제는 **`dze2e` prefix 객체만**: 등록(`DELETE /api/registrations/{id}?dropChangelog=true`)·
+  연결·커넥터 잔재·Kafka 토픽·Connect consumer group·복제 슬롯/publication·Iceberg namespace·
+  테스트 스키마. 삭제 직전 `guard()`가 이름이 prefix인지 검사하고, 아니면 삭제하지 않고 FAIL한다.
+  기존 연결·`cdc_src`·`cdc_tmp` 등은 건드리지 않는다.
+- **실패 시에는 정리를 건너뛴다**(원인 분석용 상태 보존). 치울 때는 `--cleanup-only`.
+- PG 복제 슬롯·publication은 등록 해제의 마지막 테이블 처리(`PostgresReplicationCleaner`)가 지운다
+  — 스크립트는 그 뒤에도 남은 `dz_dze2e*`가 있을 때만 직접 제거한다(WAL 무한 적재 방지).
+- backend가 지우지 않는 것을 스크립트가 보완한다: Kafka 토픽·consumer group, 그리고 Iceberg
+  **namespace**(dropChangelog는 테이블만 지운다). namespace는 JDBC 카탈로그(`iceberg_catalog`)의
+  `iceberg_namespace_properties` 행을, 그 안에 테이블이 0개일 때만 삭제한다.
+
+### CI에서의 위치
+
+`.gitlab-ci.yml` stage `integration`의 `e2e-cdc` 잡 — main 브랜치 push 또는 schedule 때만,
+`resource_group: dev-stack`으로 같은 dev 스택을 쓰는 잡과 직렬화한다. 한계: CI가 방금 빌드한
+산출물이 아니라 러너 서버에 이미 기동된 backend를 테스트한다(배포 stage 필요 — TODO).
+
 ## 문제 추적 경로
 
 1. **이벤트 탭** — 언제부터 무슨 일이 있었나 (장애 전이·복구 단계·스냅샷 진행 전부 기록)
