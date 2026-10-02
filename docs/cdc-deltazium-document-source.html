@@ -295,6 +295,19 @@ DbType과 무관하게 대문자로 저장하던 코드가, JDBC sink는 unquote
 </div>
 </div>
 
+<div>
+<h3>3.12 CI 구축과 CDC E2E — 시나리오가 아닌 실행 조건으로 job을 나눈다</h3>
+<p>개발 서버 한 대에 GitLab CE(전용 OS 계정의 rootless podman)와 계정별 shell 러너를 올렸다(2026-10-01).
+같은 PC 위의 VM은 가용성 격리도 자원 증가도 없어 별도 VM을 두지 않았고, 러너 프로세스 하나는 고정된
+OS 유저로만 job을 돌리므로 각 제품의 빌드가 자기 계정 홈의 런타임·툴체인에 붙도록 계정별로 뒀다.
+파이프라인은 build→test→integration: 단위 테스트(H2)는 push마다, 실 스택 E2E는 main·스케줄에서만
+<code>resource_group</code>으로 직렬화해 돈다. 시나리오는 job이 아니라 스크립트 안에서 늘린다.</p>
+<p>E2E(<code>deploy/e2e-cdc.sh</code>)는 backend API만으로 연결 등록→사전 점검→등록→스냅샷 대기→소스 DML
+→lag 0 대기→체크섬 정합→changelog 수 검증을 거친다. at-least-once 전제로 정합은 최종 상태(체크섬) 비교,
+changelog는 "이벤트 수 이상" 판정. 정리는 <code>dze2e</code> prefix 객체만(가드 불일치면 FAIL, 실패 시
+보존). 한계: 배포 stage 전까지는 떠 있는 backend를 테스트한다.</p>
+</div>
+
 <h2 class="pagebreak">4. 웹 콘솔 기능</h2>
 <table>
   <tr><th style="width:22%">화면</th><th>기능</th></tr>
@@ -338,6 +351,9 @@ DbType과 무관하게 대문자로 저장하던 코드가, JDBC sink는 unquote
   로컬 타임존 해석으로 1시간 밀려 적재된 것이 원인(docs/incidents/2026-09-23-dst-gap-date-shift.md).
   Connect 워커 JVM 타임존을 UTC로 고정해 수정, 재검증에서 466,025행 체크섬 전량 일치. 같은 작업에서
   PostgreSQL 체크섬 지원과 등록 해제 시 PG 복제 슬롯·publication 자동 정리도 반영했다.</td></tr>
+  <tr><td>CDC E2E 자동화 (2026-10-02)</td><td>PG→PG 전 구간 스크립트가 실 스택에서 PASS(114초) — 스냅샷 3행 + DML 6건
+  → 타깃 체크섬 일치, changelog 9건 이상, 정리 후 잔여 객체 0. 실패 보존·<code>--cleanup-only</code> 확인.
+  backend 단위 테스트 247건 통과. CI integration stage에 연결(3.12절).</td></tr>
 </table>
 
 <h2>6. 기술 스택 · 문서화</h2>
@@ -346,7 +362,7 @@ Java 21 · Spring Boot 3.5 · MyBatis · Debezium 3.6 (Oracle LogMiner · Postgr
 Apache Iceberg 1.11 · MinIO(S3) · PostgreSQL 15 · React 19 · TypeScript · Vite · Tailwind 4 · shadcn/ui ·
 TanStack Table · 자체 SVG(토폴로지·차트) · Claude API(tool use · SSE).
 </p>
-<p>설계 기준(architecture.md) · 운영 가이드(operations.md) · 구현 내부 노트(internals.md) ·
+<p>설계 기준(architecture.md) · 운영 가이드(operations.md) · 구현 내부 노트(internals.md) · CI 구축 기록(ci.md) ·
 실장애 기록(incidents/, 건별 타임라인·진단 경로·교훈) · 실측 실험 기록(experiments/)을 리포에 유지 —
 "UI에는 사용자 결정에 필요한 것만, 시스템 내부는 문서·주석에" 원칙. 문서는 작업이 아니라 주제 단위로
 갱신한다: 새 작업이 생겨도 새 md를 만들지 않고 기존 문서의 해당 절을 고친다.</p>
@@ -356,7 +372,7 @@ TanStack Table · 자체 SVG(토폴로지·차트) · Claude API(tool use · SSE
 남은 과제: 기동 중 테이블 추가 시 초기적재(incremental snapshot + Kafka signal) ·
 Prometheus/Grafana(JMX exporter) 도입 후 자체 수집과 비교 · 컬럼 리네임의 적재 반영(스톡 sink 한계 — 정책
 결정 대기) · S3 복구 풀 리허설 실행 검증 · AI 진단 멀티턴(후속 질문 맥락 유지) · offset 정체 조기 경보(실패 전
-WARN의 운영 이벤트 승격)
+WARN의 운영 이벤트 승격) · CI 배포 stage · Oracle 소스 E2E · changelog 요약 API
 </p>
 
 <h2 class="pagebreak">부록 A. 콘솔 화면</h2>
