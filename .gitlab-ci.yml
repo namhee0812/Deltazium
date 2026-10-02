@@ -1,12 +1,67 @@
-# GitLab CI — 1단계: shell executor 환경 확인용 최소 파이프라인
-stages: [check]
+# GitLab CI — build → test → integration 3단계.
+# 러너: shell executor(nhchoi 계정, 태그 deltazium). 컨테이너가 아니라 러너 서버의 셸에서 그대로 돈다.
+#   → 장점: 이미 설치된 JDK·node·실행 중인 dev 스택(backend 8090·Kafka·PG)을 그대로 쓴다.
+#   → 주의: 작업 디렉터리·~/deltazium-runtime 등 상태가 잡 사이에 공유된다(격리 없음).
+stages: [build, test, integration]
 
-env-check:
-  stage: check
-  tags: [deltazium]          # 이 태그를 가진 러너(nhchoi)에만 배정
+default:
+  tags: [deltazium]          # 이 태그를 가진 러너에만 배정
+
+# node는 nvm으로 설치돼 있어 비로그인 셸의 PATH에 없다 — ui 잡 시작 시 nvm을 읽어 npm을 PATH에 올린다.
+.ui-node: &ui-node
+  before_script:
+    - source ~/.nvm/nvm.sh
+    - node --version && npm --version
+
+# ── build: 산출물을 만든다. artifacts는 뒤 stage 잡·사람이 내려받을 수 있게 GitLab에 보관된다 ──
+backend-build:
+  stage: build
   script:
-    - whoami
-    - pwd
-    - echo "$PATH"
-    - java -version
-    - ./gradlew --version
+    - ./gradlew :backend:bootJar :recovery-job:jar
+  artifacts:
+    paths:
+      - backend/build/libs/
+      - recovery-job/build/libs/
+    expire_in: 1 week
+
+ui-build:
+  stage: build
+  <<: *ui-node
+  script:
+    - cd ui
+    - npm ci                 # package-lock.json 기준 재현 가능한 설치(npm install과 달리 lock을 바꾸지 않는다)
+    - npm run build          # tsc -b && vite build
+  artifacts:
+    paths:
+      - ui/dist/             # dist/는 .gitignore 대상이라 artifacts로만 전달된다
+    expire_in: 1 week
+
+# ── test: 코드 검증. build stage가 모두 성공해야 시작하고, 이 stage의 두 잡은 병렬로 돈다 ──
+backend-test:
+  stage: test
+  script:
+    - ./gradlew test
+  artifacts:
+    when: always             # 테스트가 실패해도 리포트를 남긴다
+    reports:
+      junit: "**/build/test-results/test/TEST-*.xml"   # GitLab UI의 Tests 탭에 결과 표시
+
+ui-lint:
+  stage: test
+  <<: *ui-node
+  script:
+    - cd ui
+    - npm ci
+    - npm run lint
+
+# ── integration: 실제 기동 중인 dev 스택에 대해 E2E ──
+# 한계: 이 잡은 "CI가 방금 빌드한 코드"가 아니라 러너 서버에 이미 배포·기동된 backend(8090)를 테스트한다.
+#       배포 stage가 생기기 전까지는 build 산출물과 테스트 대상이 어긋날 수 있다 (docs/TODO.md).
+e2e-cdc:
+  stage: integration
+  resource_group: dev-stack   # 같은 dev 스택을 쓰는 잡이 동시에 돌지 않게 직렬화
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+  script:
+    - ./deploy/e2e-cdc.sh

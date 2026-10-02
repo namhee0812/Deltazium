@@ -238,6 +238,16 @@
 
 ## 운영
 
+- [ ] **E2E 테스트 후속** (2026-10-02, `deploy/e2e-cdc.sh` v1 = PG→PG, docs/operations.md "E2E 테스트")
+  - Oracle 소스 E2E(v2) — 소스 DB가 원격(192.168.0.x)이라 스키마 준비·정리 방식 결정 필요
+  - changelog 요약 API — 지금은 `GET /api/changelog`의 레코드 수만 본다. op 분포(r/c/u/d)·PK별
+    최종 op·스키마(5절) 일치 검증을 하려면 요약 API가 필요하다 (recovery-job 읽기 경로 재사용 검토)
+  - CI가 "방금 빌드한 코드"가 아니라 러너에 이미 배포된 backend를 테스트한다 — build 산출물을
+    기동·교체하는 배포 stage 필요
+  - `SnapshotNotificationPoller`가 기동 시점 SOURCE만 구독 — 새 소스 연결 후 backend 재기동 전까지
+    `/api/capture/snapshot` bySource에 안 나타난다. 동적 구독으로 바꿀지 결정 필요 (E2E는 보조 판정으로 우회 중)
+  - Iceberg namespace 삭제 API 부재 — 등록 해제(dropChangelog)가 빈 namespace를 남긴다. E2E는 카탈로그
+    행을 직접 지우는데, 제품 기능으로 둘지 결정 필요
 - [ ] docker-compose 패키징 (베어메탈 안정화 후) — 개발·PoC용, 번들 MinIO·PostgreSQL·KRaft 포함
 - [ ] **Kubernetes(Helm) 배포** (2026-09-10 방향, architecture.md 10절) — compose 다음 단계.
       제품은 무상태 컨테이너(제어면 API·워커·UI)만, 오브젝트 스토리지·메타데이터 DB·Kafka는 고객
