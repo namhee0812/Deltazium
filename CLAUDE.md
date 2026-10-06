@@ -37,6 +37,7 @@ Oracle ──Debezium source(LogMiner)──▶ Kafka ──┬─▶ Debezium J
 | 모듈 | 내용 | 비고 |
 |---|---|---|
 | `deploy/` | **베어메탈 기동 스크립트** (2026-07-23 결정: docker-compose는 나중에): Kafka(KRaft 단일 노드), Kafka Connect(커넥터 플러그인 포함), MinIO, PostgreSQL(메타데이터 + Iceberg JDBC 카탈로그). 바이너리·데이터는 `~/deltazium-runtime/`, Oracle은 미연결(추후 결정) | smoke test 스크립트 포함. 상세: `deploy/README.md` |
+| `ci/` | CDC E2E(`ci/e2e-cdc.sh`) — 접속 정보는 `ci/profiles/<이름>.env`, DB 종속 SQL은 `ci/lib/db-<type>.sh` 어댑터, 비밀번호는 환경변수(`SRC_PASSWORD`·`TGT_PASSWORD`; 수동은 git-ignore된 `ci/local.env`) | `.gitlab-ci.yml` e2e-cdc job이 호출. 상세: `docs/operations.md` E2E 절 |
 | `connectors/` | 커넥터 설정 JSON 템플릿 4종: source / jdbc-sink / iceberg-sink / recovery-sink | backend가 이 템플릿을 렌더링해 Connect REST로 배포 |
 | `backend/` | Spring Boot 3 제어면: Connect REST 프록시, 테이블 등록(사전 점검), DDL 승인 워크플로, 복구 잡 트리거, 상태·lag 조회 | 메타데이터는 PostgreSQL |
 | `recovery-job/` | 플레인 Java: Iceberg scan(SCN 범위) → envelope 재조립 → 복구 토픽 발행 | Spring 의존 없음. backend가 프로세스로 기동 |

@@ -4,8 +4,15 @@
 # 실제 기동 중인 backend(8090)·Connect·Kafka·PG(5433)에 대해 한 번 돌려 본다 (v1: PG→PG).
 #
 # 사용:
-#   ./deploy/e2e-cdc.sh                # E2E 실행. 성공 시 만든 객체를 정리하고, 실패 시 보존한다
-#   ./deploy/e2e-cdc.sh --cleanup-only # 이전 실행이 남긴 dze2e* 객체만 전부 정리
+#   ./ci/e2e-cdc.sh                                  # 기본 프로파일(pg2pg)로 E2E 실행. 성공 시 정리, 실패 시 보존
+#   ./ci/e2e-cdc.sh --profile <이름>                 # ci/profiles/<이름>.env 접속 정보로 실행
+#   ./ci/e2e-cdc.sh --cleanup-only                   # 이전 실행이 남긴 dze2e* 객체만 전부 정리
+#   (--profile 과 --cleanup-only 는 함께 쓸 수 있다)
+#
+# 구성: 이 파일은 DB 중립 본체(backend API 호출·대기·검증·정리 오케스트레이션)다.
+#   ci/profiles/<이름>.env  접속 정보(호스트·포트·DB·계정). 비밀번호 없음 — 리포에 포함
+#   ci/lib/db-<타입>.sh     DB에 직접 SQL을 치는 부분(스키마 준비·DML·슬롯 정리 등) — SRC_DB_TYPE으로 선택
+#   비밀번호                환경변수 SRC_PASSWORD/TGT_PASSWORD (CI: GitLab Variables, 수동: ci/local.env)
 #
 # 종료 코드: 0 = 전 단계 PASS, 1 = 실패(원인은 [FAIL] 줄 + 마지막 응답 본문)
 #
@@ -15,27 +22,67 @@
 #    prefix가 아니면 삭제하지 않고 FAIL 한다. 기존 연결·cdc_src·cdc_tmp 등은 절대 건드리지 않는다.
 #  * 실패 시에는 정리를 건너뛴다 — 원인 분석용 상태 보존. 나중에 --cleanup-only 로 치운다.
 #
-# ── 의존: curl, jq, psql(deploy/env.sh의 DZ_PG_BIN) ─────────────────────────────────────
+# ── 의존: curl, jq, psql(deploy/env.sh의 DZ_PG_BIN; Iceberg 카탈로그 조회와 PG 어댑터가 사용) ──────────────────────────────────
 
 set -uo pipefail
+# 어느 디렉터리에서 실행해도 리포 루트 기준으로 동작하게 한다 (ci/ 의 부모 = 리포 루트)
 cd "$(dirname "$0")/.."
 # shellcheck disable=SC1091
 source deploy/env.sh
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 0. 설정 — 전부 환경변수로 오버라이드 가능. 비밀번호는 리포에 두지 않는다.
+# 0. 인자 파싱 · 프로파일 · 비밀번호 로딩
+# ─────────────────────────────────────────────────────────────────────────────
+PROFILE="pg2pg"; CLEANUP_ONLY=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --profile)      [ $# -ge 2 ] || { echo "사용: --profile <이름>"; exit 2; }; PROFILE="$2"; shift 2 ;;
+    --cleanup-only) CLEANUP_ONLY=1; shift ;;
+    *) echo "사용: $0 [--profile <이름>] [--cleanup-only]"; exit 2 ;;
+  esac
+done
+
+# 프로파일 = "어디에 접속하는가"를 담은 셸 변수 파일. 없으면 사용 가능한 목록을 보여 주고 즉시 실패.
+PROFILE_FILE="ci/profiles/${PROFILE}.env"
+if [ ! -f "$PROFILE_FILE" ]; then
+  echo "[FAIL] 프로파일 파일이 없다: $PROFILE_FILE"
+  echo "       사용 가능한 프로파일: $(cd ci/profiles 2>/dev/null && ls *.env 2>/dev/null | sed 's/\.env$//' | tr '\n' ' ')"
+  exit 1
+fi
+# shellcheck disable=SC1090
+source "$PROFILE_FILE"
+
+# 비밀번호는 프로파일에 두지 않고 환경변수로만 받는다. 우선순위: 이미 export된 환경변수 > ci/local.env.
+# CI에서는 GitLab Variables가 환경변수로 들어오므로 local.env가 없어도 된다. 수동 실행에서만 local.env를 쓴다.
+# local.env를 source 하면 같은 이름이 덮어써지므로, 이미 설정돼 있던 값은 source 뒤에 되살린다.
+_pre_src="${SRC_PASSWORD+set}"; _pre_src_v="${SRC_PASSWORD:-}"
+_pre_tgt="${TGT_PASSWORD+set}"; _pre_tgt_v="${TGT_PASSWORD:-}"
+# shellcheck disable=SC1091
+[ -f ci/local.env ] && source ci/local.env
+[ -n "$_pre_src" ] && SRC_PASSWORD="$_pre_src_v"
+[ -n "$_pre_tgt" ] && TGT_PASSWORD="$_pre_tgt_v"
+SRC_PASSWORD="${SRC_PASSWORD:-}"; TGT_PASSWORD="${TGT_PASSWORD:-}"   # 둘 다 없으면 빈 값 (현재 PG는 trust)
+
+# 프로파일 필수 키 점검 — 빠지면 set -u 오류 대신 알아보기 쉬운 메시지로 실패
+for _k in SRC_DB_TYPE SRC_HOST SRC_PORT SRC_DB SRC_USER TGT_DB_TYPE TGT_HOST TGT_PORT TGT_DB TGT_USER SNAPSHOT_MODE; do
+  [ -n "${!_k:-}" ] || { echo "[FAIL] 프로파일 $PROFILE_FILE 에 $_k 가 없다"; exit 1; }
+done
+
+# DB 어댑터 선택 — SRC_DB_TYPE(POSTGRESQL 등)에 따라 ci/lib/db-<type>.sh. 본체는 DB를 직접 치지 않는다.
+case "$SRC_DB_TYPE" in
+  POSTGRESQL) DB_ADAPTER="ci/lib/db-pg.sh" ;;
+  *)          DB_ADAPTER="ci/lib/db-$(echo "$SRC_DB_TYPE" | tr 'A-Z' 'a-z').sh" ;;
+esac
+[ -f "$DB_ADAPTER" ] || { echo "[FAIL] 미구현: $DB_ADAPTER 필요 (SRC_DB_TYPE=$SRC_DB_TYPE)"; exit 1; }
+# shellcheck disable=SC1090
+source "$DB_ADAPTER"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 설정 — backend 주소·Kafka·Iceberg 카탈로그. 환경변수로 오버라이드 가능.
 # ─────────────────────────────────────────────────────────────────────────────
 API="${DZE2E_API:-http://localhost:8090}"
-PG_HOST="${DZE2E_PG_HOST:-127.0.0.1}"
-PG_PORT="${DZE2E_PG_PORT:-$DZ_PG_PORT}"
-PG_DB="${DZE2E_PG_DB:-$DZ_PG_DB}"
-# psql(스키마·데이터 준비/정리)는 관리 계정(deploy/env.sh DZ_PG_USER)으로 접속한다.
-# 이 인스턴스의 pg_hba는 trust라 비밀번호가 없다. 필요하면 PGPASSWORD 환경변수를 넘길 것.
-PG_ADMIN="${DZE2E_PG_ADMIN:-$DZ_PG_USER}"
-# backend에 등록하는 연결(Debezium 캡처·JDBC sink 겸용)은 pg-source-setup.sh가 만든 dz_capture 롤.
-# 비밀번호는 pg-source-setup.sh와 같은 DZ_PG_CAPTURE_PASSWORD 환경변수(없으면 빈 값 = trust 인증).
-CAP_USER="${DZE2E_PG_USER:-dz_capture}"
-CAP_PASSWORD="${DZE2E_PG_PASSWORD:-${DZ_PG_CAPTURE_PASSWORD:-}}"
+# Iceberg JDBC 카탈로그는 메타데이터 PG(deploy/env.sh 기준)에 있어 소스 DB 종류와 무관하다 — 본체가 직접 조회한다.
+CAT_HOST="${DZE2E_PG_HOST:-127.0.0.1}"; CAT_PORT="${DZE2E_PG_PORT:-$DZ_PG_PORT}"; CAT_ADMIN="${DZE2E_PG_ADMIN:-$DZ_PG_USER}"
 PSQL="${DZ_PG_BIN}/psql"
 KAFKA_TOPICS="${DZ_KAFKA_HOME}/bin/kafka-topics.sh"
 KAFKA_GROUPS="${DZ_KAFKA_HOME}/bin/kafka-consumer-groups.sh"
@@ -68,7 +115,7 @@ summary_and_exit() {
   echo; echo "=== E2E 요약 (총 ${SECONDS}s) ==="
   printf '  %s\n' "${RESULTS[@]}"
   if [ "$1" -ne 0 ]; then
-    echo "결과: FAIL — 실패 시점 상태를 보존했다(원인 분석용). 치우려면: ./deploy/e2e-cdc.sh --cleanup-only"
+    echo "결과: FAIL — 실패 시점 상태를 보존했다(원인 분석용). 치우려면: ./ci/e2e-cdc.sh --profile $PROFILE --cleanup-only"
     [ -n "${RUN_ID:-}" ] && echo "      이번 실행 식별자: ${E2E_PREFIX}${RUN_ID}"
   else
     echo "결과: PASS"
@@ -102,8 +149,7 @@ api() {
 }
 
 # Iceberg JDBC 카탈로그 DB (env.sh 기준 iceberg_catalog, smoke-test.sh와 동일)
-psql_cat() { "$PSQL" -h "$PG_HOST" -p "$PG_PORT" -U "$PG_ADMIN" -d "${DZE2E_CATALOG_DB:-iceberg_catalog}" -v ON_ERROR_STOP=1 -qtA "$@"; }
-psql_admin() { "$PSQL" -h "$PG_HOST" -p "$PG_PORT" -U "$PG_ADMIN" -d "$PG_DB" -v ON_ERROR_STOP=1 -qtA "$@"; }
+psql_cat() { "$PSQL" -h "$CAT_HOST" -p "$CAT_PORT" -U "$CAT_ADMIN" -d "${DZE2E_CATALOG_DB:-iceberg_catalog}" -v ON_ERROR_STOP=1 -qtA "$@"; }
 
 # poll TIMEOUT_SEC DESC CMD... — CMD가 0을 돌려줄 때까지 2초 간격 polling. 고정 sleep 대기 금지(타임아웃만 있다).
 poll() {
@@ -120,10 +166,9 @@ poll() {
 # 정리 — E2E prefix 객체만. 실행 성공 후와 --cleanup-only 가 같은 함수를 쓴다.
 # 상태 파일 없이 "prefix로 시작하는 것을 찾아 지우는" 방식이라 어느 실행의 잔재든 치운다.
 # ─────────────────────────────────────────────────────────────────────────────
-slot_inactive() { [ "$(psql_admin -c "SELECT active FROM pg_replication_slots WHERE slot_name='$CUR_SLOT'")" != t ]; }
-
 cleanup_all() {
-  local n=0 id name
+  local id name
+  CLEAN_N=0   # 어댑터 함수(db_drop_*)도 이 카운터를 올린다
 
   # (1) 등록 해제 — 백엔드가 jdbc-sink·source·iceberg-sink 커넥터, offset, PG 슬롯·publication,
   #     (dropChangelog=true) Iceberg changelog 테이블을 함께 정리한다 (RegistrationService.unregister).
@@ -131,35 +176,25 @@ cleanup_all() {
     [ -n "$id" ] || continue
     guard "$name"
     api DELETE "/api/registrations/$id?dropChangelog=true" || { echo "  [WARN] 등록 해제 실패 id=$id: $LAST_BODY"; }
-    echo "  등록 해제: id=$id ($name)"; n=$((n + 1))
+    echo "  등록 해제: id=$id ($name)"; CLEAN_N=$((CLEAN_N + 1))
   done < <(curl -sf "$API/api/registrations" | jq -r --arg p "$E2E_PREFIX" \
       '.[] | select(.sourceTopicPrefix|startswith($p)) | "\(.id) \(.sourceTopicPrefix)"')
 
   # (2) 커넥터 잔재 — 등록 해제가 대부분 지우지만, 실패 상태 등에서 남은 dze2e 커넥터를 직접 제거
   for name in $(curl -sf "$API/api/connectors" | jq -r 'keys[]' 2>/dev/null | grep -E "${E2E_PREFIX}" || true); do
     guard "$name"
-    api DELETE "/api/connectors/$name" && { echo "  커넥터 삭제: $name"; n=$((n + 1)); }
+    api DELETE "/api/connectors/$name" && { echo "  커넥터 삭제: $name"; CLEAN_N=$((CLEAN_N + 1)); }
   done
 
   # (3) 연결(소스·타깃)
   for id in $(curl -sf "$API/api/connections" | jq -r --arg p "$E2E_PREFIX" '.[] | select(.name|startswith($p)) | .id'); do
     name=$(curl -sf "$API/api/connections/$id" | jq -r .name)
     guard "$name"
-    api DELETE "/api/connections/$id" && { echo "  연결 삭제: id=$id ($name)"; n=$((n + 1)); }
+    api DELETE "/api/connections/$id" && { echo "  연결 삭제: id=$id ($name)"; CLEAN_N=$((CLEAN_N + 1)); }
   done
 
-  # (4) PG 복제 슬롯·publication — unregister가 지우는 것이 정상 경로. 남았다면(예: 등록 전 실패)
-  #     여기서 제거한다. 슬롯 누수는 WAL을 무한 적재시키므로 반드시 확인한다. active면 잠시 대기 후 재시도.
-  local slot pub
-  for slot in $(psql_admin -c "SELECT slot_name FROM pg_replication_slots WHERE slot_name LIKE 'dz\_${E2E_PREFIX}%'"); do
-    guard "$slot"
-    CUR_SLOT="$slot"; poll 30 "slot inactive" slot_inactive
-    psql_admin -c "SELECT pg_drop_replication_slot('$slot')" >/dev/null && { echo "  복제 슬롯 삭제: $slot"; n=$((n + 1)); }
-  done
-  for pub in $(psql_admin -c "SELECT pubname FROM pg_publication WHERE pubname LIKE 'dz\_${E2E_PREFIX}%'"); do
-    guard "$pub"
-    psql_admin -c "DROP PUBLICATION IF EXISTS \"$pub\"" && { echo "  publication 삭제: $pub"; n=$((n + 1)); }
-  done
+  # (4) DB 복제 슬롯·publication — DB 종류별 처리는 어댑터(ci/lib/db-*.sh)의 db_drop_replication.
+  db_drop_replication
 
   # (5) Kafka 토픽 — backend는 토픽을 지우지 않는다(캡처·notification·control·schema-history 등).
   local topic
@@ -168,7 +203,7 @@ cleanup_all() {
         | grep -E "^(${E2E_PREFIX}|control-iceberg-${E2E_PREFIX}|dz-recovery\.${E2E_PREFIX}|__debezium-heartbeat\.${E2E_PREFIX})" || true); do
       guard "${topic#__debezium-heartbeat.}"
       "$KAFKA_TOPICS" --bootstrap-server "$KAFKA_BOOTSTRAP" --delete --topic "$topic" >/dev/null 2>&1 \
-        && { echo "  Kafka 토픽 삭제: $topic"; n=$((n + 1)); }
+        && { echo "  Kafka 토픽 삭제: $topic"; CLEAN_N=$((CLEAN_N + 1)); }
     done
   fi
 
@@ -178,7 +213,7 @@ cleanup_all() {
     for grp in $("$KAFKA_GROUPS" --bootstrap-server "$KAFKA_BOOTSTRAP" --list 2>/dev/null | grep -E "^connect-dz-.*${E2E_PREFIX}" || true); do
       guard "$grp"
       "$KAFKA_GROUPS" --bootstrap-server "$KAFKA_BOOTSTRAP" --delete --group "$grp" >/dev/null 2>&1 \
-        && { echo "  consumer group 삭제: $grp"; n=$((n + 1)); }
+        && { echo "  consumer group 삭제: $grp"; CLEAN_N=$((CLEAN_N + 1)); }
     done
   fi
 
@@ -190,30 +225,24 @@ cleanup_all() {
     guard "$ns"
     if [ "$(psql_cat -c "SELECT count(*) FROM iceberg_tables WHERE table_namespace='$ns'")" = 0 ]; then
       psql_cat -c "DELETE FROM iceberg_namespace_properties WHERE namespace='$ns'" >/dev/null \
-        && { echo "  Iceberg namespace 삭제: $ns"; n=$((n + 1)); }
+        && { echo "  Iceberg namespace 삭제: $ns"; CLEAN_N=$((CLEAN_N + 1)); }
     else
       echo "  [WARN] namespace $ns 에 테이블이 남아 있어 삭제하지 않음"
     fi
   done
 
-  # (6) 테스트 스키마(소스·타깃) — dze2e 로 시작하는 스키마만, 테이블째 CASCADE
-  local schema
-  for schema in $(psql_admin -c "SELECT nspname FROM pg_namespace WHERE nspname LIKE '${E2E_PREFIX}%'"); do
-    guard "$schema"
-    psql_admin -c "DROP SCHEMA \"$schema\" CASCADE" && { echo "  스키마 삭제: $schema"; n=$((n + 1)); }
-  done
-  echo "  정리 완료 — ${n}건"
+  # (6) 테스트 스키마(소스·타깃) — 어댑터의 db_drop_schemas
+  db_drop_schemas
+  echo "  정리 완료 — ${CLEAN_N}건"
 }
 
-# 잔여 검사 — 정리 후 dze2e 객체가 하나도 없는지 (연결·등록·커넥터·토픽·슬롯·publication·스키마·Iceberg namespace)
+# 잔여 검사 — 정리 후 dze2e 객체가 하나도 없는지 (연결·등록·커넥터·토픽·DB 객체(어댑터)·Iceberg namespace)
 residual_check() {
   local left=0 out
   out=$(curl -sf "$API/api/connections" | jq -r --arg p "$E2E_PREFIX" '.[]|select(.name|startswith($p))|"연결 "+.name')
   out+=$'\n'$(curl -sf "$API/api/registrations" | jq -r --arg p "$E2E_PREFIX" '.[]|select(.sourceTopicPrefix|startswith($p))|"등록 "+.sourceTopicPrefix')
   out+=$'\n'$(curl -sf "$API/api/connectors" | jq -r 'keys[]' 2>/dev/null | grep "${E2E_PREFIX}" | sed 's/^/커넥터 /')
-  out+=$'\n'$(psql_admin -c "SELECT '슬롯 '||slot_name FROM pg_replication_slots WHERE slot_name LIKE '%${E2E_PREFIX}%'")
-  out+=$'\n'$(psql_admin -c "SELECT 'publication '||pubname FROM pg_publication WHERE pubname LIKE '%${E2E_PREFIX}%'")
-  out+=$'\n'$(psql_admin -c "SELECT '스키마 '||nspname FROM pg_namespace WHERE nspname LIKE '${E2E_PREFIX}%'")
+  out+=$'\n'$(db_residual)   # DB 항목(슬롯·publication·스키마 등)은 어댑터가 출력
   out+=$'\n'$("$KAFKA_TOPICS" --bootstrap-server "$KAFKA_BOOTSTRAP" --list 2>/dev/null | grep "${E2E_PREFIX}" | sed 's/^/Kafka 토픽 /')
   out+=$'\n'$(psql_cat -c "SELECT 'Iceberg namespace '||namespace FROM iceberg_namespace_properties WHERE namespace LIKE '%${E2E_PREFIX}%' GROUP BY namespace")
   out+=$'\n'$("$KAFKA_GROUPS" --bootstrap-server "$KAFKA_BOOTSTRAP" --list 2>/dev/null | grep "${E2E_PREFIX}" | sed 's/^/consumer group /')
@@ -236,14 +265,13 @@ need_tools() {
   fi
 }
 
-if [ "${1:-}" = "--cleanup-only" ]; then
+if [ "$CLEANUP_ONLY" = 1 ]; then
   need_tools
   echo "=== E2E 잔재 정리 (prefix: ${E2E_PREFIX}) ==="
   cleanup_all
   residual_check || { echo "[FAIL] 일부 객체가 남았다 — 위 목록 확인"; exit 1; }
   exit 0
 fi
-[ $# -eq 0 ] || { echo "사용: $0 [--cleanup-only]"; exit 2; }
 
 # ═════════════════════════════════════════════════════════════════════════════
 # E2E 본 흐름
@@ -263,50 +291,32 @@ echo "=== CDC E2E 시작 — 식별자 ${PREFIX} ==="
 step "사전 확인"
 need_tools
 api GET /api/connections || fail "$CUR_STEP" "backend($API) 응답 없음 — ./deploy/dzadmin status 확인"
-[ "$(psql_admin -c "SELECT count(*) FROM pg_roles WHERE rolname='$CAP_USER'" 2>/dev/null)" = 1 ] \
-  || fail "$CUR_STEP" "PG 롤 $CAP_USER 없음 — deploy/pg-source-setup.sh 선행 필요"
-pass "$CUR_STEP" "backend·PG·도구 OK"
+db_check_ready || fail "$CUR_STEP" "캡처 계정 $SRC_USER 없음 — (PG) deploy/pg-source-setup.sh 선행 필요"
+pass "$CUR_STEP" "backend·DB·도구 OK"
 
-# ── 2. 소스·타깃 스키마/테이블 준비 (psql) ────────────────────────────────────
+# ── 2. 소스·타깃 스키마/테이블 준비 (DB 어댑터) ───────────────────────────────
 # 소스: 여러 타입 컬럼 + PK 테이블 + 초기 3행(스냅샷 검증용). 타깃은 스키마만 만든다 —
 # 타깃 테이블은 5단계 등록 시 createTarget=true 로 backend가 소스 스키마를 읽어 생성한다.
-# 테이블 소유자는 dz_capture(Debezium publication 생성에 필요한 소유권, pg-source-setup.sh 참고).
+# 실제 SQL은 어댑터(ci/lib/db-*.sh)의 db_prepare.
 step "스키마·테이블 준비"
-psql_admin <<SQL || fail "$CUR_STEP" "psql 준비 실패"
-CREATE SCHEMA "$SRC_SCHEMA" AUTHORIZATION $CAP_USER;
-CREATE SCHEMA "$TGT_SCHEMA" AUTHORIZATION $CAP_USER;
-CREATE TABLE "$SRC_SCHEMA".$TABLE (
-  id         integer PRIMARY KEY,
-  name       varchar(40) NOT NULL,
-  amount     numeric(12,2),
-  qty        bigint,
-  memo       text,
-  active     boolean,
-  due_date   date,
-  created_at timestamp(3)
-);
-ALTER TABLE "$SRC_SCHEMA".$TABLE OWNER TO $CAP_USER;
-INSERT INTO "$SRC_SCHEMA".$TABLE VALUES
-  (1,'alpha',10.50,100,'first',true,'2026-01-01','2026-01-01 10:00:00.123'),
-  (2,'beta',20.00,200,NULL,false,'2026-02-02','2026-02-02 11:00:00.456'),
-  (3,'gamma',30.75,300,'한글 메모',true,NULL,NULL);
-SQL
+db_prepare || fail "$CUR_STEP" "DB 준비 실패 (db_prepare)"
 pass "$CUR_STEP" "$SRC_SCHEMA.$TABLE 초기 3행"
 SNAPSHOT_ROWS=3
 
 # ── 3. 연결 등록 ─────────────────────────────────────────────────────────────
-# 소스·타깃 연결을 backend에 등록. 둘 다 같은 PG 인스턴스(동종이라 체크섬 비교 가능).
+# 소스·타깃 연결을 backend에 등록. v1 프로파일은 둘 다 같은 PG 인스턴스(동종이라 체크섬 비교 가능).
 step "연결 등록"
-conn_json() { # name role
-  jq -n --arg n "$1" --arg r "$2" --arg h "$PG_HOST" --argjson p "$PG_PORT" --arg d "$PG_DB" \
-        --arg u "$CAP_USER" --arg pw "$CAP_PASSWORD" \
-    '{name:$n,dbType:"POSTGRESQL",role:$r,host:$h,port:$p,databaseName:$d,username:$u,password:$pw}'
+# 접속 정보는 프로파일(SRC_*/TGT_*)과 환경변수 비밀번호에서 온다.
+conn_json() { # name role dbType host port db user password
+  jq -n --arg n "$1" --arg r "$2" --arg t "$3" --arg h "$4" --argjson p "$5" --arg d "$6" \
+        --arg u "$7" --arg pw "$8" \
+    '{name:$n,dbType:$t,role:$r,host:$h,port:$p,databaseName:$d,username:$u,password:$pw}'
 }
-api POST /api/connections "$(conn_json "$SRC_NAME" SOURCE)" || fail "$CUR_STEP" "소스 연결 등록 실패"
+api POST /api/connections "$(conn_json "$SRC_NAME" SOURCE "$SRC_DB_TYPE" "$SRC_HOST" "$SRC_PORT" "$SRC_DB" "$SRC_USER" "$SRC_PASSWORD")" || fail "$CUR_STEP" "소스 연결 등록 실패"
 SRC_ID=$(echo "$LAST_BODY" | jq -r .id)
 GOT_PREFIX=$(echo "$LAST_BODY" | jq -r .topicPrefix)
 [ "$GOT_PREFIX" = "$PREFIX" ] || fail "$CUR_STEP" "topicPrefix가 기대($PREFIX)와 다름: $GOT_PREFIX"
-api POST /api/connections "$(conn_json "$TGT_NAME" TARGET)" || fail "$CUR_STEP" "타깃 연결 등록 실패"
+api POST /api/connections "$(conn_json "$TGT_NAME" TARGET "$TGT_DB_TYPE" "$TGT_HOST" "$TGT_PORT" "$TGT_DB" "$TGT_USER" "$TGT_PASSWORD")" || fail "$CUR_STEP" "타깃 연결 등록 실패"
 TGT_ID=$(echo "$LAST_BODY" | jq -r .id)
 pass "$CUR_STEP" "source id=$SRC_ID(prefix=$GOT_PREFIX) target id=$TGT_ID"
 
@@ -327,13 +337,13 @@ api POST /api/registrations/capture-setup/preview "$TABLES_REQ" || fail "$CUR_ST
 api POST /api/registrations/capture-setup/apply "$TABLES_REQ" || fail "$CUR_STEP" "capture-setup apply 실패"
 pass "$CUR_STEP" "db-checks·privilege-checks 통과, REPLICA IDENTITY 적용"
 
-# ── 5. 테이블 등록 (스냅샷 INITIAL) ───────────────────────────────────────────
+# ── 5. 테이블 등록 (스냅샷 모드는 프로파일의 SNAPSHOT_MODE) ───────────────────────────────────────────
 # createTarget=true → 타깃 테이블 자동 생성(RegistrationService.createTargetTable, 이미 있으면 거부).
 # 등록과 동시에 source·iceberg-sink·jdbc-sink 커넥터가 배포된다(deployConnectors).
 step "테이블 등록"
 REG_REQ=$(jq -n --argjson s "$SRC_ID" --argjson t "$TGT_ID" --arg st "$SRC_SCHEMA.$TABLE" \
-                --arg ts "$TGT_SCHEMA" --arg tt "$TABLE" \
-  '{sourceConnectionId:$s,targetConnectionId:$t,snapshotMode:"INITIAL",
+                --arg ts "$TGT_SCHEMA" --arg tt "$TABLE" --arg sm "$SNAPSHOT_MODE" \
+  '{sourceConnectionId:$s,targetConnectionId:$t,snapshotMode:$sm,
     tables:[{source:$st,targetSchema:$ts,targetTable:$tt,createTarget:true,ddlPolicy:"MANUAL"}]}')
 api POST /api/registrations "$REG_REQ" || fail "$CUR_STEP" "등록 실패"
 REG_ID=$(echo "$LAST_BODY" | jq -r --argjson s "$SRC_ID" '[.[]|select(.sourceConnectionId==$s)][0].id')
@@ -386,17 +396,9 @@ poll "$T_SNAPSHOT" snapshot snapshot_done || fail "$CUR_STEP" "${T_SNAPSHOT}s �
 pass "$CUR_STEP" "$SNAP_VIA"
 
 # ── 7. 소스 DML ──────────────────────────────────────────────────────────────
-# INSERT 3 + UPDATE 2 + DELETE 1 = 6개 변경 이벤트(스냅샷 3건은 op=r로 별도).
+# INSERT 3 + UPDATE 2 + DELETE 1 = 6개 변경 이벤트(스냅샷 3건은 op=r로 별도). SQL은 어댑터의 db_dml.
 step "소스 DML"
-psql_admin <<SQL || fail "$CUR_STEP" "소스 DML 실패"
-INSERT INTO "$SRC_SCHEMA".$TABLE VALUES
-  (4,'delta',40.00,400,'ins4',true,'2026-04-04','2026-04-04 12:00:00.789'),
-  (5,'epsilon',50.25,500,NULL,false,NULL,'2026-05-05 13:00:00.000'),
-  (6,'zeta',60.00,600,'to-delete',true,'2026-06-06',NULL);
-UPDATE "$SRC_SCHEMA".$TABLE SET amount = 99.99, memo = 'updated' WHERE id = 1;
-UPDATE "$SRC_SCHEMA".$TABLE SET active = NOT active, qty = qty + 1 WHERE id = 2;
-DELETE FROM "$SRC_SCHEMA".$TABLE WHERE id = 6;
-SQL
+db_dml || fail "$CUR_STEP" "소스 DML 실패 (db_dml)"
 DML_EVENTS=6
 EXPECTED_EVENTS=$((SNAPSHOT_ROWS + DML_EVENTS))
 pass "$CUR_STEP" "I3·U2·D1 (기대 이벤트 ≥ $EXPECTED_EVENTS = 스냅샷 $SNAPSHOT_ROWS + DML $DML_EVENTS)"

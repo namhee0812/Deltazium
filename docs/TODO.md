@@ -238,7 +238,7 @@
 
 ## 운영
 
-- [ ] **E2E 테스트 후속** (2026-10-02, `deploy/e2e-cdc.sh` v1 = PG→PG, docs/operations.md "E2E 테스트")
+- [ ] **E2E 테스트 후속** (2026-10-02, `ci/e2e-cdc.sh` v1 = PG→PG, docs/operations.md "E2E 테스트")
   - Oracle 소스 E2E(v2) — 소스 DB가 원격(192.168.0.x)이라 스키마 준비·정리 방식 결정 필요
   - changelog 요약 API — 지금은 `GET /api/changelog`의 레코드 수만 본다. op 분포(r/c/u/d)·PK별
     최종 op·스키마(5절) 일치 검증을 하려면 요약 API가 필요하다 (recovery-job 읽기 경로 재사용 검토)

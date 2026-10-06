@@ -84,12 +84,13 @@ main push / schedule                              ───▶ integration
 | `ui-build` | build | `npm ci && npm run build` | `ui/dist/` (1주) |
 | `backend-test` | test | `./gradlew test` | JUnit XML → 파이프라인 Tests 탭 (`when: always`) |
 | `ui-lint` | test | `npm ci && npm run lint` (oxlint) | — |
-| `e2e-cdc` | integration | `./deploy/e2e-cdc.sh` — PG→PG 전 구간(등록→스냅샷→DML→체크섬 정합→changelog) | — |
+| `e2e-cdc` | integration | `./ci/e2e-cdc.sh --profile "$E2E_PROFILE"` — 프로파일(기본 pg2pg)의 DB 조합으로 전 구간(등록→스냅샷→DML→체크섬 정합→changelog) | — |
 
 - `default.tags: [deltazium]` — 모든 job이 nhchoi 러너로 간다.
 - ui job은 `before_script`에서 `source ~/.nvm/nvm.sh` — nvm 설치 node는 비로그인 셸 PATH에 없다.
 - `cache:`를 쓰지 않는다 — shell executor는 `~/.gradle`·`~/.npm`을 그대로 쓴다.
 - `e2e-cdc`는 `rules`로 main push·schedule에만 돈다. `resource_group`으로 같은 dev 스택을 쓰는 job이 동시에 돌지 않게 직렬화한다.
+- 비밀번호는 프로파일에 없다: GitLab Settings → CI/CD → Variables(Masked)의 `SRC_PASSWORD`/`TGT_PASSWORD`가 환경변수로 들어와 스크립트가 읽는다(수동 실행은 git-ignore된 `ci/local.env`, 환경변수가 우선).
 - E2E 스크립트의 단계·판정·정리 정책은 `docs/operations.md` "E2E 테스트" 절.
 
 ### 설계 원칙

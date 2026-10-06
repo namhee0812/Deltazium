@@ -302,7 +302,7 @@ DbType과 무관하게 대문자로 저장하던 코드가, JDBC sink는 unquote
 OS 유저로만 job을 돌리므로 각 제품의 빌드가 자기 계정 홈의 런타임·툴체인에 붙도록 계정별로 뒀다.
 파이프라인은 build→test→integration: 단위 테스트(H2)는 push마다, 실 스택 E2E는 main·스케줄에서만
 <code>resource_group</code>으로 직렬화해 돈다. 시나리오는 job이 아니라 스크립트 안에서 늘린다.</p>
-<p>E2E(<code>deploy/e2e-cdc.sh</code>)는 backend API만으로 연결 등록→사전 점검→등록→스냅샷 대기→소스 DML
+<p>E2E(<code>ci/e2e-cdc.sh</code>)는 backend API만으로 연결 등록→사전 점검→등록→스냅샷 대기→소스 DML
 →lag 0 대기→체크섬 정합→changelog 수 검증을 거친다. at-least-once 전제로 정합은 최종 상태(체크섬) 비교,
 changelog는 "이벤트 수 이상" 판정. 정리는 <code>dze2e</code> prefix 객체만(가드 불일치면 FAIL, 실패 시
 보존). 한계: 배포 stage 전까지는 떠 있는 backend를 테스트한다.</p>

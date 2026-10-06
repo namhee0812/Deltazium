@@ -37,7 +37,8 @@ Oracle(SRC) ──Debezium source(LogMiner)──▶ Kafka(KRaft) ──┬─�
 | `ui/` | React 19 + TypeScript 콘솔 — 좌측 rail 내비 + 카드 기반 화면(라이트/다크 토큰). 대시보드(KPI 카드·토폴로지 캔버스·주의 필요 목록·처리량/lag 시계열), 6단계 등록 위저드(딕셔너리 조회→컬럼 매핑→사전 점검→배포), 테이블 모니터링(필터 칩·그리드·행 클릭 시 상세 drawer에서 정지/재개/재스냅샷/복구), DDL 타임라인(승인/거부), 운영 이벤트 타임라인, 복구(changelog 현황 + 단계형 실행 drawer), DB 연결 카드(인라인 연결 테스트), AI 진단 플로팅 위젯(우하단, SSE 스트리밍·도구 진행 표시·마크다운 답변) |
 | `recovery-job/` | 플레인 Java — Iceberg scan(SCN 필터·순서 복원) → envelope 재조립 → 복구 토픽 발행. 왕복 동등성 테스트 |
 | `connectors/` | 커넥터 설정 템플릿 4종 (설정 키 전수 공식 문서 검증) |
-| `deploy/` | 베어메탈 설치·기동·smoke test 스크립트 (멱등), 로그 위치 표준화, CDC E2E 스크립트(`e2e-cdc.sh` — PG→PG 등록→스냅샷→DML→체크섬 정합→changelog 검증, `dze2e` prefix 가드로만 정리) |
+| `deploy/` | 베어메탈 설치·기동·smoke test 스크립트 (멱등), 로그 위치 표준화 |
+| `ci/` | CDC E2E 스크립트(`e2e-cdc.sh` — 등록→스냅샷→DML→체크섬 정합→changelog 검증, `dze2e` prefix 가드로만 정리) + 접속 프로파일(`profiles/*.env`)·DB 어댑터(`lib/db-*.sh`). 비밀번호는 환경변수/`ci/local.env` |
 | `.gitlab-ci.yml` | GitLab CI 3단계 build→test→integration (shell 러너, main·스케줄에서만 E2E). 서버 구축 기록은 docs/ci.md |
 | `docs/` | 설계 기준 문서, 실측 실험 기록 |
 
@@ -106,8 +107,9 @@ Oracle은 별도 준비 필요 — ARCHIVELOG 모드, 캡처 계정 권한은 �
 통합 테스트(실 인프라 대상): `./gradlew :backend:test -Dintegration=true`
 
 ```bash
-./deploy/e2e-cdc.sh                 # CDC E2E (PG→PG, 약 2분) — 성공 시 만든 객체 정리, 실패 시 보존
-./deploy/e2e-cdc.sh --cleanup-only  # 이전 실행이 남긴 dze2e* 객체만 정리
+./ci/e2e-cdc.sh                     # CDC E2E (기본 프로파일 pg2pg, 약 2분) — 성공 시 만든 객체 정리, 실패 시 보존
+./ci/e2e-cdc.sh --profile pg2pg     # 접속 프로파일 지정 (ci/profiles/<이름>.env)
+./ci/e2e-cdc.sh --cleanup-only      # 이전 실행이 남긴 dze2e* 객체만 정리
 ```
 
 CI: 개발 서버의 자체 호스팅 GitLab + 계정별 shell 러너. `git push gitlab main`이면
