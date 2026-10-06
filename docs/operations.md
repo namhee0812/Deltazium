@@ -354,13 +354,21 @@ PostgreSQL 소스 → Kafka → PostgreSQL 타깃(+ Iceberg changelog)을 **실�
 (backend 8090·Connect·Kafka·PG 5433)에 대해 한 번 돌려 보는 스크립트다 (v1: PG→PG).
 
 ```bash
-./deploy/e2e-cdc.sh                 # 실행 (약 2분). 성공하면 만든 객체를 정리, 실패하면 보존
-./deploy/e2e-cdc.sh --cleanup-only  # 이전 실행이 남긴 dze2e* 객체만 정리
+./ci/e2e-cdc.sh                          # 실행 (약 2분). 기본 프로파일 pg2pg. 성공하면 만든 객체를 정리, 실패하면 보존
+./ci/e2e-cdc.sh --profile pg2pg          # 접속 프로파일 지정 (ci/profiles/<이름>.env)
+./ci/e2e-cdc.sh --cleanup-only           # 이전 실행이 남긴 dze2e* 객체만 정리 (--profile 과 조합 가능)
 ```
 
 - 의존: curl, jq, psql(`deploy/env.sh`의 `DZ_PG_BIN`), `dz_capture` 롤(`pg-source-setup.sh`).
-  접속 정보는 환경변수(`DZE2E_API`·`DZE2E_PG_*`·`DZ_PG_CAPTURE_PASSWORD`)로 바꿀 수 있고
-  비밀번호는 리포에 없다. 단계별 timeout은 `DZE2E_T_<CONNECTOR|SNAPSHOT|APPLY|VERIFY|CHANGELOG>`.
+- **구성**: `ci/e2e-cdc.sh`(DB 중립 본체) + `ci/profiles/<이름>.env`(접속 정보: `SRC_/TGT_ DB_TYPE·HOST·PORT·DB·USER`,
+  `SNAPSHOT_MODE`) + `ci/lib/db-<type>.sh`(DB에 직접 SQL을 치는 어댑터 — 스키마 준비·DML·슬롯/스키마 정리·잔여 검사).
+  `SRC_DB_TYPE`으로 어댑터를 고르며 지금은 `db-pg.sh`(PostgreSQL)만 있다. 프로파일이 없으면 사용 가능한 목록과 함께 FAIL,
+  어댑터가 없으면 "미구현: ci/lib/db-<type>.sh 필요"로 FAIL.
+- **비밀번호**: 프로파일(리포 포함)에 두지 않는다. 환경변수 `SRC_PASSWORD`/`TGT_PASSWORD`만 읽는다(없으면 빈 값 — 현재 PG는 trust).
+  CI는 GitLab Settings → CI/CD → Variables(Masked)로 주입하고, 수동 실행은 `ci/local.env`(git-ignore,
+  `ci/local.env.example`을 복사)에 쓴다. 이미 export된 환경변수가 local.env보다 우선한다.
+- 그 외 `DZE2E_API`(backend 주소)·`DZE2E_CATALOG_DB`, 단계별 timeout `DZE2E_T_<CONNECTOR|SNAPSHOT|APPLY|VERIFY|CHANGELOG>`는
+  환경변수로 바꾼다. 스키마 준비·정리용 관리 계정은 어댑터가 `deploy/env.sh`의 `DZ_PG_USER`(`DZE2E_PG_ADMIN`으로 변경)로 쓴다.
 - 실행마다 소스 연결 이름을 `dze2e<MMDDhhmmss>`로 만든다 — 이름이 곧 topic_prefix 슬러그라
   커넥터(`dz-*-dze2e…`)·복제 슬롯(`dz_dze2e…`)·Iceberg namespace(`changelog_dze2e…`)가 전부
   이 접두를 갖는다. 스키마는 `<prefix>_src` / `<prefix>_tgt`.
@@ -401,7 +409,7 @@ PostgreSQL 소스 → Kafka → PostgreSQL 타깃(+ Iceberg changelog)을 **실�
 
 ### CI에서의 위치
 
-`.gitlab-ci.yml` stage `integration`의 `e2e-cdc` 잡 — main 브랜치 push 또는 schedule 때만,
+`.gitlab-ci.yml` stage `integration`의 `e2e-cdc` 잡(`./ci/e2e-cdc.sh --profile "$E2E_PROFILE"`, 기본 pg2pg) — main 브랜치 push 또는 schedule 때만,
 `resource_group: dev-stack`으로 같은 dev 스택을 쓰는 잡과 직렬화한다. 한계: CI가 방금 빌드한
 산출물이 아니라 러너 서버에 이미 기동된 backend를 테스트한다(배포 stage 필요 — TODO).
 

@@ -13,3 +13,6 @@ dist/
 *.log
 .env
 deploy/env.local.sh
+
+# E2E 수동 실행용 비밀번호 (ci/local.env.example 참고)
+ci/local.env
