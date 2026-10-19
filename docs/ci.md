@@ -107,6 +107,8 @@ main push / schedule                              ───▶ integration
 - **재부팅 자동 기동 없음**: GitLab·러너 모두 재부팅 후 수동 기동.
 - **CI가 테스트하는 backend**: integration job은 push된 코드가 아니라 `~/deltazium`에서 떠 있는 backend를 호출한다. 배포 stage(이번 커밋 jar로 재기동) 전까지 "이 커밋이 E2E를 통과했다"는 의미가 성립하지 않는다.
 - 두 OS 계정이 같은 SSH 개인키를 공유한다. GitLab 사용자 분리 시 계정별 키로 교체.
+- **artifacts 디스크**: boot jar 208 MB가 push마다 1주 보관된다(`/srv/gitlab/data`). 배포 stage 설계 시 "같은 호스트의 shell 러너에 jar 업로드가 필요한가"를 재검토.
+- **다음 후보**(2026-10-19, 첫 전 단계 성공 파이프라인 #4 기준): ① 배포 stage(CD), ② CI/CD → Schedules로 nightly E2E, ③ MR 파이프라인(feature push → MR → 통과 후 머지).
 
 ## 6. 밟은 함정
 
@@ -118,3 +120,5 @@ main push / schedule                              ───▶ integration
 | dstream 키 등록 시 `Fingerprint sha256 has already been taken` | dstream의 키 쌍이 nhchoi 것과 동일(복사본). 추가 등록 없이 그대로 인증된다 |
 | 러너 등록 후 UI에 Offline | `register`는 등록만 한다. `gitlab-runner run` 프로세스가 떠 있어야 Online |
 | `sudo bash -c '... > /etc/sudoers.d/...'`가 Permission denied | 붙여넣기 중 줄바꿈으로 명령이 깨진 것. 리다이렉트를 root로 하려면 `echo ... \| sudo tee 파일` |
+| backend-build가 `BUILD SUCCESSFUL` 뒤 `Uploading artifacts... 413 Request Entity Too Large` → `Job failed` | boot jar가 208 MB인데 GitLab 기본 **Maximum artifacts size = 100 MB**(job 1개의 artifacts zip 상한). Admin → Settings → CI/CD에서 300으로 상향(2026-10-19) + artifacts 경로를 `backend-*-SNAPSHOT.jar`로 좁혀 plain jar 제외. build stage 실패로 test·integration은 skipped — stage 게이트 동작 확인. 확인: `gitlab-psql -c "select max_artifacts_size from application_settings"` |
+| job 로그를 서버에서 보려면 | 완료 직후엔 컨테이너 안 `/var/opt/gitlab/gitlab-ci/builds/<YYYY_MM>/<project_id>/<job_id>.log`. 일정 시간 뒤 artifacts 저장소로 아카이브돼 이 경로에서 사라진다(UI에서는 계속 보임) |
