@@ -37,6 +37,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * |                          | (null) 인자 자체가 빠지는지 검증. RecoveryService 생성자에
  * |                          | ConnectClient 파라미터(R2)가 추가돼 호출부도 함께 갱신
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | DW(Databricks) 타깃 복구 거부 테스트
+ * --------------------------------------------------
  */
 class RecoveryServiceTest {
 
@@ -81,5 +83,23 @@ class RecoveryServiceTest {
                 "/tmp/x-field-schema.json");
 
         assertThat(cmd).contains("field-schema-file=/tmp/x-field-schema.json");
+    }
+
+    @Test
+    void DW_타깃_복구는_명시적으로_거부한다() {
+        var registrations = org.mockito.Mockito.mock(io.deltazium.backend.registration.RegisteredTableRepository.class);
+        var connections = org.mockito.Mockito.mock(io.deltazium.backend.registry.DbConnectionService.class);
+        RegisteredTable table = new RegisteredTable(1L, "CDC", "AUTO_100", 1, 2, null, null);
+        org.mockito.Mockito.when(registrations.findAll()).thenReturn(List.of(table));
+        org.mockito.Mockito.when(connections.get(1L)).thenReturn(new io.deltazium.backend.registry.DbConnection(
+                1L, "src", "ORACLE", "SOURCE", "h", 1521, "XE", "u", "p", "dz"));
+        org.mockito.Mockito.when(connections.get(2L)).thenReturn(new io.deltazium.backend.registry.DbConnection(
+                2L, "dbx", "DATABRICKS", "TARGET", "h", 443, "workspace", "token", "p", null, "/p", "default.v"));
+        RecoveryService service = new RecoveryService(registrations, null, connections, null, null, null,
+                null, null, null, null, "localhost:9092", "/opt/recovery-job/bin/recovery-job", "/tmp");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.trigger(1L, 1753300000000L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("DW 타깃");
     }
 }

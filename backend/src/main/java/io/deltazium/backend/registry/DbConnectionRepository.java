@@ -21,6 +21,8 @@ import org.apache.ibatis.annotations.Mapper;
  * 26. 09. 07.       | 최남희  | 다중 소스·다중 타깃 ②: topic_prefix 컬럼 매핑, findByTopicPrefix
  * |                          | 추가(연결 등록 시 SOURCE 유일성 검증용)
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks 타깃: http_path·staging_volume 컬럼 매핑(InsertRow 포함)
+ * --------------------------------------------------
  */
 @Mapper
 public interface DbConnectionRepository {
@@ -46,6 +48,8 @@ public interface DbConnectionRepository {
         public String username;
         public String password;
         public String topicPrefix;
+        public String httpPath;
+        public String stagingVolume;
     }
 
     void insertRow(InsertRow row);
@@ -61,6 +65,8 @@ public interface DbConnectionRepository {
         row.username = c.username();
         row.password = c.password();
         row.topicPrefix = c.topicPrefix();
+        row.httpPath = c.httpPath();
+        row.stagingVolume = c.stagingVolume();
         insertRow(row);
         return c.withId(row.id);
     }

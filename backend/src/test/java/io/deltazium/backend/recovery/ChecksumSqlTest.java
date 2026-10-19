@@ -26,6 +26,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 26. 09. 28.       | 최남희  | SingleStore rowCountOnly 케이스 추가 — 타깃 전용이라 동종 조합이
  * |                          | 없고 항상 행수만 비교(docs/internals.md)
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks rowCountOnly(3-part 백틱 이름) 검증
+ * --------------------------------------------------
  */
 class ChecksumSqlTest {
 
@@ -107,6 +109,12 @@ class ChecksumSqlTest {
         // 대소문자와 같다 — unquoted로 참조해도 그대로 일치한다(Oracle과 같은 분기).
         assertThat(ChecksumSql.rowCountOnly(DbType.SINGLESTORE, "cdc", "MixedCase"))
                 .isEqualTo("SELECT COUNT(*) FROM cdc.MixedCase");
+    }
+
+    @Test
+    void Databricks_행수_SQL은_카탈로그_포함_백틱_3part다() {
+        assertThat(ChecksumSql.rowCountOnly(DbType.DATABRICKS, "workspace", "default", "orders"))
+                .isEqualTo("SELECT COUNT(*) FROM `workspace`.`default`.`orders`");
     }
 
     private static int countOccurrences(String haystack, String needle) {

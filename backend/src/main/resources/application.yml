@@ -65,6 +65,13 @@ deltazium:
     # recovery-job 실행 스크립트 (gradle :recovery-job:installDist 산출물)
     launcher: ../recovery-job/build/install/recovery-job/bin/recovery-job
     log-dir: ${user.home}/deltazium-runtime/logs
+  dw-apply:
+    # DW apply 워커(dw-apply 모듈, architecture.md 6.5절) — gradle :dw-apply:installDist 산출물
+    launcher: ../dw-apply/build/install/dw-apply/bin/dw-apply
+    log-dir: ${DZ_LOG_DIR:${user.home}/deltazium-runtime/logs}
+    run-dir: ${deltazium.runtime-dir}/run   # 워커 설정 JSON·상태 파일
+    batch-ms: 10000
+    parallelism: 4
 
 # 로그: 일 단위 롤오버 — 지난 날짜는 logs/yyyy-MM-dd/ 디렉터리로 이동 (인프라 로그 정책과 동일)
 logging:

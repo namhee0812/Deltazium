@@ -37,6 +37,7 @@ import io.deltazium.backend.registration.ColumnMapping;
 import io.deltazium.backend.registration.RegisteredColumnRepository;
 import io.deltazium.backend.registration.RegisteredTable;
 import io.deltazium.backend.registration.RegisteredTableRepository;
+import io.deltazium.backend.registry.DatabricksSupport;
 import io.deltazium.backend.registry.DbConnection;
 import io.deltazium.backend.registry.DbConnectionService;
 import io.deltazium.backend.registry.DbType;
@@ -104,6 +105,10 @@ import org.springframework.stereotype.Service;
  * |                          | 조합(Oracle/PostgreSQL→SingleStore)으로 rowCountOnly 경로를
  * |                          | 탄다 — 기존 checksumSupported 판정이 그대로 맞다(docs/internals.md
  * |                          | "정합 검증 체크섬" 절 갱신 참고).
+ * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks(DW) 타깃: trigger는 명시적 거부(DW 복구는 워커의 복구 토픽 구독이 필요한
+ * |                          | 후속 증분, architecture.md 6.5절), 정합 검증은 행수만(countAndChecksum에 Databricks 접속
+ * |                          | 속성·카탈로그 한정 FROM)
  * --------------------------------------------------
  */
 @Service
@@ -197,6 +202,11 @@ public class RecoveryService {
         DbConnection source = connections.get(table.sourceConnectionId());
         DbConnection target = connections.get(table.targetConnectionId());
         String prefix = source.topicPrefix();
+        if (DbType.find(target.dbType()).map(DbType::dwTarget).orElse(false)) {
+            // DW 계열의 복구 경로는 "복구 토픽 재발행 → 동일 DW apply 워커"(6.5절)인데, 워커의
+            // 복구 토픽 구독은 증분 1 범위 밖이다. recovery-sink(JDBC)는 DW 타깃에 쓸 수 없다.
+            throw new IllegalArgumentException("DW 타깃(" + target.name() + ") 복구는 아직 지원하지 않는다 — 후속 증분");
+        }
 
         // key 컬럼: 타깃 테이블 PK (apply 대상 기준 — 소스가 죽어 있어도 복구는 가능해야 한다)
         List<String> keyColumns = dictionaryRouter.forConnection(target)
@@ -517,13 +527,20 @@ public class RecoveryService {
 
     private CountChecksum countAndChecksum(DbConnection conn, DbType type, String schema, String table,
                                            List<String> cols, boolean checksumSupported) {
-        String sql = !checksumSupported ? ChecksumSql.rowCountOnly(type, schema, table)
+        String sql = !checksumSupported ? ChecksumSql.rowCountOnly(type, conn.databaseName(), schema, table)
                 : type == DbType.POSTGRESQL ? ChecksumSql.forPostgres(schema, table, cols)
                 : ChecksumSql.forOracle(schema, table, cols);
-        Properties props = new Properties();
-        props.setProperty("user", conn.username());
-        props.setProperty("password", conn.password());
-        if (type == DbType.POSTGRESQL) {
+        Properties props;
+        if (type == DbType.DATABRICKS) {
+            props = DatabricksSupport.props(conn);
+        } else {
+            props = new Properties();
+            props.setProperty("user", conn.username());
+            props.setProperty("password", conn.password());
+        }
+        if (type == DbType.DATABRICKS) {
+            // 접속 속성은 DatabricksSupport에서 완결
+        } else if (type == DbType.POSTGRESQL) {
             props.setProperty("loginTimeout", "5");
             props.setProperty("connectTimeout", "5");
         } else if (type == DbType.SINGLESTORE) {

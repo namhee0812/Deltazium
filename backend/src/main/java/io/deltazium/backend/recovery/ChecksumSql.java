@@ -37,6 +37,9 @@ import io.deltazium.backend.registry.DbType;
  * |                          | rowCountOnly 경로를 탄다, docs/internals.md 참고). fromClause의
  * |                          | 기존 "PostgreSQL 외" 분기가 SingleStore도 그대로 커버함을 명시.
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks 타깃 — rowCountOnly에 카탈로그 인자 오버로드(3-part 백틱 이름). 체크섬은
+ * |                          | 동종(Oracle·PG) 조합만이라 DW는 행수만 비교
+ * --------------------------------------------------
  */
 final class ChecksumSql {
 
@@ -72,6 +75,15 @@ final class ChecksumSql {
 
     /** 이종 DB 조합 — 체크섬 없이 행 수만 비교. */
     static String rowCountOnly(DbType type, String schema, String table) {
+        return rowCountOnly(type, null, schema, table);
+    }
+
+    /** Databricks(Unity Catalog)는 `cat`.`sch`.`tbl` 3-part 이름이라 카탈로그를 받는다. 그 외는 무시. */
+    static String rowCountOnly(DbType type, String catalog, String schema, String table) {
+        if (type == DbType.DATABRICKS) {
+            return "SELECT COUNT(*) FROM " + type.quoteIdentifier(catalog) + "." + type.quoteIdentifier(schema)
+                    + "." + type.quoteIdentifier(table);
+        }
         return "SELECT COUNT(*) FROM " + fromClause(type, schema, table);
     }
 

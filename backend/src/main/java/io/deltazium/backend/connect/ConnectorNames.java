@@ -23,6 +23,8 @@ package io.deltazium.backend.connect;
  * |                          | 추가 — SnapshotNotificationPoller가 소스별(topicPrefix별) 스냅샷
  * |                          | phase를 구분하는 데 필요(재스냅샷 중 lag 경고 제외, docs/internals.md)
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | dwApplyGroup 추가 — DW apply 워커(Databricks 등)의 Kafka consumer group 이름
+ * --------------------------------------------------
  */
 public final class ConnectorNames {
 
@@ -57,6 +59,11 @@ public final class ConnectorNames {
     /** Kafka Connect 기본 consumer group 이름 규칙 — connect-<커넥터명>. */
     public static String consumerGroup(String connectorName) {
         return "connect-" + connectorName;
+    }
+
+    /** DW apply 워커 consumer group — 타깃 커넥션당 1개(architecture.md 6.5절). lag 조회의 기준. */
+    public static String dwApplyGroup(long targetConnectionId) {
+        return "dz-dw-apply-" + targetConnectionId;
     }
 
     /** 소스 캡처 토픽 — <prefix>.<schema>.<table>. */

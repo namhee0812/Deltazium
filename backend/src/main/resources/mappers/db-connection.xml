@@ -15,6 +15,8 @@
             <arg column="username" javaType="String"/>
             <arg column="password" javaType="String"/>
             <arg column="topic_prefix" javaType="String"/>
+            <arg column="http_path" javaType="String"/>
+            <arg column="staging_volume" javaType="String"/>
         </constructor>
     </resultMap>
 
@@ -36,16 +38,17 @@
 
     <insert id="insertRow" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
         INSERT INTO db_connections
-          (name, db_type, role, host, port, database_name, username, password, topic_prefix)
+          (name, db_type, role, host, port, database_name, username, password, topic_prefix,
+           http_path, staging_volume)
         VALUES (#{name}, #{dbType}, #{role}, #{host}, #{port}, #{databaseName}, #{username}, #{password},
-                #{topicPrefix})
+                #{topicPrefix}, #{httpPath}, #{stagingVolume})
     </insert>
 
     <update id="updateRow">
         UPDATE db_connections
            SET name = #{name}, db_type = #{dbType}, role = #{role}, host = #{host}, port = #{port},
                database_name = #{databaseName}, username = #{username}, password = #{password},
-               topic_prefix = #{topicPrefix}
+               topic_prefix = #{topicPrefix}, http_path = #{httpPath}, staging_volume = #{stagingVolume}
          WHERE id = #{id}
     </update>
 

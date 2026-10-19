@@ -71,6 +71,10 @@ public final class DwApplyWorker {
         // 새로 등록한 테이블의 스냅샷 이벤트를 처음부터 받기 위함
         p.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         p.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, "600000");
+        // 토픽은 Debezium source가 만든다 — 구독만으로 broker 자동 생성되지 않게 하고, 아직 없는
+        // 토픽(등록 직후)이 생기면 빨리 알아채도록 메타데이터를 30초마다 갱신한다
+        p.put(ConsumerConfig.ALLOW_AUTO_CREATE_TOPICS_CONFIG, "false");
+        p.put(ConsumerConfig.METADATA_MAX_AGE_CONFIG, "30000");
         p.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         p.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
 

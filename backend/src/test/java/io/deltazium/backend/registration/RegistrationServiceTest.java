@@ -89,6 +89,9 @@ import static org.mockito.Mockito.when;
  * |                          | 세 구현 모두 빈이어야 한다), SingleStore 타깃 createTarget이
  * |                          | 백틱 인용 CREATE TABLE을 실행하는지 검증
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks(DW) 타깃: DwApplyService mock 추가(생성자 의존성), DW 타깃 등록 시
+ * |                          | jdbc-sink 미배포·워커 reconcile 호출·ddlPolicy MANUAL 강제·이름 소문자 폴딩 검증
+ * --------------------------------------------------
  */
 @EnableConfigurationProperties(IcebergProperties.class)
 class RegistrationServiceTest {
@@ -126,6 +129,9 @@ class RegistrationServiceTest {
 
     @MockitoBean
     TargetDdlExecutor targetDdlExecutor;
+
+    @MockitoBean
+    io.deltazium.backend.dwapply.DwApplyService dwApply;
 
     long srcId;
     long tgtId;
@@ -202,6 +208,25 @@ class RegistrationServiceTest {
                 .containsEntry("collection_name", "CDC.T1");
         // 전 컬럼 동일명 활성 → include 필터 생략
         assertThat(jdbcExtra.getAllValues().get(0)).isEmpty();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void DW_타깃으로_등록하면_jdbc_sink_대신_워커가_reconcile되고_ddl_정책은_확인후로_강제된다() {
+        long dbxId = connections.create(new DbConnection(null, "dbx", "DATABRICKS", "TARGET",
+                "dbc-x.cloud.databricks.com", 0, "workspace", "ignored", "dapi-token", null,
+                "/sql/1.0/warehouses/abc", "default.dz_staging")).id();
+        mockTable("CDC.T1", true, true);
+
+        List<RegisteredTable> result = service.register(srcId, dbxId, List.of(
+                new RegistrationService.TableSpec("CDC.T1", "Default", "Orders", null, false, "AUTO")));
+
+        verify(deploy, org.mockito.Mockito.never()).deploy(eq("jdbc-sink"), any(Map.class), any(Map.class));
+        verify(deploy).deploy(eq("iceberg-sink"), any(Map.class), any(Map.class)); // changelog 경로는 그대로
+        verify(dwApply).reconcile(dbxId);
+        assertThat(result.get(0).targetSchemaName()).isEqualTo("default");
+        assertThat(result.get(0).targetTableName()).isEqualTo("orders");
+        assertThat(result.get(0).ddlPolicy()).isEqualTo("MANUAL");
     }
 
     @Test

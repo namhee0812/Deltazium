@@ -29,6 +29,8 @@ import static org.mockito.Mockito.when;
  * --------------------------------------------------
  * 26. 09. 27.       | 최남희  | 최초 생성 — 재스냅샷 중 lag 경고 제외(docs/internals.md) 산출 검증
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | jdbcLagGroup 테스트 — OLTP 타깃은 jdbc-sink 그룹, DW 타깃은 dz-dw-apply-<targetId> 그룹
+ * --------------------------------------------------
  */
 class KafkaMetricsServiceTest {
 
@@ -75,5 +77,19 @@ class KafkaMetricsServiceTest {
     @Test
     void topicPrefix가_null이면_false다() {
         assertThat(service.isSnapshotting(null)).isFalse();
+    }
+
+    @Test
+    void lag_그룹은_OLTP는_jdbc_sink_DW는_워커_그룹이다() {
+        var table = new io.deltazium.backend.registration.RegisteredTable(
+                5L, "CDC", "ORDERS", 1, 3, null, null);
+        var oracle = new io.deltazium.backend.registry.DbConnection(3L, "t", "ORACLE", "TARGET",
+                "h", 1521, "db", "u", "p");
+        var dbx = new io.deltazium.backend.registry.DbConnection(3L, "d", "DATABRICKS", "TARGET",
+                "h", 443, "workspace", "token", "p", null, "/sql/1.0/warehouses/a", "default.v");
+
+        assertThat(KafkaMetricsService.jdbcLagGroup(oracle, "dz", table))
+                .isEqualTo("connect-dz-jdbc-sink-dz-cdc_orders");
+        assertThat(KafkaMetricsService.jdbcLagGroup(dbx, "dz", table)).isEqualTo("dz-dw-apply-3");
     }
 }

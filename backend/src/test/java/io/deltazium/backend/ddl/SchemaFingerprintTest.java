@@ -32,6 +32,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 26. 09. 28.       | 최남희  | SingleStore 타깃 케이스 추가 — draftDdl 백틱 인용, mapNativeType
  * |                          | Oracle/PostgreSQL→SingleStore, draftCreateTable SingleStore 타깃
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks 타깃 케이스 — mapNativeType(Oracle/PG→DATABRICKS 골든, 정밀도 있을 때/
+ * |                          | 없을 때), draftCreateTable(3-part 백틱·PK NOT NULL·CONSTRAINT), draftDdl(ADD COLUMNS,
+ * |                          | DROP 섞이면 초안 없음)
+ * --------------------------------------------------
  */
 class SchemaFingerprintTest {
 
@@ -359,5 +363,79 @@ class SchemaFingerprintTest {
                 "cdc_tmp", "orders", columns))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("PK");
+    }
+
+    @Test
+    void Oracle_네이티브_타입을_Databricks로_매핑한다() {
+        DbType o = DbType.ORACLE;
+        DbType d = DbType.DATABRICKS;
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "NUMBER(10,2)")).isEqualTo("DECIMAL(10,2)");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "NUMBER(10)")).isEqualTo("DECIMAL(10,0)");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "NUMBER")).isEqualTo("DECIMAL(38,10)");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "NUMBER(*,0)")).isEqualTo("DECIMAL(38,10)");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "NUMBER(50,2)")).isEqualTo("DECIMAL(38,2)");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "INTEGER")).isEqualTo("DECIMAL(38,0)");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "FLOAT")).isEqualTo("DOUBLE");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "BINARY_DOUBLE")).isEqualTo("DOUBLE");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "VARCHAR2(100)")).isEqualTo("STRING");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "NVARCHAR2")).isEqualTo("STRING");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "CHAR")).isEqualTo("STRING");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "CLOB")).isEqualTo("STRING");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "DATE")).isEqualTo("TIMESTAMP");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "TIMESTAMP(6)")).isEqualTo("TIMESTAMP");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "TIMESTAMP(6) WITH TIME ZONE")).isEqualTo("TIMESTAMP");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "RAW")).isEqualTo("BINARY");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "BLOB")).isEqualTo("BINARY");
+        assertThat(SchemaFingerprint.mapNativeType(o, d, "XMLTYPE")).isNull();
+    }
+
+    @Test
+    void PostgreSQL_네이티브_타입을_Databricks로_매핑한다() {
+        DbType p = DbType.POSTGRESQL;
+        DbType d = DbType.DATABRICKS;
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "smallint")).isEqualTo("INT");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "integer")).isEqualTo("INT");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "bigint")).isEqualTo("BIGINT");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "numeric(12,3)")).isEqualTo("DECIMAL(12,3)");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "numeric")).isEqualTo("DECIMAL(38,10)");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "real")).isEqualTo("FLOAT");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "double precision")).isEqualTo("DOUBLE");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "text")).isEqualTo("STRING");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "character varying")).isEqualTo("STRING");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "boolean")).isEqualTo("BOOLEAN");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "date")).isEqualTo("DATE");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "timestamp without time zone")).isEqualTo("TIMESTAMP");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "timestamp with time zone")).isEqualTo("TIMESTAMP");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "bytea")).isEqualTo("BINARY");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "uuid")).isEqualTo("STRING");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "jsonb")).isEqualTo("STRING");
+        assertThat(SchemaFingerprint.mapNativeType(p, d, "point")).isNull();
+    }
+
+    @Test
+    void Databricks_CREATE_TABLE_초안은_3part_백틱과_PK_NOT_NULL_제약을_쓴다() {
+        var columns = List.of(
+                new TableColumn("ID", "NUMBER", true),
+                new TableColumn("NAME", "VARCHAR2", false),
+                new TableColumn("CREATED", "DATE", false));
+        assertThat(SchemaFingerprint.draftCreateTable(DbType.ORACLE, DbType.DATABRICKS, "workspace", "default",
+                "orders", columns)).isEqualTo(
+                "CREATE TABLE `workspace`.`default`.`orders` (`id` DECIMAL(38,10) NOT NULL, `name` STRING, "
+                        + "`created` TIMESTAMP, CONSTRAINT `pk_orders` PRIMARY KEY (`id`))");
+        assertThatThrownBy(() -> SchemaFingerprint.draftCreateTable(DbType.ORACLE, DbType.DATABRICKS, null,
+                "default", "orders", columns)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("catalog");
+    }
+
+    @Test
+    void Databricks_ADD_COLUMN_초안은_ADD_COLUMNS_이고_DROP이_섞이면_초안이_없다() {
+        var add = new SchemaFingerprint.FieldChange(SchemaFingerprint.ChangeKind.ADDED, null,
+                new SchemaFingerprint.FieldDesc("amount", "int64", true, Map.of()));
+        var drop = new SchemaFingerprint.FieldChange(SchemaFingerprint.ChangeKind.REMOVED,
+                new SchemaFingerprint.FieldDesc("legacy", "int8", true, Map.of()), null);
+        assertThat(SchemaFingerprint.draftDdl("DATABRICKS", "default", "orders", List.of(add)))
+                .isEqualTo("ALTER TABLE `default`.`orders` ADD COLUMNS (`amount` BIGINT)");
+        assertThat(SchemaFingerprint.draftDdl("DATABRICKS", "default", "orders", List.of(add, drop))).isNull();
+        assertThat(SchemaFingerprint.draftDdl("DATABRICKS", "default", "orders", List.of(drop))).isNull();
     }
 }

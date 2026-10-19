@@ -32,11 +32,18 @@ import org.springframework.stereotype.Service;
  * 26. 09. 28.       | 최남희  | SingleStore(타깃 전용) 지원 — role=SOURCE인데 dbType이
  * |                          | sourceCapable=false면 거부(architecture.md 8절)
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks 타깃: normalizeDatabricks(port 443·username "token"
+ * |                          | 자동 보정), validate에 DATABRICKS 필수값(host·httpPath·catalog·
+ * |                          | stagingVolume)·토큰(password 또는 환경변수 DZ_DATABRICKS_TOKEN
+ * |                          | 폴백) 검증. update는 password 병합을 검증 앞으로 옮겼다(빈 값=기존
+ * |                          | 유지이므로 병합된 값으로 토큰 유무를 판단)
+ * --------------------------------------------------
  */
 @Service
 public class DbConnectionService {
 
     private static final Set<String> ROLES = Set.of("SOURCE", "TARGET");
+    private static final Pattern STAGING_VOLUME = Pattern.compile("^[^./\\s`]+\\.[^./\\s`]+$");
     private static final Pattern TOPIC_PREFIX = Pattern.compile("^[a-z][a-z0-9_]*$");
 
     private final DbConnectionRepository repository;
@@ -57,7 +64,7 @@ public class DbConnectionService {
     }
 
     public DbConnection create(DbConnection c) {
-        DbConnection normalized = normalizeTopicPrefix(c, null);
+        DbConnection normalized = normalizeDatabricks(normalizeTopicPrefix(c, null));
         // 이름 중복을 topicPrefix 검증보다 먼저 본다 — 이름이 같으면 기본 슬러그도 같아져
         // topicPrefix 충돌 메시지가 먼저 뜨는 것보다 "이미 존재하는 이름"이 더 정확한 원인이다.
         repository.findByName(normalized.name()).ifPresent(dup -> {
@@ -69,17 +76,17 @@ public class DbConnectionService {
 
     public DbConnection update(long id, DbConnection c) {
         DbConnection existing = get(id);
-        DbConnection normalized = normalizeTopicPrefix(c, existing);
-        validate(normalized, id);
-        // password 빈 값이면 기존 비밀번호 유지 (UI에서 미변경 수정 지원)
+        DbConnection normalized = normalizeDatabricks(normalizeTopicPrefix(c, existing));
+        // password 빈 값이면 기존 비밀번호 유지 (UI에서 미변경 수정 지원) — 병합한 값으로 검증한다
         String password = (normalized.password() == null || normalized.password().isBlank())
                 ? existing.password() : normalized.password();
+        validate(withPassword(normalized, password), id);
         // dbType 미지정이면 기존 값 유지 — 이전엔 항상 "ORACLE"로 고정돼 PostgreSQL 연결이
         // 수정 후 Oracle로 되돌아가는 결함이 있었다.
         String dbType = normalized.dbType() == null ? existing.dbType() : normalized.dbType();
         DbConnection merged = new DbConnection(id, normalized.name(), dbType, normalized.role(),
                 normalized.host(), normalized.port(), normalized.databaseName(), normalized.username(),
-                password, normalized.topicPrefix());
+                password, normalized.topicPrefix(), normalized.httpPath(), normalized.stagingVolume());
         repository.update(merged);
         return merged;
     }
@@ -92,8 +99,9 @@ public class DbConnectionService {
 
     /** 저장 없이 입력값으로 연결 확인 (등록 전 테스트), 또는 id 지정 시 저장된 값으로. */
     public OracleConnectionTester.Result test(DbConnection c) {
-        validate(normalizeTopicPrefix(c, null));
-        return tester.test(c);
+        DbConnection normalized = normalizeDatabricks(normalizeTopicPrefix(c, null));
+        validate(normalized);
+        return tester.test(normalized);
     }
 
     public OracleConnectionTester.Result testSaved(long id) {
@@ -111,12 +119,34 @@ public class DbConnectionService {
         if (c.role() == null || !"SOURCE".equals(c.role())) {
             return c.topicPrefix() == null ? c
                     : new DbConnection(c.id(), c.name(), c.dbType(), c.role(), c.host(), c.port(),
-                            c.databaseName(), c.username(), c.password(), null);
+                            c.databaseName(), c.username(), c.password(), null, c.httpPath(), c.stagingVolume());
         }
         String prefix = existing != null && existing.topicPrefix() != null
                 ? existing.topicPrefix() : slug(c.name());
         return new DbConnection(c.id(), c.name(), c.dbType(), c.role(), c.host(), c.port(),
-                c.databaseName(), c.username(), c.password(), prefix);
+                c.databaseName(), c.username(), c.password(), prefix, c.httpPath(), c.stagingVolume());
+    }
+
+    private static DbConnection withPassword(DbConnection c, String password) {
+        return new DbConnection(c.id(), c.name(), c.dbType(), c.role(), c.host(), c.port(),
+                c.databaseName(), c.username(), password, c.topicPrefix(), c.httpPath(), c.stagingVolume());
+    }
+
+    /**
+     * Databricks는 port 443·username "token"이 고정이라 입력값과 무관하게 보정하고, password
+     * null은 빈 문자열로 둔다(빈 값 = 환경변수 DZ_DATABRICKS_TOKEN 사용). 그 외 DB는 그대로.
+     */
+    private static DbConnection normalizeDatabricks(DbConnection c) {
+        if (!DbType.DATABRICKS.name().equalsIgnoreCase(c.dbType())) {
+            return c;
+        }
+        return new DbConnection(c.id(), c.name(), c.dbType(), c.role(), c.host(), 443,
+                c.databaseName(), "token", c.password() == null ? "" : c.password(), c.topicPrefix(),
+                trim(c.httpPath()), trim(c.stagingVolume()));
+    }
+
+    private static String trim(String s) {
+        return s == null ? null : s.trim();
     }
 
     /** 이름 → topic_prefix 기본값 슬러그. 숫자로 시작하면 접두를 붙여 정규식을 만족시킨다. */
@@ -156,6 +186,9 @@ public class DbConnectionService {
         if (c.host() == null || c.host().isBlank()) {
             throw new IllegalArgumentException("host는 필수다");
         }
+        if (DbType.DATABRICKS.name().equalsIgnoreCase(c.dbType())) {
+            validateDatabricks(c);
+        }
         if (c.port() <= 0 || c.port() > 65535) {
             throw new IllegalArgumentException("port 범위 오류: " + c.port());
         }
@@ -175,6 +208,25 @@ public class DbConnectionService {
                     throw new IllegalArgumentException("이미 사용 중인 topicPrefix: " + c.topicPrefix());
                 }
             });
+        }
+    }
+
+    private static void validateDatabricks(DbConnection c) {
+        if (!"TARGET".equals(c.role())) {
+            throw new IllegalArgumentException("Databricks는 타깃으로만 등록할 수 있다");
+        }
+        if (c.httpPath() == null || c.httpPath().isBlank()) {
+            throw new IllegalArgumentException("httpPath(SQL warehouse HTTP path)는 필수다");
+        }
+        if (c.databaseName() == null || c.databaseName().isBlank()) {
+            throw new IllegalArgumentException("catalog는 필수다");
+        }
+        if (c.stagingVolume() == null || !STAGING_VOLUME.matcher(c.stagingVolume()).matches()) {
+            throw new IllegalArgumentException("스테이징 Volume은 <schema>.<volume> 형식이어야 한다: " + c.stagingVolume());
+        }
+        if (DatabricksSupport.token(c) == null) {
+            throw new IllegalArgumentException("Access token이 없다 — 입력하거나 backend 환경변수 "
+                    + DatabricksSupport.TOKEN_ENV + "를 설정해야 한다");
         }
     }
 

@@ -12,7 +12,9 @@ import io.deltazium.backend.capture.SnapshotNotificationPoller;
 import io.deltazium.backend.connect.ConnectorNames;
 import io.deltazium.backend.registration.RegisteredTable;
 import io.deltazium.backend.registration.RegisteredTableRepository;
+import io.deltazium.backend.registry.DbConnection;
 import io.deltazium.backend.registry.DbConnectionService;
+import io.deltazium.backend.registry.DbType;
 import jakarta.annotation.PreDestroy;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
@@ -56,6 +58,9 @@ import org.springframework.stereotype.Service;
  * |                          | IN_PROGRESS)이면 true. UI가 스냅샷 중 lag 폭증을 장애 경고로
  * |                          | 오인하지 않도록 하기 위함(docs/internals.md) — 두 API를 UI에서
  * |                          | 조인하지 않게 여기서 계산해 함께 내려준다
+ * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | DW 타깃(Databricks) 테이블의 jdbcLag 자리에 dz-dw-apply-<targetId> 그룹 lag을 넣는다
+ * |                          | (필드명 유지 — UI 변경 최소). 그룹 선택은 jdbcLagGroup, 같은 그룹 offset은 한 번만 조회
  * --------------------------------------------------
  */
 @Service
@@ -116,12 +121,13 @@ public class KafkaMetricsService {
             // iceberg-sink는 소스당 1개라 소스별로 한 번만 조회
             Map<String, Map<TopicPartition, OffsetAndMetadata>> icebergByPrefix = new HashMap<>();
             Map<Long, Map<TopicPartition, OffsetAndMetadata>> jdbcByTable = new HashMap<>();
+            Map<String, Map<TopicPartition, OffsetAndMetadata>> offsetsByGroup = new HashMap<>();
             for (RegisteredTable t : tables) {
                 String prefix = prefixByConn.get(t.sourceConnectionId());
                 icebergByPrefix.computeIfAbsent(prefix, p -> get(client,
                         ConnectorNames.consumerGroup(ConnectorNames.icebergSink(p))));
-                jdbcByTable.put(t.id(), get(client, ConnectorNames.consumerGroup(
-                        ConnectorNames.jdbcSink(prefix, t.suffix()))));
+                String group = jdbcLagGroup(connections.get(t.targetConnectionId()), prefix, t);
+                jdbcByTable.put(t.id(), offsetsByGroup.computeIfAbsent(group, g -> get(client, g)));
             }
 
             long now = System.currentTimeMillis();
@@ -143,6 +149,16 @@ public class KafkaMetricsService {
             Thread.currentThread().interrupt();
             throw new MetricsException("Kafka 지표 조회 중단", e);
         }
+    }
+
+    /**
+     * 적재 lag의 기준 consumer group — OLTP 타깃은 테이블별 jdbc-sink 커넥터 그룹, DW 타깃
+     * (DbType.dwTarget)은 타깃 커넥션당 1개인 DW apply 워커 그룹(architecture.md 6.5절).
+     */
+    static String jdbcLagGroup(DbConnection target, String prefix, RegisteredTable t) {
+        boolean dw = DbType.find(target.dbType()).map(DbType::dwTarget).orElse(false);
+        return dw ? ConnectorNames.dwApplyGroup(target.id())
+                : ConnectorNames.consumerGroup(ConnectorNames.jdbcSink(prefix, t.suffix()));
     }
 
     /** 그 소스가 초기/재스냅샷 진행 중인지 — COMPLETED·ABORTED·NONE은 false다. COMPLETED 이후
