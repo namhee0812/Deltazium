@@ -20,9 +20,11 @@ backend-build:
     - ./gradlew :backend:bootJar :recovery-job:jar
   artifacts:
     paths:
-      - backend/build/libs/
+      - backend/build/libs/backend-*-SNAPSHOT.jar   # boot jar(~208MB)만. *-plain.jar(클래스만, 실행 불가)는 제외
       - recovery-job/build/libs/
     expire_in: 1 week
+    # 업로드 상한은 GitLab Admin → Settings → CI/CD → Maximum artifacts size (기본 100MB → 300MB로 상향, 2026-10-19).
+    # 기본값이면 boot jar 하나로 413 Request Entity Too Large가 나서 job이 실패한다.
 
 ui-build:
   stage: build
