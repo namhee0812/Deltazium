@@ -1069,15 +1069,21 @@ schema 블록의 필드 타입, Kafka offset만 읽는다(`source.*` 미접근 �
 | `org.apache.kafka.connect.data.Decimal` (base64 + scale) | JSON 숫자 | 10진 문자열이 아님. `WRITE_BIGDECIMAL_AS_PLAIN` |
 | `io.debezium.data.VariableScaleDecimal` | JSON 숫자 | Oracle NUMBER 무정밀 |
 | `io.debezium.time.Date` / Connect `Date` (epoch days) | `yyyy-MM-dd` | |
-| `Timestamp`(ms) / `MicroTimestamp`(µs) / `NanoTimestamp`(ns) / Connect `Timestamp` | `yyyy-MM-dd'T'HH:mm:ss.SSSSSS` | UTC 기준 해석, 타임존 없음 |
-| `io.debezium.time.ZonedTimestamp` | 원문 그대로 | ISO 문자열 |
+| `Timestamp`(ms) / `MicroTimestamp`(µs) / `NanoTimestamp`(ns) / Connect `Timestamp` | `yyyy-MM-dd HH:mm:ss.SSSSSS` | UTC 기준 해석, 타임존 없음 |
+| `io.debezium.time.ZonedTimestamp` | `yyyy-MM-dd HH:mm:ss.SSSSSS` | `OffsetDateTime.parse` 후 UTC로 정규화(Databricks TIMESTAMP는 UTC 정규화 타입) |
 | bytes(binary) | base64 그대로 | **증분 1 범위 밖** — BINARY 컬럼은 올바르게 적재되지 않는다 |
 
-**제약(증분 1).** (1) binary 컬럼 미지원. (2) **복구 미지원** — `RecoveryService.trigger`가 DW 타깃을
+**타임스탬프 포맷은 명시한다.** Spark JSON 리더의 기본 timestampFormat은 `yyyy-MM-dd'T'HH:mm:ss[.SSS][XXX]`라
+6자리 소수는 PERMISSIVE 모드에서 조용히 null로 떨어질 수 있다. 그래서 워커 출력과 `read_files`
+옵션(`timestampFormat => 'yyyy-MM-dd HH:mm:ss.SSSSSS'`, `dateFormat => 'yyyy-MM-dd'`)을 같은 포맷으로
+고정한다(`Flattener.TS_FORMAT` = `MergeSqlBuilder.TS_FORMAT`).
+
+**제약(증분 1).** (0) 파싱 불가 레코드는 skip — 상태 파일 카운터(`skippedRecords`·`lastSkipAt`·
+`lastSkipReason`)로 노출하고 연결 카드 배지에 "건너뜀 N"으로 보인다. DLQ는 범위 밖. (1) binary 컬럼 미지원. (2) **복구 미지원** — `RecoveryService.trigger`가 DW 타깃을
 명시적으로 거부한다(6.5절 복구 경로 = 워커의 복구 토픽 구독, 후속). (3) DDL 전파 미지원 — DW 타깃
 테이블은 `ddl_policy`를 확인 후로 강제하고, ALTER 초안은 ADD COLUMN만(`ADD COLUMNS`) 만든다. 승인은
 타깃 DDL 실행까지만이고 워커 설정의 컬럼 매핑에는 반영되지 않는다. (4) 단일 파티션(키→파티션
-고정) 가정. (5) pause/resume·재스냅샷(truncate 재구축)은 DW 타깃에서 지원하지 않는다 — jdbc-sink
+고정) 가정. (5) pause/resume·재스냅샷(truncate 재구축)은 DW 타깃에서 지원하지 않는다(재스냅샷은 `ResnapshotOrchestrator.start`가 거부) — jdbc-sink
 커넥터가 없다. (6) 소스 PK 컬럼이 컬럼 매핑에서 동일명으로 활성이어야 한다(기존 등록 규칙과 동일;
 없으면 reconcile이 실패한다). (7) Oracle 소스 `NUMBER`는 현재 딕셔너리가 정밀도를 주지 않아
 `DECIMAL(38,10)`으로 생성된다(정수 PK도 소수형) — TableColumn에 precision/scale을 추가하면

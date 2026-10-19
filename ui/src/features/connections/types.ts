@@ -16,6 +16,8 @@
  * --------------------------------------------------
  * 26. 10. 19.       | 최남희  | Databricks(타깃, DW) 지원 — httpPath·stagingVolume 필드 추가
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | DwApplyInfo.status에 skippedRecords 추가
+ * --------------------------------------------------
  */
 export interface DbConnection {
   id: number | null
@@ -44,6 +46,7 @@ export interface DwApplyInfo {
   status: {
     lastBatchAt?: string | null
     lastError?: string | null
+    skippedRecords?: number
   } | null
 }
 

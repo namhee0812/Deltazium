@@ -22,6 +22,8 @@ import org.junit.jupiter.api.Test;
  * --------------------------------------------------
  * 26. 10. 19.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | 타임스탬프 골든을 공백 구분 포맷으로, ZonedTimestamp UTC 정규화(오프셋·가변 소수) 검증
+ * --------------------------------------------------
  */
 class FlattenerTest {
 
@@ -61,8 +63,8 @@ class FlattenerTest {
         for (String op : new String[] {"c", "r", "u"}) {
             FlatRow r = f.flatten(SPEC, "dz1.T.ORDERS", 2, 41L, env(op, "null", ROW)).orElseThrow();
             assertEquals("{\"id\":7,\"name\":\"kim\",\"amt\":123.45,\"d\":\"2024-01-01\","
-                    + "\"ts\":\"2024-01-01T12:00:00.123000\",\"tsu\":\"2024-01-01T12:00:00.123456\","
-                    + "\"tsn\":\"2024-01-01T12:00:00.123456\",\"tsz\":\"2024-01-01T12:00:00Z\","
+                    + "\"ts\":\"2024-01-01 12:00:00.123000\",\"tsu\":\"2024-01-01 12:00:00.123456\","
+                    + "\"tsn\":\"2024-01-01 12:00:00.123456\",\"tsz\":\"2024-01-01 12:00:00.000000\","
                     + "\"_op\":\"" + op + "\",\"_offset\":41,\"_part\":2}", r.line());
             assertEquals(r.line().length() + 1, r.bytes());
         }
@@ -89,6 +91,14 @@ class FlattenerTest {
         String row = """
                 {"ID":1,"TSU":-1}""";
         FlatRow r = f.flatten(SPEC, "t", 0, 1, env("c", "null", row)).orElseThrow();
-        assertEquals("1969-12-31T23:59:59.999999", M.readTree(r.line()).get("tsu").asText());
+        assertEquals("1969-12-31 23:59:59.999999", M.readTree(r.line()).get("tsu").asText());
+    }
+
+    @Test
+    void zonedTimestampIsNormalizedToUtc() throws Exception {
+        String row = """
+                {"ID":1,"TSZ":"2024-01-01T21:00:00.5+09:00"}""";
+        FlatRow r = f.flatten(SPEC, "t", 0, 1, env("c", "null", row)).orElseThrow();
+        assertEquals("2024-01-01 12:00:00.500000", M.readTree(r.line()).get("tsz").asText());
     }
 }

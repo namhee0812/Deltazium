@@ -23,6 +23,8 @@ import org.junit.jupiter.api.Test;
  * --------------------------------------------------
  * 26. 10. 19.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | read_files timestampFormat·dateFormat 옵션 골든 반영
+ * --------------------------------------------------
  */
 class MergeSqlBuilderTest {
 
@@ -40,7 +42,7 @@ class MergeSqlBuilderTest {
                 MERGE INTO `workspace`.`default`.`orders` t
                 USING (SELECT * FROM (
                   SELECT *, ROW_NUMBER() OVER (PARTITION BY `id`, `seq` ORDER BY `_part`, `_offset` DESC) AS `_rn`
-                  FROM read_files('/Volumes/workspace/default/v/default__orders/dz1.S.T-p0-10-20.jsonl', format => 'json', schema => '`id` bigint, `seq` int, `name` string, `amt` decimal(10,2), `_op` STRING, `_offset` BIGINT, `_part` INT', schemaEvolutionMode => 'none')
+                  FROM read_files('/Volumes/workspace/default/v/default__orders/dz1.S.T-p0-10-20.jsonl', format => 'json', schema => '`id` bigint, `seq` int, `name` string, `amt` decimal(10,2), `_op` STRING, `_offset` BIGINT, `_part` INT', timestampFormat => 'yyyy-MM-dd HH:mm:ss.SSSSSS', dateFormat => 'yyyy-MM-dd', schemaEvolutionMode => 'none')
                 ) WHERE `_rn` = 1) s
                 ON t.`id` = s.`id` AND t.`seq` = s.`seq`
                 WHEN MATCHED AND s.`_op` = 'd' THEN DELETE

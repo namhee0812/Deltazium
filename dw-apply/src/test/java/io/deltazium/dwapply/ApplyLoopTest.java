@@ -35,6 +35,8 @@ import org.junit.jupiter.api.Test;
  * --------------------------------------------------
  * 26. 10. 19.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | 파싱 불가 레코드 skip 카운터 상태 파일 검증
+ * --------------------------------------------------
  */
 class ApplyLoopTest {
 
@@ -154,5 +156,24 @@ class ApplyLoopTest {
         assertEquals(2L, c.committed(java.util.Set.of(p1)).get(p1).offset());
         assertEquals(1L, c.committed(java.util.Set.of(p2)).get(p2).offset());
         assertTrue(client.merges.stream().anyMatch(s -> s.contains("`b`")));
+    }
+
+    @Test
+    void unparseableRecordIsSkippedAndCountedInStatus() throws Exception {
+        MockConsumer<String, String> c = consumer();
+        FakeClient client = new FakeClient();
+        java.nio.file.Path status = java.nio.file.Files.createTempFile("dw-status", ".json");
+        AtomicLong now = new AtomicLong(0);
+        ApplyLoop loop = new ApplyLoop(WorkerConfig.parse(new ObjectMapper().readTree(CONFIG)), c, client,
+                new StatusWriter(status), now::get, ms -> { }, 10, 40);
+
+        c.addRecord(new ConsumerRecord<>(T1, 0, 0L, "k", "{not json"));
+        c.addRecord(new ConsumerRecord<>(T1, 0, 1L, "k", value(2)));
+        loop.step();
+
+        var n = new ObjectMapper().readTree(status.toFile());
+        assertEquals(1, n.get("skippedRecords").asLong());
+        assertTrue(n.get("lastSkipReason").asText().startsWith(T1 + "-p0@0"));
+        assertNotNull(n.get("lastSkipAt").asText());
     }
 }

@@ -37,6 +37,8 @@
  * |                          | Access token·Catalog·스테이징 Volume으로 분기(port 443·user token은 숨김 고정).
  * |                          | DW 타깃 카드에 워커 상태 배지(실행 중/정지/오류)·마지막 배치 시각·재시작 버튼
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | 워커 배지에 '건너뜀 N'(파싱 불가 레코드 skip 누적, 0이면 숨김) 추가
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, MoreVertical, Plus } from 'lucide-react'
@@ -574,6 +576,11 @@ function ConnectionCard({
                 >
                   {workerError ? '오류' : worker.running ? '실행 중' : '정지'}
                 </StatusPill>
+                {(worker.status?.skippedRecords ?? 0) > 0 && (
+                  <span className="font-mono text-[11px] text-warn">
+                    건너뜀 {worker.status?.skippedRecords}
+                  </span>
+                )}
                 {worker.status?.lastBatchAt && (
                   <span className="font-mono text-[11px] text-ink-3">
                     마지막 배치{' '}

@@ -22,8 +22,13 @@ import java.util.stream.Collectors;
  * --------------------------------------------------
  * 26. 10. 19.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | read_files에 timestampFormat·dateFormat 명시(Flattener 출력과 일치 — Spark 기본 추론 의존 제거)
+ * --------------------------------------------------
  */
 public final class MergeSqlBuilder {
+
+    /** Flattener.TS_FORMAT과 동일한 Spark 패턴 — JSON 리더 기본 추론에 맡기지 않는다. */
+    static final String TS_FORMAT = "yyyy-MM-dd HH:mm:ss.SSSSSS";
 
     private MergeSqlBuilder() {
     }
@@ -52,7 +57,8 @@ public final class MergeSqlBuilder {
         // 파일이 여러 개(토픽·파티션 여럿)면 UNION ALL로 합친다 — 한 파일이면 단일 read_files
         List<String> reads = files.stream()
                 .map(f -> "read_files('" + lit(f) + "', format => 'json', schema => '" + schemaLiteral
-                        + "', schemaEvolutionMode => 'none')")
+                        + "', timestampFormat => '" + TS_FORMAT + "', dateFormat => 'yyyy-MM-dd'"
+                        + ", schemaEvolutionMode => 'none')")
                 .toList();
         String from = reads.size() == 1 ? reads.get(0)
                 : "(" + reads.stream().map(r -> "SELECT * FROM " + r).collect(Collectors.joining(" UNION ALL ")) + ")";

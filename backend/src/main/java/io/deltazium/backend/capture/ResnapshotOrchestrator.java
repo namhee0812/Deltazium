@@ -50,6 +50,9 @@ import org.springframework.stereotype.Component;
  * |                          | 바뀌며 markRequested()·status() 호출에 run.source.topicPrefix()를
  * |                          | 넘기도록 수정 — 다른 소스의 스냅샷과 상태가 섞이던 잠재 결함 제거
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | DW 타깃(Databricks) 가드 — 등록 테이블 중 DW 타깃이 있으면 재스냅샷 거부
+ * |                          | (jdbc-sink 커넥터 전제 흐름이라 후속 증분)
+ * --------------------------------------------------
  */
 @Component
 public class ResnapshotOrchestrator {
@@ -148,6 +151,11 @@ public class ResnapshotOrchestrator {
         List<RegisteredTable> tables = registrations.list();
         if (tables.isEmpty()) {
             throw new IllegalStateException("등록된 테이블이 없다 — 재스냅샷 대상 없음");
+        }
+        if (tables.stream().map(RegisteredTable::targetConnectionId).distinct()
+                .anyMatch(id -> io.deltazium.backend.registry.DbType.find(connections.get(id).dbType())
+                        .map(io.deltazium.backend.registry.DbType::dwTarget).orElse(false))) {
+            throw new IllegalArgumentException("DW 타깃 테이블은 재스냅샷을 지원하지 않는다 — 후속 증분");
         }
         // 재스냅샷은 소스 커넥터 하나(offset)를 리셋하는 작업이라 여러 소스가 섞이면
         // 의미가 불명확하다 — 등록 테이블이 전부 같은 소스 커넥션이어야 한다(2026-09-07, 다중 소스 ②).

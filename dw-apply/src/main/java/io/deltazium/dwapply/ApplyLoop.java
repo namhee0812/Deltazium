@@ -46,6 +46,8 @@ import org.slf4j.LoggerFactory;
  * --------------------------------------------------
  * 26. 10. 19.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | 파싱 불가 레코드 skip을 StatusWriter.skipped로 기록(상태 파일·API로 노출)
+ * --------------------------------------------------
  */
 public final class ApplyLoop {
 
@@ -130,6 +132,7 @@ public final class ApplyLoop {
                 // 파싱 불가 레코드는 건너뛴다 — 재시도로 해결되지 않아 배치를 영원히 막기 때문
                 log.error("envelope 파싱 실패, 건너뜀 topic={} partition={} offset={}: {}",
                         r.topic(), r.partition(), r.offset(), e.toString());
+                status.skipped(r.topic() + "-p" + r.partition() + "@" + r.offset() + ": " + e.getMessage());
             }
         }
         if (pending && BatchPolicy.shouldClose(windowStartMs, clock.getAsLong(), bufferedBytes,

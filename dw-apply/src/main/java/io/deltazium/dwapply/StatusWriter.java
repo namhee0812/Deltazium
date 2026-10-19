@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory;
  * 설명 : 워커 상태 파일(statusFile) 기록 — backend가 읽어 GET /api/dw-apply로 노출한다.
  * 임시 파일에 쓰고 원자적으로 교체한다. 쓰기 실패는 WARN만 남기고 워커 동작에 영향 없음.
  * {"startedAt","lastBatchAt","lastBatchRows","lastBatchMs","lastError","lastErrorAt",
+ *  "skippedRecords","lastSkipAt","lastSkipReason",
  *  "tables":{"sch.tbl":{"rows","mergeMs"}}}
  *
  * <p>
@@ -28,6 +29,8 @@ import org.slf4j.LoggerFactory;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 10. 19.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | 파싱 불가 레코드 skip 누적 카운터 skippedRecords·lastSkipAt·lastSkipReason 추가
  * --------------------------------------------------
  */
 public final class StatusWriter {
@@ -42,6 +45,9 @@ public final class StatusWriter {
     private long lastBatchMs;
     private String lastError;
     private String lastErrorAt;
+    private long skippedRecords;
+    private String lastSkipAt;
+    private String lastSkipReason;
     private Map<String, long[]> tables = new LinkedHashMap<>();
 
     public StatusWriter(Path file) {
@@ -63,6 +69,14 @@ public final class StatusWriter {
         write();
     }
 
+    /** envelope 파싱 불가로 건너뛴 레코드 1건. 누적 카운터 — DLQ는 범위 밖. */
+    public void skipped(String reason) {
+        skippedRecords++;
+        lastSkipAt = Instant.now().toString();
+        lastSkipReason = reason;
+        write();
+    }
+
     public void start() {
         write();
     }
@@ -79,6 +93,9 @@ public final class StatusWriter {
             n.put("lastBatchMs", lastBatchMs);
             n.put("lastError", lastError);
             n.put("lastErrorAt", lastErrorAt);
+            n.put("skippedRecords", skippedRecords);
+            n.put("lastSkipAt", lastSkipAt);
+            n.put("lastSkipReason", lastSkipReason);
             ObjectNode t = n.putObject("tables");
             tables.forEach((k, v) -> t.putObject(k).put("rows", v[0]).put("mergeMs", v[1]));
             Path tmp = file.resolveSibling(file.getFileName() + ".tmp");

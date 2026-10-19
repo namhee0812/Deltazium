@@ -6,8 +6,10 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
@@ -34,8 +36,8 @@ import org.slf4j.LoggerFactory;
  * (나머지 null), tombstone(null 값)·t·그 외는 skip. 추가 컬럼 _op/_offset/_part.
  * 논리 타입은 schema 블록의 필드 name/parameters를 보고 변환한다:
  * Decimal(base64+scale)→JSON 숫자, Date(epoch days)→yyyy-MM-dd,
- * Timestamp(ms)·MicroTimestamp(µs)·NanoTimestamp(ns)→yyyy-MM-dd'T'HH:mm:ss.SSSSSS(UTC 해석,
- * 타임존 없음), ZonedTimestamp→그대로. binary는 증분 1 범위 밖 — base64 문자열 그대로.
+ * Timestamp(ms)·MicroTimestamp(µs)·NanoTimestamp(ns)→yyyy-MM-dd HH:mm:ss.SSSSSS(UTC 해석,
+ * 타임존 없음), ZonedTimestamp→UTC로 정규화해 같은 포맷. binary는 증분 1 범위 밖 — base64 문자열 그대로.
  *
  * <p>
  * 수정 내역
@@ -44,12 +46,16 @@ import org.slf4j.LoggerFactory;
  * --------------------------------------------------
  * 26. 10. 19.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | 타임스탬프 포맷을 `yyyy-MM-dd HH:mm:ss.SSSSSS`(공백 구분)로 변경, ZonedTimestamp를
+ * |                          | OffsetDateTime 파싱→UTC 정규화 후 같은 포맷으로 출력 — Spark JSON 리더 기본 추론에 맡기면
+ * |                          | 6자리 소수가 null로 떨어질 수 있어 read_files에 같은 포맷을 명시한다(MergeSqlBuilder)
+ * --------------------------------------------------
  */
 public final class Flattener {
 
     private static final Logger log = LoggerFactory.getLogger(Flattener.class);
 
-    static final DateTimeFormatter TS_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSS");
+    static final DateTimeFormatter TS_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
 
     private final ObjectMapper mapper = new ObjectMapper()
             .enable(JsonGenerator.Feature.WRITE_BIGDECIMAL_AS_PLAIN);
@@ -162,8 +168,16 @@ public final class Flattener {
                 long ns = v.asLong();
                 return ts(Instant.ofEpochSecond(Math.floorDiv(ns, 1_000_000_000L), Math.floorMod(ns, 1_000_000_000L)));
             }
+            case "io.debezium.time.ZonedTimestamp" -> {
+                // ISO 오프셋 문자열(소수 자릿수 가변) → UTC 정규화. Databricks TIMESTAMP는 UTC 기준 타입
+                try {
+                    return ts(OffsetDateTime.parse(v.asText()).toInstant());
+                } catch (DateTimeParseException e) {
+                    return v;
+                }
+            }
             default -> {
-                return v; // ZonedTimestamp·일반 타입·binary(base64)는 그대로
+                return v; // 일반 타입·binary(base64)는 그대로
             }
         }
     }
