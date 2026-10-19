@@ -414,3 +414,65 @@ DDL 승인이 존재하지 않는 스키마를 찾아 실패한다. 사용자가
   의존(오브젝트 스토리지·메타데이터 DB·Kafka)은 고객이 운영하는 것을 접속 정보(Secret)로 받는다
   — 운영 조직의 표준 요구(BYO). 번들 MinIO는 프로덕션 차트에서 기본 off. 이 방향이 성립하려면
   제어면의 API·워커 분리(무상태 경계)가 선행돼야 한다.
+- **가용성 모델 (2026-10-06 확정)**: 공유 디스크(SAN·NFS) 위에 상태를 몰고 Pod를 아무 노드에서나
+  띄우는 Active/Passive 모델을 **쓰지 않는다.** 이 스택의 상태 저장 컴포넌트는 각자 자체 복제로
+  가용성을 만든다 — Kafka는 파티션 replica(RF≥3·`min.insync.replicas`), PostgreSQL은 스트리밍
+  복제+리더 선출, MinIO 분산 모드는 노드 로컬 드라이브+erasure coding. 셋 다 **공유 FS에 데이터
+  디렉터리를 두면 안 된다**(PG는 동시 마운트 시 즉시 손상, Kafka는 rename·fsync 시맨틱, MinIO는
+  공유 FS 비지원). 공유 디스크를 끼우면 가용성이 올라가는 게 아니라 단일 장애점이 하나 생긴다.
+  애초에 이 아키텍처의 공유 스토리지는 **오브젝트 스토리지(S3 API)**이고, changelog는 이미 모든
+  프로세스가 그것을 공유 접근한다(3절·5절). Iceberg는 설치 대상이 아니라 테이블 포맷이므로
+  별도 배치 단위가 없다 — 파일은 S3에, 카탈로그는 메타데이터 PostgreSQL에 있다.
+- **제품이 책임지는 HA 경계 (2026-10-06 확정)**: 무상태 3종 = **UI · backend · Kafka Connect.**
+  상태 3종(Kafka·PostgreSQL·오브젝트 스토리지)의 HA는 BYO이므로 제품 공수가 아니다.
+  - Kafka Connect는 distributed 모드가 이미 HA 설계다 — 워커 N대가 `group.id`로 그룹을 이루고
+    워커 상실 시 task가 rebalance로 재배치된다(상태는 `connect-offsets`·`connect-configs`·
+    `connect-status` 토픽). 단 **현재 `deploy/connect/connect-distributed.properties`는 이 세 토픽의
+    replication.factor가 1**이어서, 워커를 늘려도 해당 브로커 상실 시 Connect 전체가 멈춘다.
+    멀티브로커 환경에서는 3으로 올린다. 워커 다중화 시 타임존(`user.timezone=UTC`)은 전 워커 동일.
+    rebalance는 at-least-once 중복을 만들 수 있으므로 PK upsert 멱등 전제(8절)가 그대로 방어선이다.
+  - backend는 아직 무상태가 아니다. 호스트 의존 3곳(`MetricsSampler`의 `/proc`·pid 파일 읽기,
+    `SystemWarningService`의 런타임 디렉터리 디스크 체크, `LogSearchService`의 로컬 로그 파일 grep
+    — `chat/SearchLogsTool`까지 연쇄)과 `RecoveryService`의 자식 프로세스 기동(`ProcessBuilder`,
+    결과를 로그 파일 정규식 파싱)을 떼야 한다. 또한 상주 스케줄러 4개(`SchemaFingerprintPoller`·
+    `MetricsSampler`·`MetricsRollupService`·`ConnectorHealthWatcher`)가 있어 **리더 선출 없이
+    replica를 늘리면 중복 실행된다.** `replicas=1`은 HA가 아니라 자동 재시작이다.
+  - 제어면이 멈춰도 **데이터 경로는 멈추지 않는다** — 복제는 Connect가 수행하고 backend는 경로에
+    끼어 있지 않다. 다만 리더 전환 공백 중 DDL이 지나가면 7절의 "테이블 단위 정지"가 늦어진다.
+    공백 허용 범위와 감지 누락 사후 보정은 리더 선출 구현 시 7절과 함께 재검토한다.
+- **전환 순서 (2026-10-06 확정, 세부 체크리스트는 docs/TODO.md 운영 절)**: ① 컨테이너화+compose
+  → ② 제어면 무상태화(코드 — 공수의 절반, K8s를 하지 않아도 가치 있음) → ③ 단일 노드 K8s에서
+  무상태 3종만 replica 다중화 → ④ Helm 차트화 → ⑤ 멀티노드. ③이 ⑤의 리허설이다: 무상태 경계
+  위반은 단일 노드 replica에서 이미 전부 드러나고, ⑤에서 추가되는 것은 인프라 관심사(anti-affinity,
+  PV의 노드 종속성, 노드 drain)뿐이라 애플리케이션 코드는 바뀌지 않는다. 상태 3종은 ③~⑤ 전 구간에서
+  `replicas=1`+PVC 또는 클러스터 외부(베어메탈·BYO)로 둔다 — 단일 노드에서 상태 컴포넌트 replica를
+  늘리는 것은 무의미하거나(같은 디스크) 위험하다(같은 PVC 동시 마운트).
+- **컨테이너 이미지 버전 진원지 (2026-10-06)**: Kafka·Debezium·Iceberg·JDBC 드라이버 버전은
+  `deploy/versions.env` 단일 파일로 두고 `install-runtime.sh`(베어메탈)와 Dockerfile(ARG)이 함께
+  읽는다. Dockerfile에 기본값을 박아 진원지를 둘로 만들지 않는다 — 베어메탈과 컨테이너가 다른
+  버전으로 갈라지면 재현·디버깅 비용이 두 배가 된다. Iceberg sink는 공식 프리빌드 배포판이 없어
+  소스 빌드가 필요하므로(`install-runtime.sh` 참조) Connect 이미지는 멀티스테이지로 빌드한다.
+- **관측 스택의 위치 (2026-10-19)**: Prometheus·Grafana는 control plane도 data plane도 아닌
+  **관측(observability) 스택**이다 — 데이터 경로에 끼지 않으므로 죽어도 복제는 계속된다.
+  가용성 요구는 backend와 같은 수준. 역할이 서로 다르니 섞지 않는다: **Prometheus**는 수집(pull
+  scrape)+저장(자체 TSDB, 로컬 디스크·상태 있음), **Grafana**는 조회·시각화 전용(수집·저장하지
+  않음, 데이터 소스에 쿼리만 보냄). Prometheus는 `(이름+label) → float64` 시계열만 담으므로
+  **정합성 검증(체크섬·레코드 대조·PK별 최종 op)은 관측 스택의 일이 아니다** — 그쪽은
+  `ci/e2e-cdc.sh`와 changelog 요약 API가 담당한다. DDL 승인도 이벤트·상태 기계라 PG에 남는다.
+- **관측 스택 도입 순서 (2026-10-19 확정, 체크리스트는 docs/TODO.md 모니터링 절)**: 베어메탈
+  설치를 거치지 않는다 — 기동 스크립트 4개(`install-runtime.sh`·`start-infra.sh`·`dzadmin`·
+  `watchdog.sh`)에 컴포넌트가 번지는 비용을 치르고도 그 산출물(수동 scrape config)을 K8s에서
+  버리게 된다(Operator의 `ServiceMonitor`가 대체). 순서는 ⓐ JMX 메트릭 실사(노출만 확인, Prometheus
+  없이) → ⓑ Grafana + **PostgreSQL datasource**(기존 1분 샘플러 데이터를 Prometheus 없이 시각화 —
+  `TODO.md` "병행 비교 후 대체 여부 판단"을 수행하는 가장 싼 방법) → ⓒ 필요 확인 후 Prometheus.
+  ⓐ·ⓑ는 되돌릴 비용이 거의 없고(환경변수 하나, 컨테이너 하나) 둘 다 "볼 게 없다"로 끝나면
+  거기서 멈춘다. Grafana 컨테이너 단독 기동은 제품 기동 스크립트와 엮이지 않으므로 위 베어메탈
+  회피 원칙에 걸리지 않는다.
+- **JMX 현황 (2026-10-19 실측)**: `kafka-run-class.sh:203`이 Kafka·Connect에
+  `-Dcom.sun.management.jmxremote=true -Dcom.sun.management.jmxremote.authenticate=false
+  -Dcom.sun.management.jmxremote.ssl=false`를 **무조건** 붙이지만, `JMX_PORT`를 설정하지 않아
+  (`deploy/` 전체에 없음) RMI 커넥터가 시작되지 않는다 → **현재 원격 노출 없음, 로컬 attach만.**
+  따라서 `JMX_PORT`를 주는 순간 **인증·TLS 없는 JMX가 그 포트에 열린다.** JMX는 조회뿐 아니라
+  operation 호출(로그 레벨 변경 등)도 되므로, 켤 때 바인딩 주소 제한
+  (`-Dcom.sun.management.jmxremote.host=127.0.0.1`·`-Djava.rmi.server.hostname`)을 함께 지정한다.
+  헤드리스 서버라 jconsole(GUI)은 쓸 수 없어 ⓐ 실사에도 재기동이 필요하다.

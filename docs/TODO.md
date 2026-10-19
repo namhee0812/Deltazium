@@ -15,10 +15,40 @@
   - 남은 갭: watchdog·경고 센터는 감지·재기동까지다. 디스크가 실제로 가득 차는
     근본 원인(로그 보존 정책, 파티션 분리 등)은 미해결 — 아래 Prometheus 도입과
     함께 재검토
-- [ ] **Prometheus + Grafana 도입** (2026-08-06 결정: 추후 학습 겸 도입 — **2026-09-27 재확인: 지금은 보류, 추후**)
-  - Kafka·Connect에 JMX exporter 붙여 JVM(힙·GC)·커넥터 메트릭 노출
-  - 현재 자체 경량 수집(1분 샘플러 → PG)과 병행 비교 후 대체 여부 판단
-  - Debezium 커넥터 자체 메트릭(스냅샷·스트리밍 lag)도 JMX로 노출됨
+- [ ] **Prometheus + Grafana 도입** (2026-08-06 결정: 추후 학습 겸 도입 — 2026-09-27 재확인: 보류 —
+      **2026-10-19 순서 확정, 착수 대기**. 방침·근거는 architecture.md 10절 "관측 스택")
+  - 베어메탈 설치는 하지 않는다. 아래 ⓐ→ⓑ→ⓒ 순서로 하고, ⓐ·ⓑ 결과가 "볼 게 없다"면 ⓒ는 접는다
+  - [ ] **ⓐ JMX 메트릭 실사** (0.5일, Prometheus 없이 노출만 확인) — 긁을 가치가 있는지 판정
+    - 실측(2026-10-19): `kafka-run-class.sh:203`이 `jmxremote=true`·`authenticate=false`·`ssl=false`를
+      무조건 붙이나 `JMX_PORT` 미설정이라 RMI 커넥터 없음 → **현재 원격 노출 없음, 로컬 attach만**
+    - 헤드리스라 jconsole(GUI) 불가 → 재기동 필요. 두 갈래 중 **(a) 권장**:
+      (a) `JMX_PORT` + 바인딩 제한(`jmxremote.host=127.0.0.1`·`java.rmi.server.hostname`)을
+      `deploy/start-infra.sh`의 Kafka·Connect 기동 블록에 추가 → `jmxterm`/`JmxTool`로 MBean 트리 탐색.
+      (b) jmx_exporter javaagent → `curl /metrics`. ⓒ로 바로 갈 때만. **단 (b)의 scrape 규칙은 MBean
+      이름 패턴을 적는 일이라 (a)의 실사 결과가 선행돼야 쓸 수 있다**
+    - **인증 없는 JMX가 열리는 변경이므로 바인딩 제한을 같은 커밋에 넣는다** (JMX는 operation 호출도 가능)
+    - 확인 대상 메트릭(이름은 Debezium 3.6 기준 직접 확인 — 2.x에서 개편됨):
+      `MilliSecondsBehindSource`(아래 "소스 대비 캡처 지연" 항목을 대체할 수 있음),
+      `QueueRemainingCapacity`(하류 병목 조기 감지), Oracle LogMiner 계열(`CurrentScn`·`OldestScn` 등 —
+      아래 "Oracle 쪽 지표" 항목 일부 커버), Connect task 에러·rebalance 횟수, JVM 힙·GC
+      (`MetricsSampler`는 `/proc`에서 RSS만 보므로 OOM 예측에 부족)
+    - MBean 경로 예: `debezium.oracle:type=connector-metrics,context=streaming,server=<topic.prefix>`
+  - [ ] **ⓑ Grafana + PostgreSQL datasource** (0.5~1일) — Prometheus **없이** 기존 1분 샘플러
+        데이터를 바로 시각화. 대시보드 구성법을 먼저 익히고, 자체 수집의 부족분을 눈으로 확인해
+        ⓒ의 도입 근거로 삼는다 ("병행 비교 후 대체 여부 판단"의 실행 방법). Grafana 컨테이너 단독이라
+        `dzadmin`·`watchdog.sh`와 엮이지 않는다
+  - [ ] **ⓒ Prometheus** (2~3일, ⓐ·ⓑ로 필요 확인된 뒤) — scrape + TSDB.
+        **retention 설정 필수**: 디스크 풀 장애 전력 2건(26-08-20, incidents/2026-09-15)이 있는
+        환경에 디스크를 쓰는 컴포넌트를 추가하는 것이다
+  - 효용 한계(과장 금지): 단일 노드·컴포넌트 5~6개 규모에서는 `dzadmin status`+경고 센터가 상당
+    부분을 이미 커버한다. 관측 스택의 가치는 컴포넌트·노드 수에 비례한다. 정합성 검증에는 도움이
+    안 된다(architecture.md 10절 "관측 스택의 위치")
+  - 이득이 분명한 쪽: 9절이 "단일 최대 리스크"로 지목한 **Debezium Oracle 소스를 들여다보는 눈이
+    지금 없다**. 추세 기반 알람도 현재 불가(watchdog·경고 센터는 현재값·임계 기반 —
+    incidents/2026-09-15-watchdog-lock-leak.md:68이 남긴 갭)
+  - **K8s로 가면 선택이 아니라 필수가 된다**: `MetricsSampler`의 `/proc`·pid 파일 읽기가 Pod 분리로
+    죽으므로 "병행 비교"의 여지가 사라진다. internals.md:95의 "의도적 경량 자체 수집"이라는 전제가
+    그 시점에 무효가 된다
 - [ ] 소스 대비 캡처 지연(초 단위) 지표 — source.ts_ms 대비 수신 시각
 - [ ] Oracle 쪽 지표(리두 생성량, LogMiner 세션 상태) — 원격 DB라 별도 수집 경로 필요
 
@@ -248,9 +278,62 @@
     `/api/capture/snapshot` bySource에 안 나타난다. 동적 구독으로 바꿀지 결정 필요 (E2E는 보조 판정으로 우회 중)
   - Iceberg namespace 삭제 API 부재 — 등록 해제(dropChangelog)가 빈 namespace를 남긴다. E2E는 카탈로그
     행을 직접 지우는데, 제품 기능으로 둘지 결정 필요
-- [ ] docker-compose 패키징 (베어메탈 안정화 후) — 개발·PoC용, 번들 MinIO·PostgreSQL·KRaft 포함
-- [ ] **Kubernetes(Helm) 배포** (2026-09-10 방향, architecture.md 10절) — compose 다음 단계.
-      제품은 무상태 컨테이너(제어면 API·워커·UI)만, 오브젝트 스토리지·메타데이터 DB·Kafka는 고객
-      운영 것을 Secret으로 받는 BYO. 번들 MinIO는 프로덕션 차트 기본 off. 선행: 제어면 API·워커
-      분리(무상태 경계), 저장소 프로파일명 `external` 일반화
-- [ ] UI 프로덕션 서빙 (vite build 산출물을 backend 정적 리소스 또는 nginx로)
+### 컨테이너화 → K8s 전환 (2026-10-19 단계 확정, 착수 대기)
+
+방침·근거는 **architecture.md 10절**(배포 형태·가용성 모델·제품 HA 경계·전환 순서·이미지 버전
+진원지). 총 25~38 사람·일 추정. **단계마다 독립적으로 가치가 있어 중간에 멈춰도 손실이 없다 —
+특히 ①②는 K8s를 하지 않더라도 해야 할 일이다.** Helm은 ④보다 앞당길 수 없다(이미지가 없으면
+차트에 넣을 `image:`가 없고 `ImagePullBackOff`만 본다). 단 **서드파티 차트를 `helm install`로
+쓰는 것은 ③에서 바로** 해도 된다 — 차트 "작성"과 "설치"는 다른 일이다.
+
+- [ ] **① 컨테이너화 + compose** (2~3일) ← **여기서 시작한다**
+  - Dockerfile 4종: backend · recovery-job · ui(vite build → nginx) · connect(플러그인 포함)
+  - `deploy/versions.env` 신설 — Kafka·Debezium·Iceberg·PG 드라이버 버전 단일 진원지.
+    `install-runtime.sh:8-11`에서 추출하고 Dockerfile은 ARG로 받는다. **Dockerfile에 기본값을 박아
+    진원지를 둘로 만들지 않는다**(베어메탈과 컨테이너가 다른 버전으로 갈라지면 재현 비용 2배)
+  - Connect 이미지는 **멀티스테이지** — Iceberg sink는 공식 프리빌드가 없어 소스 빌드가 필요하다
+    (`install-runtime.sh:43-54`, git clone + gradle ~6분). `ICEBERG_TAG` 불변 시 레이어 캐시로 재빌드 회피.
+    CI 캐시 미스 때 매번 6분이라 레지스트리 도입이 쟁점이 되지만, kind는 `kind load docker-image`로
+    우회되니 ①에서 앞당겨 설계하지 않는다
+  - **판정: compose 환경에서 `ci/e2e-cdc.sh` 통과**(체크섬 + changelog 검증)
+  - (구) "UI 프로덕션 서빙 (vite build → nginx)" 항목을 여기에 흡수
+- [ ] **② 제어면 무상태화** (7~11일, **전체 공수의 절반**. K8s 작업이 아니라 backend 리팩터링)
+  - 호스트 의존 3곳 제거: `MetricsSampler`(`/proc`·pid 파일) · `SystemWarningService`(런타임
+    디렉터리 디스크 체크) · `LogSearchService`(로컬 로그 파일 grep — `chat/SearchLogsTool`까지 연쇄)
+  - `RecoveryService`의 `ProcessBuilder`(RecoveryService.java:325-365)는 **인터페이스 분리만 먼저**
+    (`JobLauncher` 추상화 + 프로세스 구현). K8s Job 구현은 ③에서 추가. 동시에 결과 전달을 로그 파일
+    정규식 파싱 → recovery-job이 직접 쓰는 방식으로 교체(양쪽 구현에 공통 이득).
+    field schema hint 파일(RecoveryService.java:277)도 ConfigMap/인자로
+  - **리더 선출** — 상주 스케줄러 4개(`SchemaFingerprintPoller`·`MetricsSampler`·
+    `MetricsRollupService`·`ConnectorHealthWatcher`)를 리더 전용으로. 없으면 replica>1에서 중복 실행
+  - 메트릭 교체는 위 모니터링 절 ⓒ와 같은 작업이다(중복 계상 주의). Prometheus 스택 자체 도입은 +3~5일
+  - **7절 재검토 필요**: 리더 전환 공백 중 DDL이 지나가면 "테이블 단위 정지"가 늦어진다.
+    공백 허용 범위 / 감지 누락 사후 보정을 이때 함께 결정
+  - **판정: compose에서 backend 컨테이너 2개를 띄워** ⓐ 폴링·롤업이 한 번만 도는지 ⓑ 리더를 죽였을 때
+    인수되는지 ⓒ e2e 통과
+- [ ] **③ 단일 노드 K8s + 무상태 replica** (4~6일) — kind 또는 k3s
+  - replica 다중화는 **무상태 3종(ui·backend·Kafka Connect)만.** 상태 3종(Kafka·PG·MinIO)은
+    `replicas=1`+PVC(StatefulSet) 또는 클러스터 외부(베어메탈 그대로 두고 붙기 — 1~2일 절약).
+    단일 노드에서 상태 컴포넌트 replica를 늘리는 것은 무의미하거나(같은 디스크) 위험하다(같은 PVC)
+  - `recovery-job`은 Deployment가 아니라 **Job**. ServiceAccount/Role/RoleBinding + Job watch
+  - 생 매니페스트로 쓴다(Helm은 ④). 낭비가 아니라 **무엇이 values여야 하는지의 근거**가 되고,
+    차트는 이 매니페스트를 `{{ }}`로 감싼 것이라 재작업이 아니라 승격이다
+  - 얻는 것은 Pod 장애 내성 + **롤링 업데이트 무중단** + **무상태 경계 검증**. 노드 장애 내성은 0
+    (노드가 죽으면 다 죽는다). 셋째가 ⑤의 리허설로서 핵심 — 경계 위반은 여기서 전부 드러난다
+  - **판정**: `kubectl delete pod <backend>` 중 UI 무중단 / `kubectl rollout restart` 무중단 /
+    `kubectl delete pod <connect>` 후 `curl .../status | jq '.tasks[].worker_id'` 변화 + e2e 체크섬 통과
+    (= rebalance의 at-least-once 중복이 PK upsert 멱등(8절)으로 흡수됨을 실측. **이 스택에서 회수가
+    가장 큰 검증**이고, 노드 4대 없이 단일 노드에서 가능하다)
+  - 멀티브로커로 갈 경우 `deploy/connect/connect-distributed.properties`의 내부 토픽 3종
+    `replication.factor=1` → 3. 워커 다중화 시 `user.timezone=UTC`는 전 워커 동일(2026-09-23 근거)
+- [ ] **④ Helm 차트화** (3~4일) — ③ 매니페스트를 values로 파라미터화. 번들 off 토글(BYO), 외부
+      엔드포인트 Secret. compose 파일의 서비스 목록·환경변수·기동 순서(`start-infra.sh`의
+      pg→minio→kafka→connect, `DZ_*`)가 values 설계의 입력이 된다.
+      선행: 저장소 프로파일명 `external` 일반화(현 코드명 `r2`)
+  - **판정: 같은 차트로 번들 모드·BYO 모드 둘 다 기동**
+- [ ] **⑤ 멀티노드** (3~5일, 인프라 관심사만 — 애플리케이션 코드는 바뀌지 않는다)
+  - anti-affinity · PDB 유효성 · **PV의 노드 종속성**(`local-path` StorageClass면 PVC가 노드에 고정 →
+    Pod 재스케줄 시 접근 불가. 멀티노드의 진짜 함정) · 노드 drain 리허설
+  - 상태 3종 HA(Kafka 3브로커·PG 복제·MinIO 분산)는 **여기서도 하지 않는다** — BYO(10절).
+    하려면 +9~14일이고 노드 4~5대가 필요하다
+  - **판정**: `kubectl drain <node>` 중 소스에 INSERT를 계속 넣으며 타깃 체크섬 유지 확인
