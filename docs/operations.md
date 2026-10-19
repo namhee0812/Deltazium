@@ -143,6 +143,36 @@ warning 색.
 - 테이블 supplemental logging: 적용 DDL을 보여주고 **승인 시에만** 실행 (권한 없으면 에러 노출)
 - 캡처 권한 8종: 누락 시 DBA용 GRANT 스크립트 안내, 통과 전 배포 차단
 
+### Databricks 타깃 연결 등록 (2026-10-19)
+
+연결 화면 → DB 종류 Databricks(역할 TARGET에서만 선택 가능). 입력 값:
+
+| 항목 | 값 |
+|---|---|
+| Server hostname | SQL warehouse 연결 정보의 Server hostname (예: `dbc-xxxx.cloud.databricks.com`) |
+| HTTP Path | 같은 화면의 HTTP Path (`/sql/1.0/warehouses/...`) |
+| Access token | Personal access token. 비우면 backend 서버 환경변수 `DZ_DATABRICKS_TOKEN`(`deploy/env.local.sh`) 사용 |
+| Catalog | Unity Catalog 카탈로그명 (예: `workspace`) |
+| 스테이징 Volume | `schema.volume` — 카탈로그 안에 미리 만들어 둔다 |
+
+스테이징 Volume 준비 (Databricks SQL 편집기):
+
+```sql
+CREATE VOLUME IF NOT EXISTS <catalog>.<schema>.<volume>;
+```
+
+필요 권한: 토큰 주체에 SQL warehouse `CAN USE`, 대상 카탈로그/스키마 `USE CATALOG`·`USE SCHEMA`,
+타깃 테이블 `SELECT`·`MODIFY`(CREATE 옵션을 쓰면 `CREATE TABLE`도), 스테이징 Volume
+`READ VOLUME`·`WRITE VOLUME`. [연결 테스트]는 접속 → `SHOW VOLUMES`로 Volume 존재 → Files API로
+작은 파일 쓰기/삭제까지 확인하고, 어느 단계에서 막혔는지 메시지로 알려 준다.
+
+등록 후 적재는 JDBC sink가 아니라 backend가 띄우는 DW apply 워커가 한다 — 연결 카드의
+"적재" 배지(실행 중/정지/오류)와 마지막 배치 시각, [재시작] 버튼으로 상태를 본다. 반영 지연은
+배치 주기(기본 10초) + MERGE 시간이다. 워커 로그 `~/deltazium-runtime/logs/dw-apply-<타깃id>.log`,
+상태 `GET /api/dw-apply`. 증분 1 제약(binary·복구·DDL 전파·일시정지/재스냅샷 미지원)은
+internals.md "④ Databricks 타깃" 절. 워커 런처는 `./gradlew build`(또는 `:dw-apply:installDist`)가
+만든다 — 빌드 후 backend를 재기동해야 새 런처를 쓴다.
+
 ## 운영 시나리오
 
 ### 테이블 정지/재개

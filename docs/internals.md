@@ -1018,6 +1018,84 @@ lag가 줄지 않을 뿐 예외가 나지 않아 30분 타임아웃까지 `DONE`
 실행 이력이 `RecoveryService.runs`(ConcurrentHashMap, 인메모리)에만 있어 backend 재기동 시
 소실되는 점은 이번 수정 범위 밖(TODO.md에 기록).
 
+## ④ Databricks 타깃 — DW apply 워커 (2026-10-19, feature/databricks-target)
+
+architecture.md 6.5절의 구현 판단. 코드: `dw-apply/`(플레인 Java 워커), backend `dwapply/`
+(`DwApplyService` 프로세스 관리). 라이브 Databricks 스모크는 아직 하지 않았다 — 아래 내용 중
+Databricks 쪽 동작(read_files 옵션·information_schema·Files API 응답)은 공식 문서 기준이며
+실계정 검증 전이다.
+
+**read_files 직접 MERGE를 택한 이유.** 설계 초안(6.5절)은 "스테이징 테이블 + COPY INTO + MERGE"였다.
+UC Volume의 JSONL을 `read_files(...)`로 MERGE `USING` 서브쿼리에서 직접 읽으면 스테이징 테이블
+생성·COPY INTO 이력 관리·정리가 모두 사라지고, 배치 파일은 MERGE가 끝나면 삭제하면 된다.
+워커가 무상태라는 전제(진행 상태 = Kafka offset)도 더 단순해진다 — 배치 중간 상태가 DW에 남지
+않는다. `schema`를 information_schema의 `full_data_type`으로 명시하고
+`schemaEvolutionMode => 'none'`으로 스키마 추론·진화를 끈다(타깃 테이블 타입이 진실).
+
+**배치 주기.** 기본 10초(`deltazium.dw-apply.batch-ms`) 또는 누적 64MB 중 먼저 오는 쪽
+(`BatchPolicy`). 배치 처리가 consume 루프 안에서 동기 실행되므로 "이전 배치 완료 후 다음 배치"가
+자동 성립하고, MERGE가 느려지면 그동안 쌓인 만큼 다음 배치가 커진다(자기 조절 — 별도 백프레셔
+코드 없음). 6.5절의 "1분" 기본값과 다르다 — 서버리스 웨어하우스 비용은 MERGE 횟수에 비례하므로
+운영에서 늘릴 수 있게 설정 키로 뺐다. 변경 없는 테이블은 건너뛰고, 변경 없는 poll은 DB 작업 없이
+offset만 커밋한다.
+
+**파일명·sweep·삭제 시점.** `<volume>/<schema>__<table>/<topic>-p<partition>-<first>-<last>.jsonl`
+— (토픽, 파티션, offset 범위)에서 결정적이라 같은 범위 재시도는 overwrite다. 삭제는 offset 커밋
+**후** best effort(실패는 WARN, 다음 기동 sweep이 정리). 배치 실패 시에도 그 시도의 파일을 지우고
+되감는다(offset 범위가 달라지면 이름이 달라져 남기 때문). 기동 시 sweep은 워커 소유 디렉터리
+(`schema__table`)의 파일을 전부 지운다 — 재기동 후 Volume의 파일은 전부 불필요하다(데이터는 Kafka에서
+다시 읽는다).
+
+**PK별 1건 선별은 필수.** 한 배치에 같은 키의 이벤트가 둘 이상이면 MERGE 소스에 같은 키가 중복되어
+Databricks가 `DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE`로 실패한다. 그래서 소스를
+`ROW_NUMBER() OVER (PARTITION BY 키 ORDER BY _part, _offset DESC)`로 키당 최신 1건만 남긴다. 같은
+키는 같은 Kafka 파티션에 들어오므로 `_part`는 사실상 상수다(토픽이 여러 파티션이어도 동일 키는 한
+파티션 — 키 파티셔너 전제). `d` 이벤트는 `WHEN MATCHED AND _op='d' THEN DELETE`,
+삽입은 `WHEN NOT MATCHED AND _op<>'d'`(이미 없는 행의 delete는 무시). UPDATE SET은 키 외 컬럼을
+명시 나열한다(`SET *` 금지 — 보조 컬럼 `_op`/`_offset`/`_part`가 섞이지 않게).
+
+**토큰 전달.** 워커 설정 JSON·argv에 토큰을 넣지 않는다. backend가 프로세스 환경변수
+`DZ_DATABRICKS_TOKEN`으로만 넘긴다(recovery-job처럼 argv로 비밀값을 넘기면 `ps`에 노출된다).
+토큰 해석은 `DatabricksSupport.token()` 하나로 일원화: 연결의 password, 비어 있으면 backend 환경변수
+`DZ_DATABRICKS_TOKEN`. JDBC에는 URL이 아니라 Properties(`PWD`)로 넘겨 로그에 남지 않게 한다.
+
+**envelope 평탄화.** JSON converter(`schemas.enabled=true`) 전제. 워커는 `payload.op/before/after`와
+schema 블록의 필드 타입, Kafka offset만 읽는다(`source.*` 미접근 — 5.1 불변식 2). 추가 컬럼 `_op`,
+`_offset`, `_part`. recovery-job의 논리 타입 힌트(R1~R3)와 규칙은 같지만 모듈 독립 원칙으로
+코드는 공유하지 않는다.
+
+| Debezium 논리 타입 | JSONL 값 | 비고 |
+|---|---|---|
+| `org.apache.kafka.connect.data.Decimal` (base64 + scale) | JSON 숫자 | 10진 문자열이 아님. `WRITE_BIGDECIMAL_AS_PLAIN` |
+| `io.debezium.data.VariableScaleDecimal` | JSON 숫자 | Oracle NUMBER 무정밀 |
+| `io.debezium.time.Date` / Connect `Date` (epoch days) | `yyyy-MM-dd` | |
+| `Timestamp`(ms) / `MicroTimestamp`(µs) / `NanoTimestamp`(ns) / Connect `Timestamp` | `yyyy-MM-dd'T'HH:mm:ss.SSSSSS` | UTC 기준 해석, 타임존 없음 |
+| `io.debezium.time.ZonedTimestamp` | 원문 그대로 | ISO 문자열 |
+| bytes(binary) | base64 그대로 | **증분 1 범위 밖** — BINARY 컬럼은 올바르게 적재되지 않는다 |
+
+**제약(증분 1).** (1) binary 컬럼 미지원. (2) **복구 미지원** — `RecoveryService.trigger`가 DW 타깃을
+명시적으로 거부한다(6.5절 복구 경로 = 워커의 복구 토픽 구독, 후속). (3) DDL 전파 미지원 — DW 타깃
+테이블은 `ddl_policy`를 확인 후로 강제하고, ALTER 초안은 ADD COLUMN만(`ADD COLUMNS`) 만든다. 승인은
+타깃 DDL 실행까지만이고 워커 설정의 컬럼 매핑에는 반영되지 않는다. (4) 단일 파티션(키→파티션
+고정) 가정. (5) pause/resume·재스냅샷(truncate 재구축)은 DW 타깃에서 지원하지 않는다 — jdbc-sink
+커넥터가 없다. (6) 소스 PK 컬럼이 컬럼 매핑에서 동일명으로 활성이어야 한다(기존 등록 규칙과 동일;
+없으면 reconcile이 실패한다). (7) Oracle 소스 `NUMBER`는 현재 딕셔너리가 정밀도를 주지 않아
+`DECIMAL(38,10)`으로 생성된다(정수 PK도 소수형) — TableColumn에 precision/scale을 추가하면
+`mapNativeType`이 이미 `DECIMAL(p,s)`/`DECIMAL(p,0)`을 처리한다.
+
+**워커 수명주기(backend `DwApplyService`).** DW 타깃 커넥션당 1 프로세스. `reconcile(targetId)`가
+등록 테이블·컬럼 매핑으로 설정 JSON(`$DZ_RT/run/dw-apply-<id>.json`)을 쓰고 기존 프로세스를
+(destroy → 10초 → destroyForcibly) 종료한 뒤 재기동, 테이블 0개면 종료만 한다. 등록·해제·
+backend 기동 시 호출. 감시: 비정상 종료 30초 후 재기동(연속 실패 시 2배씩 최대 5분, 2분 이상
+살았으면 초기화), **종료 코드 2(설정/토큰/드라이버)는 자동 재기동하지 않는다**. 키 컬럼은 소스
+딕셔너리의 PK를 컬럼 매핑으로 타깃 컬럼명에 옮겨 만든다. lag = consumer group
+`dz-dw-apply-<targetId>` vs 토픽 end offset (`KafkaMetricsService.jdbcLagGroup`).
+
+**Databricks 쪽 미검증 지점(라이브 스모크에서 확인).** read_files `schema`/`schemaEvolutionMode`
+옵션 철자, information_schema의 `key_column_usage` 조인(PK 조회), Files API 디렉터리 목록 응답
+형식(`contents[].path/is_directory`)과 페이지네이션, JDBC `EnableArrow=0`·`socketTimeout` 속성 지원,
+OSS 드라이버의 `--add-opens=java.base/java.nio=ALL-UNNAMED` 필요 여부.
+
 ## 개발 환경 특이사항
 
 - vite dev 서버는 `usePolling` (vite.config.ts): 이 서버에서 inotify 감시가 변경을
