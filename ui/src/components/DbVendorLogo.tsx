@@ -19,11 +19,14 @@
  * --------------------------------------------------
  * 26. 09. 23.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks 글리프 추가(simple-icons siDatabricks)
+ * --------------------------------------------------
  */
-import { siPostgresql } from 'simple-icons/icons'
+import { siDatabricks, siPostgresql } from 'simple-icons/icons'
 
 const VENDOR_ICON: Partial<Record<string, { path: string; title: string }>> = {
   POSTGRESQL: siPostgresql,
+  DATABRICKS: siDatabricks,
   // ORACLE: simple-icons 미등재 — 위 설명 참고
 }
 

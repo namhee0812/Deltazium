@@ -33,12 +33,16 @@
  * |                          | 제외. role을 SOURCE로 바꿨는데 이미 고른 dbType이 소스 불가면
  * |                          | ORACLE로 되돌린다(백엔드 거부 전에 화면에서 막음).
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks(DW 타깃) 지원 — dbType=DATABRICKS면 폼을 Server hostname·HTTP Path·
+ * |                          | Access token·Catalog·스테이징 Volume으로 분기(port 443·user token은 숨김 고정).
+ * |                          | DW 타깃 카드에 워커 상태 배지(실행 중/정지/오류)·마지막 배치 시각·재시작 버튼
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, MoreVertical, Plus } from 'lucide-react'
 import { api } from '@/lib/api'
 import { emptyConnection } from './types'
-import type { DbConnection, DbTypeOption, TestResult } from './types'
+import type { DbConnection, DbTypeOption, DwApplyInfo, TestResult } from './types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -105,6 +109,7 @@ export function ConnectionsPanel() {
   const [connections, setConnections] = useState<DbConnection[]>([])
   const [dbTypes, setDbTypes] = useState<DbTypeOption[]>([])
   const [registrations, setRegistrations] = useState<RegisteredTableRef[] | null>(null)
+  const [dwApply, setDwApply] = useState<DwApplyInfo[]>([])
   const [listError, setListError] = useState<string | null>(null)
   const [rowTests, setRowTests] = useState<Record<number, RowTest>>({})
   const [testingId, setTestingId] = useState<number | null>(null)
@@ -127,7 +132,19 @@ export function ConnectionsPanel() {
     api<RegisteredTableRef[]>('/api/registrations')
       .then(setRegistrations)
       .catch(() => setRegistrations(null))
+    api<DwApplyInfo[]>('/api/dw-apply')
+      .then(setDwApply)
+      .catch(() => setDwApply([]))
   }, [])
+
+  const restartWorker = async (targetId: number) => {
+    try {
+      await api(`/api/dw-apply/${targetId}/restart`, { method: 'POST' })
+    } catch (e) {
+      setListError((e as Error).message)
+    }
+    reload()
+  }
 
   useEffect(() => {
     reload()
@@ -271,6 +288,8 @@ export function ConnectionsPanel() {
             test={c.id != null ? rowTests[c.id] : undefined}
             testing={c.id != null && testingId === c.id}
             onTest={() => void testRow(c)}
+            worker={dwApply.find((w) => w.targetId === c.id)}
+            onRestartWorker={() => c.id != null && void restartWorker(c.id)}
             onEdit={() => openEdit(c)}
             onDelete={() => void remove(c)}
           />
@@ -301,7 +320,12 @@ export function ConnectionsPanel() {
             </div>
             <div className="space-y-1">
               <Label>DB 종류</Label>
-              <Select value={form.dbType} onValueChange={(v) => set({ dbType: v })}>
+              <Select
+                value={form.dbType}
+                onValueChange={(v) =>
+                  set(v === 'DATABRICKS' ? { dbType: v, port: 443, username: 'token' } : { dbType: v })
+                }
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -341,6 +365,57 @@ export function ConnectionsPanel() {
                 </SelectContent>
               </Select>
             </div>
+            {form.dbType === 'DATABRICKS' ? (
+              <>
+                <div className="col-span-2 space-y-1">
+                  <Label htmlFor="conn-host">Server hostname</Label>
+                  <Input
+                    id="conn-host"
+                    value={form.host}
+                    onChange={(e) => set({ host: e.target.value })}
+                    placeholder="예: dbc-xxxx.cloud.databricks.com"
+                  />
+                </div>
+                <div className="col-span-2 space-y-1">
+                  <Label htmlFor="conn-httppath">HTTP Path</Label>
+                  <Input
+                    id="conn-httppath"
+                    value={form.httpPath ?? ''}
+                    onChange={(e) => set({ httpPath: e.target.value })}
+                    placeholder="예: /sql/1.0/warehouses/abc123"
+                  />
+                </div>
+                <div className="col-span-2 space-y-1">
+                  <Label htmlFor="conn-pw">Access token</Label>
+                  <Input
+                    id="conn-pw"
+                    type="password"
+                    value={form.password ?? ''}
+                    onChange={(e) => set({ password: e.target.value })}
+                    placeholder="비우면 서버 환경변수(DZ_DATABRICKS_TOKEN) 사용"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="conn-db">Catalog</Label>
+                  <Input
+                    id="conn-db"
+                    value={form.databaseName}
+                    onChange={(e) => set({ databaseName: e.target.value })}
+                    placeholder="예: workspace"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="conn-volume">스테이징 Volume</Label>
+                  <Input
+                    id="conn-volume"
+                    value={form.stagingVolume ?? ''}
+                    onChange={(e) => set({ stagingVolume: e.target.value })}
+                    placeholder="schema.volume"
+                  />
+                </div>
+              </>
+            ) : (
+              <>
             <div className="space-y-1">
               <Label htmlFor="conn-host">호스트</Label>
               <Input
@@ -384,6 +459,8 @@ export function ConnectionsPanel() {
                 onChange={(e) => set({ password: e.target.value })}
               />
             </div>
+              </>
+            )}
           </div>
 
           {formTest && (
@@ -423,6 +500,8 @@ function ConnectionCard({
   test,
   testing,
   onTest,
+  worker,
+  onRestartWorker,
   onEdit,
   onDelete,
 }: {
@@ -432,9 +511,13 @@ function ConnectionCard({
   test: RowTest | undefined
   testing: boolean
   onTest: () => void
+  /** DW 타깃(Databricks)의 적재 워커 상태 — 그 외 연결은 undefined */
+  worker: DwApplyInfo | undefined
+  onRestartWorker: () => void
   onEdit: () => void
   onDelete: () => void
 }) {
+  const workerError = worker ? (worker.error ?? worker.status?.lastError ?? null) : null
   const accent = !test ? 'var(--stop)' : test.result.ok ? 'var(--ok)' : 'var(--crit)'
 
   return (
@@ -470,14 +553,36 @@ function ConnectionCard({
         <div className="grid grid-cols-[112px_1fr] gap-x-3 gap-y-1.5 text-[12.5px]">
           <span className="text-ink-3">접속</span>
           <span className="truncate font-mono text-[12px]">
-            {c.host}:{c.port}/{c.databaseName}
+            {c.dbType === 'DATABRICKS' ? `${c.host}/${c.databaseName}` : `${c.host}:${c.port}/${c.databaseName}`}
           </span>
-          <span className="text-ink-3">사용자</span>
-          <span className="truncate font-mono text-[12px]">{c.username}</span>
+          {c.dbType !== 'DATABRICKS' && (
+            <>
+              <span className="text-ink-3">사용자</span>
+              <span className="truncate font-mono text-[12px]">{c.username}</span>
+            </>
+          )}
           <span className="text-ink-3">사용 중인 테이블</span>
           <span className="font-mono text-[12px]">
             {tableCount === null ? '—' : `${tableCount}개`}
           </span>
+          {worker && (
+            <>
+              <span className="text-ink-3">적재</span>
+              <span className="flex items-center gap-2">
+                <StatusPill
+                  variant={workerError ? 'crit' : worker.running ? 'ok' : 'stop'}
+                >
+                  {workerError ? '오류' : worker.running ? '실행 중' : '정지'}
+                </StatusPill>
+                {worker.status?.lastBatchAt && (
+                  <span className="font-mono text-[11px] text-ink-3">
+                    마지막 배치{' '}
+                    {new Date(worker.status.lastBatchAt).toLocaleTimeString('ko-KR', { hour12: false })}
+                  </span>
+                )}
+              </span>
+            </>
+          )}
           {c.role === 'SOURCE' && c.topicPrefix && c.topicPrefix !== slugOf(c.name) && (
             <>
               <span className="text-ink-3">topic prefix</span>
@@ -492,6 +597,11 @@ function ConnectionCard({
             db-checks/{id}가 실시간 조회해야 얻어지는 값이라 /api/connections 응답엔 없다.
             없는 데이터를 추정 표시하지 않기 위해 이 카드에는 생략한다. */}
 
+        {workerError && (
+          <div className="mt-2.5 rounded-md border border-crit/40 bg-crit-soft px-3 py-2 text-[12px] text-crit">
+            {workerError}
+          </div>
+        )}
         {test && !test.result.ok && (
           <div className="mt-2.5 rounded-md border border-crit/40 bg-crit-soft px-3 py-2 text-[12px] text-crit">
             {test.result.message}
@@ -505,6 +615,7 @@ function ConnectionCard({
             ? new Date(test.testedAtMs).toLocaleTimeString('ko-KR', { hour12: false })
             : '미테스트'}
         </span>
+        {worker && <GhostButton onClick={onRestartWorker}>재시작</GhostButton>}
         <GhostButton onClick={onTest} disabled={testing}>
           {testing && <Loader2 className="size-3.5 animate-spin" />}
           테스트
