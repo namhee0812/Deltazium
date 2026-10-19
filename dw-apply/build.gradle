@@ -1,0 +1,30 @@
+// 플레인 Java — Spring 의존 금지 (CLAUDE.md). backend(DwApplyService)가 프로세스로 기동한다.
+// DW apply 워커는 "자체 코드 금지" 절대 규칙의 유일한 예외다 (architecture.md 6.5절).
+// Iceberg 의존성 금지 — 워커는 Kafka만 소비한다 (rule-check가 org.apache.iceberg import를 차단).
+plugins {
+    id 'application'
+}
+
+application {
+    mainClass = 'io.deltazium.dwapply.DwApplyWorker'
+    // Databricks JDBC가 Arrow 결과 포맷을 쓸 때 JDK 16+에서 java.nio 접근이 필요하다
+    applicationDefaultJvmArgs = ['--add-opens=java.base/java.nio=ALL-UNNAMED']
+}
+
+// backend(DwApplyService)가 build/install/dw-apply/bin/dw-apply 런처를 직접 실행한다
+// (application.yml deltazium.dw-apply.launcher). recovery-job과 같은 이유로 assemble에 걸어
+// `./gradlew clean build` 뒤에도 런처 경로가 사라지지 않게 한다.
+tasks.named('assemble') {
+    dependsOn 'installDist'
+}
+
+dependencies {
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.4'
+    implementation 'org.apache.kafka:kafka-clients:3.9.1'
+    implementation 'org.slf4j:slf4j-simple:2.0.16'
+    // Databricks JDBC (OSS 드라이버 3.x — 2.x는 레거시 Simba). SQL warehouse로 MERGE·information_schema 조회
+    runtimeOnly 'com.databricks:databricks-jdbc:3.4.3'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}

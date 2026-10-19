@@ -1,3 +1,4 @@
 rootProject.name = 'deltazium'
 include 'backend'
 include 'recovery-job'
+include 'dw-apply'
