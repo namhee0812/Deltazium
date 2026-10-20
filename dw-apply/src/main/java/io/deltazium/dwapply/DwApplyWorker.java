@@ -26,6 +26,8 @@ import org.slf4j.LoggerFactory;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 10. 19.       | 최남희  | 최초 생성
+ * 26. 10. 20.       | 최남희  | 종료 훅이 main 스레드 종료(consumer.close → LeaveGroup)를 기다리게
+ * |                          | 수정 — SIGTERM 시 죽은 멤버가 session.timeout까지 그룹에 남던 문제
  * --------------------------------------------------
  */
 public final class DwApplyWorker {
@@ -79,10 +81,20 @@ public final class DwApplyWorker {
         p.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
 
         AtomicBoolean running = new AtomicBoolean(true);
+        Thread mainThread = Thread.currentThread();
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(p)) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 running.set(false);
                 consumer.wakeup();
+                // JVM은 훅만 기다리고 main은 기다리지 않는다 — main이 try-with-resources로
+                // consumer.close()(LeaveGroup)까지 마치도록 잠시 기다린다. 이게 없으면 그룹에
+                // 죽은 멤버가 session.timeout(45초)까지 남아 재기동 워커의 파티션 배정과
+                // offset 리셋이 그만큼 늦어진다(2026-10-20 라이브 실측).
+                try {
+                    mainThread.join(15_000);
+                } catch (InterruptedException ignore) {
+                    Thread.currentThread().interrupt();
+                }
             }));
             consumer.subscribe(cfg.allTopics());
             StatusWriter status = new StatusWriter(cfg.statusFile());
