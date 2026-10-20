@@ -112,6 +112,11 @@ UPDATE db_connections SET topic_prefix = 'dz'
 UPDATE db_connections SET topic_prefix = regexp_replace(lower(name), '[^a-z0-9]+', '_', 'g')
  WHERE role = 'SOURCE' AND (topic_prefix IS NULL OR topic_prefix = '');
 
+-- Databricks 타깃 연결 전용 컬럼 (2026-10-19, architecture.md 6.5절): http_path=SQL warehouse HTTP path,
+-- staging_volume="<schema>.<volume>"(카탈로그=database_name 내 UC Volume). 다른 DB 종류는 NULL.
+ALTER TABLE db_connections ADD COLUMN IF NOT EXISTS http_path VARCHAR(255);
+ALTER TABLE db_connections ADD COLUMN IF NOT EXISTS staging_volume VARCHAR(255);
+
 -- 대시보드 시계열 샘플 (MetricsSampler, 1분 주기 · 7일 보존)
 -- metric: PUBLISH | APPLY_JDBC | APPLY_ICEBERG (value=분당 이벤트 수, name=topic)
 --         LAG_JDBC | LAG_ICEBERG (value=시점 lag, name=topic)

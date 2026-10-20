@@ -41,6 +41,7 @@ Oracle ──Debezium source(LogMiner)──▶ Kafka ──┬─▶ Debezium J
 | `connectors/` | 커넥터 설정 JSON 템플릿 4종: source / jdbc-sink / iceberg-sink / recovery-sink | backend가 이 템플릿을 렌더링해 Connect REST로 배포 |
 | `backend/` | Spring Boot 3 제어면: Connect REST 프록시, 테이블 등록(사전 점검), DDL 승인 워크플로, 복구 잡 트리거, 상태·lag 조회 | 메타데이터는 PostgreSQL |
 | `recovery-job/` | 플레인 Java: Iceberg scan(SCN 범위) → envelope 재조립 → 복구 토픽 발행 | Spring 의존 없음. backend가 프로세스로 기동 |
+| `dw-apply/` | 플레인 Java DW apply 워커(절대 규칙의 유일한 예외, architecture.md 6.5): Kafka 소비 → UC Volume 스테이징 → MERGE → offset 커밋 (Databricks) | Spring·Iceberg 의존 없음, `source.*` 미접근. backend `DwApplyService`가 타깃당 1 프로세스로 기동 |
 | `ui/` | React + TypeScript + shadcn/ui + Tailwind + TanStack Table + React Flow | 화면 기준은 `ui-reference/` |
 | `ui-reference/` | UI 프로토타입 v1~v4 (읽기 전용) | |
 | `docs/` | architecture.md 등 | |

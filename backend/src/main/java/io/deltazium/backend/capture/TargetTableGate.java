@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
 
+import io.deltazium.backend.registry.DatabricksSupport;
 import io.deltazium.backend.registry.DbConnection;
 import org.springframework.stereotype.Component;
 
@@ -26,6 +27,9 @@ import org.springframework.stereotype.Component;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 08. 05.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | open()에 Databricks 분기(UID/PWD Properties) — 접속 속성만 맞춘다.
+ * |                          | DW 타깃의 재스냅샷(truncate 재구축) 지원 여부는 별도 결정 필요
  * --------------------------------------------------
  */
 @Component
@@ -73,6 +77,9 @@ public class TargetTableGate {
     }
 
     private Connection open(DbConnection conn) throws SQLException {
+        if ("DATABRICKS".equalsIgnoreCase(conn.dbType())) {
+            return DriverManager.getConnection(conn.jdbcUrl(), DatabricksSupport.props(conn));
+        }
         Properties props = new Properties();
         props.setProperty("user", conn.username());
         props.setProperty("password", conn.password());

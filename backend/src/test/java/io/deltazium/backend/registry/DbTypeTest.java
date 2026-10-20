@@ -23,6 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 26. 09. 28.       | 최남희  | SingleStore 타깃 지원 — foldIdentifier 3분기(원문 유지)·
  * |                          | quoteIdentifier(백틱)·sourceCapable·jdbcUrl 테스트 추가
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks 타깃: fold(소문자)·quote(백틱)·dwTarget·sourceCapable, 모든 supported DbType의
+ * |                          | jdbcUrl prefix 검증(default→Oracle 폴백으로 신규 DbType 분기 누락이 숨는 것 방지)
+ * --------------------------------------------------
  */
 class DbTypeTest {
 
@@ -80,5 +83,42 @@ class DbTypeTest {
                 "127.0.0.1", 3307, "cdc_tgt", "root", "secret");
         assertThat(c.jdbcUrl()).isEqualTo(
                 "jdbc:mysql://127.0.0.1:3307/cdc_tgt?useSSL=false&allowPublicKeyRetrieval=true");
+    }
+
+    @Test
+    void Databricks는_소문자_폴딩_백틱_인용_타깃전용_DW다() {
+        assertThat(DbType.DATABRICKS.foldIdentifier("Default")).isEqualTo("default");
+        assertThat(DbType.DATABRICKS.quoteIdentifier("orders")).isEqualTo("`orders`");
+        assertThat(DbType.DATABRICKS.sourceCapable()).isFalse();
+        assertThat(DbType.DATABRICKS.hasSchemaChangeTopic()).isFalse();
+        assertThat(DbType.DATABRICKS.dwTarget()).isTrue();
+        assertThat(DbType.ORACLE.dwTarget()).isFalse();
+        assertThat(DbType.POSTGRESQL.dwTarget()).isFalse();
+        assertThat(DbType.SINGLESTORE.dwTarget()).isFalse();
+    }
+
+    @Test
+    void 모든_지원_DbType은_자기_타입의_jdbc_prefix를_만든다() {
+        java.util.Map<DbType, String> prefix = java.util.Map.of(
+                DbType.ORACLE, "jdbc:oracle:thin:",
+                DbType.POSTGRESQL, "jdbc:postgresql:",
+                DbType.SINGLESTORE, "jdbc:mysql:",
+                DbType.DATABRICKS, "jdbc:databricks:");
+        for (DbType t : DbType.supportedTypes()) {
+            assertThat(prefix).as("jdbcUrl 검증 대상 누락: " + t).containsKey(t);
+            DbConnection c = new DbConnection(1L, "x", t.name(), "TARGET", "h", 443, "db", "u", "p",
+                    null, "/sql/1.0/warehouses/w", "s.v");
+            assertThat(c.jdbcUrl()).as(t.name()).startsWith(prefix.get(t));
+        }
+    }
+
+    @Test
+    void Databricks_jdbcUrl은_토큰을_담지_않는다() {
+        DbConnection c = new DbConnection(1L, "dbx", "DATABRICKS", "TARGET", "dbc-x.cloud.databricks.com", 443,
+                "workspace", "token", "dapi-secret", null, "/sql/1.0/warehouses/abc", "default.v");
+        assertThat(c.jdbcUrl()).isEqualTo(
+                "jdbc:databricks://dbc-x.cloud.databricks.com:443;httpPath=/sql/1.0/warehouses/abc;AuthMech=3;UID=token");
+        assertThat(c.jdbcUrl()).doesNotContain("dapi-secret");
+        assertThat(DatabricksSupport.props(c).getProperty("PWD")).isEqualTo("dapi-secret");
     }
 }

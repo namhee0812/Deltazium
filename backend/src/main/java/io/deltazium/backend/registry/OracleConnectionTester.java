@@ -1,8 +1,15 @@
 package io.deltazium.backend.registry;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.Duration;
 import java.util.Properties;
 
 import org.springframework.stereotype.Component;
@@ -30,6 +37,11 @@ import org.springframework.stereotype.Component;
  * 26. 09. 28.       | 최남희  | SingleStore(mysql-connector-j) 분기 추가 — connectTimeout·
  * |                          | socketTimeout(ms 단위, MySQL 드라이버 속성명)
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks 타깃 분기 — UID/PWD Properties(DatabricksSupport),
+ * |                          | 접속 후 SHOW VOLUMES로 스테이징 Volume 존재 확인, Files API로
+ * |                          | probe 파일 PUT/DELETE까지 해 쓰기 권한을 확인한다(접속은 되는데
+ * |                          | Volume이 없거나 쓸 수 없는 경우를 등록 전에 잡는다)
+ * --------------------------------------------------
  */
 @Component
 public class OracleConnectionTester {
@@ -38,6 +50,9 @@ public class OracleConnectionTester {
     }
 
     public Result test(DbConnection c) {
+        if ("DATABRICKS".equalsIgnoreCase(c.dbType())) {
+            return testDatabricks(c);
+        }
         Properties props = new Properties();
         props.setProperty("user", c.username());
         props.setProperty("password", c.password());
@@ -55,6 +70,71 @@ public class OracleConnectionTester {
             return new Result(true, conn.getMetaData().getDatabaseProductVersion());
         } catch (SQLException e) {
             return new Result(false, e.getMessage() == null ? e.toString() : e.getMessage().strip());
+        }
+    }
+
+    /**
+     * Databricks: (1) SQL warehouse 접속, (2) SHOW VOLUMES로 stagingVolume 존재, (3) Files API
+     * probe 파일 PUT/DELETE(쓰기 권한). 어느 단계에서 실패했는지 메시지에 드러낸다.
+     */
+    private Result testDatabricks(DbConnection c) {
+        Properties props;
+        try {
+            props = DatabricksSupport.props(c);
+        } catch (IllegalStateException e) {
+            return new Result(false, e.getMessage());
+        }
+        props.setProperty("socketTimeout", "60"); // 초 단위 — warehouse 콜드 스타트를 감안
+        String version;
+        String[] sv = c.stagingVolume().split("\\.", 2);
+        try (Connection conn = DriverManager.getConnection(c.jdbcUrl(), props)) {
+            version = conn.getMetaData().getDatabaseProductVersion();
+            boolean found = false;
+            try (Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery("SHOW VOLUMES IN `" + c.databaseName().replace("`", "``")
+                         + "`.`" + sv[0].replace("`", "``") + "`")) {
+                while (rs.next()) {
+                    if (sv[1].equalsIgnoreCase(rs.getString("volume_name"))) {
+                        found = true;
+                    }
+                }
+            }
+            if (!found) {
+                return new Result(false, "접속은 되지만 스테이징 Volume이 없다: " + c.stagingVolume()
+                        + " (catalog " + c.databaseName() + ") — CREATE VOLUME으로 먼저 만들 것");
+            }
+        } catch (SQLException e) {
+            return new Result(false, e.getMessage() == null ? e.toString() : e.getMessage().strip());
+        }
+        String probeError = probeFilesApi(c);
+        if (probeError != null) {
+            return new Result(false, "접속·Volume은 확인됐지만 Volume에 쓸 수 없다: " + probeError);
+        }
+        return new Result(true, "Databricks " + version + " · Volume " + c.stagingVolume() + " 쓰기 확인");
+    }
+
+    /** Files API로 작은 probe 파일을 올렸다 지운다. 성공이면 null, 실패면 사유. */
+    private String probeFilesApi(DbConnection c) {
+        try {
+            HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+            String path = DatabricksSupport.volumePath(c) + "/_dz_probe.txt";
+            URI uri = new URI("https", c.host(), "/api/2.0/fs/files" + path, "overwrite=true", null);
+            String auth = "Bearer " + DatabricksSupport.token(c);
+            HttpResponse<String> put = http.send(HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(30))
+                    .header("Authorization", auth).header("Content-Type", "application/octet-stream")
+                    .PUT(HttpRequest.BodyPublishers.ofString("dz")).build(), HttpResponse.BodyHandlers.ofString());
+            if (put.statusCode() / 100 != 2) {
+                return "Files API PUT HTTP " + put.statusCode();
+            }
+            http.send(HttpRequest.newBuilder(new URI("https", c.host(), "/api/2.0/fs/files" + path, null, null))
+                    .timeout(Duration.ofSeconds(30)).header("Authorization", auth).DELETE().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            return null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "중단됨";
+        } catch (Exception e) {
+            return e.toString();
         }
     }
 }

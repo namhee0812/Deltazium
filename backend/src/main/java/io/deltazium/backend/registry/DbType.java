@@ -38,23 +38,33 @@ import java.util.Optional;
  * |                          | quoteIdentifier 추가(Oracle·PG는 큰따옴표, SingleStore는 백틱) —
  * |                          | SchemaFingerprint·ChecksumSql의 식별자 인용에 공용으로 쓴다.
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks 타깃 추가 — dwTarget 속성 신설(DW 계열 타깃은 JDBC sink
+ * |                          | 대신 DW apply 워커로 적재, architecture.md 6.5절). DATABRICKS는
+ * |                          | supported=true·hasSchemaChangeTopic=false·sourceCapable=false·
+ * |                          | dwTarget=true. foldIdentifier는 소문자(UC는 식별자를 소문자로 저장),
+ * |                          | quoteIdentifier는 백틱.
+ * --------------------------------------------------
  */
 public enum DbType {
-    ORACLE("Oracle", true, true, true),
-    POSTGRESQL("PostgreSQL", true, false, true),
-    MYSQL("MySQL", false, true, true),
-    SINGLESTORE("SingleStore", true, false, false);
+    ORACLE("Oracle", true, true, true, false),
+    POSTGRESQL("PostgreSQL", true, false, true, false),
+    MYSQL("MySQL", false, true, true, false),
+    SINGLESTORE("SingleStore", true, false, false, false),
+    DATABRICKS("Databricks", true, false, false, true);
 
     private final String label;
     private final boolean supported;
     private final boolean hasSchemaChangeTopic;
     private final boolean sourceCapable;
+    private final boolean dwTarget;
 
-    DbType(String label, boolean supported, boolean hasSchemaChangeTopic, boolean sourceCapable) {
+    DbType(String label, boolean supported, boolean hasSchemaChangeTopic, boolean sourceCapable,
+           boolean dwTarget) {
         this.label = label;
         this.supported = supported;
         this.hasSchemaChangeTopic = hasSchemaChangeTopic;
         this.sourceCapable = sourceCapable;
+        this.dwTarget = dwTarget;
     }
 
     public String label() {
@@ -81,6 +91,14 @@ public enum DbType {
      */
     public boolean sourceCapable() {
         return sourceCapable;
+    }
+
+    /**
+     * true면 DW 계열 타깃 — JDBC sink 대신 DW apply 워커(stage-and-merge)가 적재한다
+     * (architecture.md 6.5절). 등록 시 jdbc-sink를 배포하지 않고 DwApplyService가 워커를 관리한다.
+     */
+    public boolean dwTarget() {
+        return dwTarget;
     }
 
     /**
@@ -118,6 +136,7 @@ public enum DbType {
         return switch (this) {
             case POSTGRESQL -> raw.toLowerCase(Locale.ROOT);
             case SINGLESTORE -> raw;
+            case DATABRICKS -> raw.toLowerCase(Locale.ROOT); // UC는 식별자를 소문자로 저장
             default -> raw.toUpperCase(Locale.ROOT); // ORACLE·MYSQL
         };
     }
@@ -129,7 +148,7 @@ public enum DbType {
      * 않는다(공식 문법: {@code `identifier`}).
      */
     public String quoteIdentifier(String raw) {
-        String q = this == SINGLESTORE ? "`" : "\"";
+        String q = (this == SINGLESTORE || this == DATABRICKS) ? "`" : "\"";
         return q + raw + q;
     }
 

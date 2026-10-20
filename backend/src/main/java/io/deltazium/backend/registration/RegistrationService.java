@@ -19,6 +19,7 @@ import io.deltazium.backend.dictionary.PrecheckItem;
 import io.deltazium.backend.dictionary.SourceDictionary;
 import io.deltazium.backend.dictionary.SourceTableInfo;
 import io.deltazium.backend.dictionary.TableColumn;
+import io.deltazium.backend.dwapply.DwApplyService;
 import io.deltazium.backend.events.TableEventService;
 import io.deltazium.backend.iceberg.ChangelogTableService;
 import io.deltazium.backend.iceberg.IcebergProperties;
@@ -106,6 +107,11 @@ import org.springframework.transaction.annotation.Transactional;
  * |                          | (deploySource)는 다른 테이블까지 건드려 과도하므로 테이블 하나의
  * |                          | jdbc-sink만 다시 배포한다
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks(DW) 타깃 분기(architecture.md 6.5절): deploySource가 DW 타깃 테이블의
+ * |                          | jdbc-sink를 배포하지 않고 deployConnectors·unregister가 DwApplyService.reconcile로 워커를
+ * |                          | 갱신한다. DW 타깃은 ddlPolicy를 MANUAL로 강제, pause/resume은 거부(sink 커넥터 없음),
+ * |                          | redeployJdbcSinkOnly는 reconcile로 대체. CREATE 초안은 카탈로그 오버로드 사용.
+ * --------------------------------------------------
  */
 @Service
 public class RegistrationService {
@@ -149,6 +155,7 @@ public class RegistrationService {
     private final TableEventService events;
     private final PostgresReplicationCleaner replicationCleaner;
     private final TargetDdlExecutor targetDdlExecutor;
+    private final DwApplyService dwApply;
     private final String kafkaBootstrap;
 
     public RegistrationService(RegisteredTableRepository repository,
@@ -161,6 +168,7 @@ public class RegistrationService {
                                TableEventService events,
                                PostgresReplicationCleaner replicationCleaner,
                                TargetDdlExecutor targetDdlExecutor,
+                               DwApplyService dwApply,
                                @Value("${deltazium.kafka.bootstrap}") String kafkaBootstrap) {
         this.repository = repository;
         this.columnRepository = columnRepository;
@@ -172,6 +180,7 @@ public class RegistrationService {
         this.events = events;
         this.replicationCleaner = replicationCleaner;
         this.targetDdlExecutor = targetDdlExecutor;
+        this.dwApply = dwApply;
         this.kafkaBootstrap = kafkaBootstrap;
     }
 
@@ -280,7 +289,9 @@ public class RegistrationService {
 
             long tableId = repository.insert(info.schema(), info.table(),
                     sourceConnectionId, targetConnectionId,
-                    foldedTargetSchema, foldedTargetTable, mode, spec.ddlPolicy());
+                    foldedTargetSchema, foldedTargetTable, mode,
+                    // DW 타깃은 DDL 전파가 범위 밖이라 자동 적용을 허용하지 않는다(항상 확인 후)
+                    targetType.dwTarget() ? "MANUAL" : spec.ddlPolicy());
             columnRepository.insertAll(tableId, mappings);
         }
 
@@ -386,8 +397,8 @@ public class RegistrationService {
         if (exists) {
             throw new IllegalArgumentException("타깃 테이블이 이미 존재한다: " + targetSchema + "." + targetTable);
         }
-        String ddl = SchemaFingerprint.draftCreateTable(sourceType, targetType, targetSchema, targetTable,
-                sourceColumns);
+        String ddl = SchemaFingerprint.draftCreateTable(sourceType, targetType, target.databaseName(),
+                targetSchema, targetTable, sourceColumns);
         targetDdlExecutor.execute(target, ddl);
     }
 
@@ -417,7 +428,8 @@ public class RegistrationService {
         }
         String foldedSchema = foldTargetIdentifier(targetType, targetSchema, schema);
         String foldedTable = foldTargetIdentifier(targetType, targetTable, table);
-        return SchemaFingerprint.draftCreateTable(sourceType, targetType, foldedSchema, foldedTable, sourceColumns);
+        return SchemaFingerprint.draftCreateTable(sourceType, targetType, target.databaseName(), foldedSchema,
+                foldedTable, sourceColumns);
     }
 
     /**
@@ -441,6 +453,10 @@ public class RegistrationService {
         for (Map.Entry<Long, List<RegisteredTable>> e : bySource.entrySet()) {
             deploySource(connections.get(e.getKey()), e.getValue(), null);
         }
+        // DW 타깃은 jdbc-sink 대신 DW apply 워커 — 등록 테이블이 있는 DW 타깃마다 설정·재기동
+        repository.findAll().stream().map(RegisteredTable::targetConnectionId).distinct()
+                .filter(id -> isDw(connections.get(id)))
+                .forEach(dwApply::reconcile);
         // 구버전 단일 jdbc-sink/전역 source가 남아있으면 제거 (테이블별·소스별 커넥터로 전환됨)
         try {
             deploy.deleteConnector("dz-jdbc-sink");
@@ -481,6 +497,9 @@ public class RegistrationService {
         // (종전엔 첫 등록 호출의 target 하나를 전체 재배포에 재사용했다 — 다중 타깃 전제로 수정).
         for (RegisteredTable t : tables) {
             DbConnection target = connections.get(t.targetConnectionId());
+            if (isDw(target)) {
+                continue; // DW 타깃은 deployConnectors가 워커를 reconcile한다(6.5절)
+            }
             List<ColumnMapping> mappings = columnRepository.findByTable(t.id());
             Map<String, String> vars = new HashMap<>();
             vars.put("connector_name", ConnectorNames.jdbcSink(prefix, t.suffix()));
@@ -589,6 +608,7 @@ public class RegistrationService {
     /** 일시 정지 — 해당 테이블 apply만 멈춘다. 캡처·changelog 축적은 계속(재개 시 캐치업). */
     public void pause(long registeredTableId) {
         RegisteredTable t = find(registeredTableId);
+        rejectIfDw(t, "일시 정지");
         String prefix = connections.get(t.sourceConnectionId()).topicPrefix();
         deploy.pauseConnector(ConnectorNames.jdbcSink(prefix, t.suffix()));
         events.info(t.schemaName(), t.tableName(), "PAUSED",
@@ -597,6 +617,7 @@ public class RegistrationService {
 
     public void resume(long registeredTableId) {
         RegisteredTable t = find(registeredTableId);
+        rejectIfDw(t, "재개");
         String prefix = connections.get(t.sourceConnectionId()).topicPrefix();
         deploy.resumeConnector(ConnectorNames.jdbcSink(prefix, t.suffix()));
         events.info(t.schemaName(), t.tableName(), "RESUMED", "apply 재개 — 밀린 분부터 캐치업");
@@ -616,6 +637,19 @@ public class RegistrationService {
         String prefix = source.topicPrefix();
         columnRepository.deleteByTable(registeredTableId);
         repository.delete(registeredTableId);
+
+        // DW 타깃이면 워커 설정에서 이 테이블을 빼고 재기동(마지막 테이블이면 워커 종료)
+        long removedTarget = table.targetConnectionId();
+        boolean dwTarget = isDw(connections.get(removedTarget));
+        if (dwTarget) {
+            try {
+                dwApply.reconcile(removedTarget);
+            } catch (Exception e) {
+                // 소스 딕셔너리 조회 불가 등 — 등록 해제 자체는 막지 않고 경고로 남긴다(재시작으로 복구)
+                events.record(table.schemaName(), table.tableName(), "DW_APPLY_RECONCILE_FAILED", "WARN",
+                        "DW apply 워커 갱신 실패(" + e.getMessage() + ") — 연결 화면에서 워커를 재시작할 것", null);
+            }
+        }
 
         // 테이블별 sink 제거 (recovery-sink는 있을 때만)
         quietDelete(ConnectorNames.jdbcSink(prefix, table.suffix()));
@@ -702,6 +736,10 @@ public class RegistrationService {
         RegisteredTable t = find(registeredTableId);
         String prefix = connections.get(t.sourceConnectionId()).topicPrefix();
         DbConnection target = connections.get(t.targetConnectionId());
+        if (isDw(target)) {
+            dwApply.reconcile(target.id()); // 컬럼 매핑 변경은 워커 설정 재렌더링으로 반영
+            return;
+        }
         List<ColumnMapping> mappings = columnRepository.findByTable(t.id());
         Map<String, String> vars = new HashMap<>();
         vars.put("connector_name", ConnectorNames.jdbcSink(prefix, t.suffix()));
@@ -738,6 +776,16 @@ public class RegistrationService {
         RegisteredTable t = find(registeredTableId);
         columnRepository.updateEnabled(t.id(), columnName, false);
         redeployJdbcSinkOnly(registeredTableId);
+    }
+
+    private static boolean isDw(DbConnection c) {
+        return DbType.find(c.dbType()).map(DbType::dwTarget).orElse(false);
+    }
+
+    private void rejectIfDw(RegisteredTable t, String action) {
+        if (isDw(connections.get(t.targetConnectionId()))) {
+            throw new IllegalArgumentException("DW 타깃 테이블은 " + action + "을(를) 지원하지 않는다 (apply는 DW apply 워커 — 6.5절)");
+        }
     }
 
     private DbConnection requireRole(long connectionId, String role) {

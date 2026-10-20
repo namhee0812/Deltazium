@@ -53,7 +53,7 @@ fi
 
 # ── 규칙 2: 데이터 경로는 기성 커넥터만. 커스텀 Kafka Connect 커넥터 금지 ──
 hits=$(grep -rnE 'extends +(SourceConnector|SinkConnector|SourceTask|SinkTask)\b' \
-    backend/src recovery-job/src --include='*.java' 2>/dev/null)
+    backend/src recovery-job/src dw-apply/src --include='*.java' 2>/dev/null)
 if [[ -n "$hits" ]]; then
     violation "커스텀 Kafka Connect 커넥터 작성" "$hits" \
         "자체 코드는 backend·recovery-job·ui 세 곳뿐 (CLAUDE.md 절대 규칙)"
@@ -68,12 +68,22 @@ fi
 hits=$(grep -rnE \
     '\.(getField|get|path)\("(scn|txId|commit_scn|lsn)"\)|"source\.(scn|txId|commit_scn|lsn)"' \
     recovery-job/src/main \
+    dw-apply/src/main \
     backend/src/main/java/io/deltazium/backend/recovery \
     backend/src/main/java/io/deltazium/backend/iceberg \
     --include='*.java' 2>/dev/null | grep -v 'rule-check-allow: source-position-reference')
 if [[ -n "$hits" ]]; then
     violation "changelog 하류가 소스 전용 위치 필드를 읽는다" "$hits" \
         "재생·필터·정렬은 _pos(partition/offset)만 쓴다 — source.scn은 장기 트랜잭션에서 커밋 순서와 어긋남 (architecture.md 5.1절 설계 불변식 2, 6.2절). 필요하면 그 줄에 'rule-check-allow: source-position-reference' 주석과 사유를 남길 것"
+fi
+
+# ── 규칙 3.6: DW apply 워커는 Iceberg를 읽지 않는다 (architecture.md 6.5절) ──
+# dw-apply는 규칙 1(SQL apply 금지)의 예외 모듈이다 — 타깃 DW에 MERGE하는 것이 이 모듈의 일이고
+# 그 근거가 6.5절(2026-09-10)이다. 대신 Kafka만 소비한다는 경계를 여기서 강제한다.
+hits=$(grep -rnE 'import +org\.apache\.iceberg|org\.apache\.iceberg' dw-apply/src/main --include='*.java' 2>/dev/null)
+if [[ -n "$hits" ]]; then
+    violation "dw-apply가 Iceberg를 참조한다" "$hits" \
+        "DW apply 워커는 Kafka만 소비한다 — Iceberg·복구 원본은 recovery-job 경로 (architecture.md 6.5절)"
 fi
 
 # ── 규칙 3: Spark/Trino 도입 금지 (architecture.md 5.3절) ──
@@ -111,7 +121,7 @@ if [[ -n "$schema_touched" ]]; then
 fi
 
 # ── 데이터 정합 경로 변경 여부 (리뷰 게이트 판단용) ──
-INTEGRITY_PATHS='^recovery-job/|^connectors/|/iceberg/|/recovery/|/registration/'
+INTEGRITY_PATHS='^recovery-job/|^dw-apply/|^connectors/|/iceberg/|/recovery/|/registration/'
 integrity_touched=$(printf '%s\n' "$changed" | grep -E "$INTEGRITY_PATHS" || true)
 
 # ── 변경 규모 ──

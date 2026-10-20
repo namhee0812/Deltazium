@@ -54,6 +54,14 @@ import io.deltazium.backend.registry.DbType;
  * |                          | DECIMAL(65,30)(MySQL/SingleStore 정밀도 상한)을 명시했다. 근거:
  * |                          | docs/internals.md "타깃 테이블 생성 옵션 — 타입 매핑" 절.
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks 타깃 지원. (1) mapType(ADD COLUMN 초안)에 DATABRICKS 분기,
+ * |                          | draftDdl은 ADD만 `ALTER TABLE .. ADD COLUMNS (..)`로 만들고 DROP이
+ * |                          | 섞이면 초안 없음(null — 컬럼 매핑 모드 전제라 보류, 기존 폴백 경로).
+ * |                          | (2) mapNativeType에 Oracle→DATABRICKS·PostgreSQL→DATABRICKS(정밀도가
+ * |                          | 원문에 있으면 DECIMAL(p,s), 없으면 DECIMAL(38,10)). (3) draftCreateTable에
+ * |                          | 카탈로그 인자를 받는 오버로드 추가 — Databricks는 3-part 이름과
+ * |                          | `NOT NULL` PK 컬럼 + CONSTRAINT PRIMARY KEY 형태.
+ * --------------------------------------------------
  */
 public final class SchemaFingerprint {
 
@@ -231,6 +239,16 @@ public final class SchemaFingerprint {
         if (addCols.isEmpty() && dropCols.isEmpty()) {
             return null;
         }
+        if (type == DbType.DATABRICKS) {
+            // DROP COLUMN은 컬럼 매핑 모드(delta.columnMapping.mode) 전제라 초안을 만들지 않는다 —
+            // 호출측이 기존 폴백(초안 없음 + 경고)으로 처리. ADD만 있을 때만 초안.
+            if (!dropCols.isEmpty()) {
+                return null;
+            }
+            return "ALTER TABLE %s ADD COLUMNS (%s)".formatted(
+                    type.quoteIdentifier(targetSchema) + "." + type.quoteIdentifier(targetTable),
+                    String.join(", ", addCols));
+        }
         String qualified = type.quoteIdentifier(targetSchema) + "." + type.quoteIdentifier(targetTable);
         if (oracle) {
             List<String> clauses = new ArrayList<>();
@@ -298,6 +316,19 @@ public final class SchemaFingerprint {
                 case "io.debezium.time.Date" -> "DATE";
                 case "io.debezium.time.Timestamp", "io.debezium.time.MicroTimestamp",
                      "io.debezium.time.ZonedTimestamp" -> "DATETIME(6)";
+                default -> null;
+            };
+            case DATABRICKS -> switch (base) {
+                case "int8", "int16", "int32" -> "INT";
+                case "int64" -> "BIGINT";
+                case "float32" -> "FLOAT";
+                case "float64" -> "DOUBLE";
+                case "boolean" -> "BOOLEAN";
+                case "string" -> "STRING";
+                case "bytes" -> "BINARY";
+                case "io.debezium.time.Date" -> "DATE";
+                case "io.debezium.time.Timestamp", "io.debezium.time.MicroTimestamp",
+                     "io.debezium.time.ZonedTimestamp" -> "TIMESTAMP";
                 default -> null;
             };
             default -> switch (base) { // PostgreSQL(그 외 비Oracle) — 기존 동작 그대로
@@ -389,7 +420,70 @@ public final class SchemaFingerprint {
                 default -> null;
             };
         }
-        return null; // Oracle·PostgreSQL·SingleStore 외 조합은 미지원(8절 지원 DB 범위)
+        if (targetType == DbType.DATABRICKS && (sourceType == DbType.ORACLE || sourceType == DbType.POSTGRESQL)) {
+            return mapNativeToDatabricks(sourceType, sourceColumnType);
+        }
+        return null; // Oracle·PostgreSQL·SingleStore·Databricks 외 조합은 미지원(8절 지원 DB 범위)
+    }
+
+    /**
+     * Oracle·PostgreSQL 네이티브 타입 → Databricks 타입. 원문에 정밀도가 붙어 있으면
+     * ("NUMBER(10,2)") 그대로 DECIMAL(p,s)로, 없으면(현재 딕셔너리는 타입 이름만 준다)
+     * DECIMAL(38,10). Databricks DECIMAL 상한은 38자리다.
+     */
+    private static String mapNativeToDatabricks(DbType sourceType, String sourceColumnType) {
+        String raw = sourceColumnType == null ? "" : sourceColumnType.trim().toUpperCase(Locale.ROOT);
+        String args = null;
+        int open = raw.indexOf('(');
+        int close = raw.indexOf(')');
+        if (open >= 0 && close > open) {
+            args = raw.substring(open + 1, close).replace(" ", "");
+        }
+        String base = (open >= 0 && close > open ? raw.substring(0, open) + raw.substring(close + 1) : raw)
+                .trim().replaceAll("\\s+", " ");
+        if (sourceType == DbType.ORACLE) {
+            return switch (base) {
+                case "NUMBER" -> decimal(args, "38,10");
+                case "INTEGER", "INT", "SMALLINT" -> "DECIMAL(38,0)";
+                case "FLOAT", "BINARY_DOUBLE" -> "DOUBLE";
+                case "BINARY_FLOAT" -> "FLOAT";
+                case "VARCHAR2", "NVARCHAR2", "CHAR", "NCHAR", "CLOB", "NCLOB" -> "STRING";
+                case "DATE", "TIMESTAMP", "TIMESTAMP WITH TIME ZONE", "TIMESTAMP WITH LOCAL TIME ZONE" -> "TIMESTAMP";
+                case "RAW", "LONG RAW", "BLOB" -> "BINARY";
+                default -> null;
+            };
+        }
+        return switch (base) { // PostgreSQL
+            case "SMALLINT", "INTEGER" -> "INT";
+            case "BIGINT" -> "BIGINT";
+            case "NUMERIC", "DECIMAL" -> decimal(args, "38,10");
+            case "REAL" -> "FLOAT";
+            case "DOUBLE PRECISION" -> "DOUBLE";
+            case "TEXT", "CHARACTER VARYING", "VARCHAR", "CHARACTER", "CHAR", "UUID", "JSON", "JSONB" -> "STRING";
+            case "BOOLEAN" -> "BOOLEAN";
+            case "DATE" -> "DATE";
+            case "TIMESTAMP", "TIMESTAMP WITHOUT TIME ZONE", "TIMESTAMP WITH TIME ZONE", "TIMESTAMPTZ" -> "TIMESTAMP";
+            case "BYTEA" -> "BINARY";
+            default -> null;
+        };
+    }
+
+    /** args = "p" | "p,s" | null. p는 38로 상한, 형식이 이상하면 기본값. */
+    private static String decimal(String args, String dflt) {
+        if (args == null || args.isEmpty() || args.startsWith("*")) {
+            return "DECIMAL(" + dflt + ")";
+        }
+        try {
+            String[] ps = args.split(",");
+            int p = Math.min(38, Integer.parseInt(ps[0]));
+            int s = ps.length > 1 ? Integer.parseInt(ps[1]) : 0;
+            if (s < 0) { // Oracle은 음수 scale을 허용 — DECIMAL로는 표현 불가, 정수로 취급
+                s = 0;
+            }
+            return "DECIMAL(" + p + "," + Math.min(s, p) + ")";
+        } catch (NumberFormatException e) {
+            return "DECIMAL(" + dflt + ")";
+        }
     }
 
     /**
@@ -404,6 +498,19 @@ public final class SchemaFingerprint {
      */
     public static String draftCreateTable(DbType sourceType, DbType targetType, String targetSchema,
                                           String targetTable, List<TableColumn> sourceColumns) {
+        return draftCreateTable(sourceType, targetType, null, targetSchema, targetTable, sourceColumns);
+    }
+
+    /**
+     * 카탈로그를 받는 오버로드 — Databricks(Unity Catalog)는 `cat`.`sch`.`tbl` 3-part 이름이
+     * 필요하다. 다른 DB는 targetCatalog를 무시한다. Databricks 형태:
+     * CREATE TABLE `cat`.`sch`.`tbl` (`col` TYPE NOT NULL, ..., CONSTRAINT `pk_tbl` PRIMARY KEY (`id`))
+     * — UC의 PRIMARY KEY 제약은 NOT NULL 컬럼에만 걸 수 있어 PK 컬럼에 NOT NULL을 붙인다.
+     * 컬럼명은 UC가 소문자로 저장하므로 소문자로 쓴다.
+     */
+    public static String draftCreateTable(DbType sourceType, DbType targetType, String targetCatalog,
+                                          String targetSchema, String targetTable,
+                                          List<TableColumn> sourceColumns) {
         boolean oracle = targetType == DbType.ORACLE;
         List<String> colDefs = new ArrayList<>();
         List<String> pkCols = new ArrayList<>();
@@ -414,8 +521,10 @@ public final class SchemaFingerprint {
                 unsupported.add(c.name() + "(" + c.dataType() + ")");
                 continue;
             }
-            String col = oracle ? c.name().toUpperCase(Locale.ROOT) : c.name();
-            colDefs.add("%s %s".formatted(targetType.quoteIdentifier(col), mapped));
+            String col = oracle ? c.name().toUpperCase(Locale.ROOT)
+                    : targetType == DbType.DATABRICKS ? c.name().toLowerCase(Locale.ROOT) : c.name();
+            colDefs.add("%s %s%s".formatted(targetType.quoteIdentifier(col), mapped,
+                    targetType == DbType.DATABRICKS && c.pk() ? " NOT NULL" : ""));
             if (c.pk()) {
                 pkCols.add(targetType.quoteIdentifier(col));
             }
@@ -426,6 +535,15 @@ public final class SchemaFingerprint {
         }
         if (pkCols.isEmpty()) {
             throw new IllegalArgumentException("PK 컬럼이 없어 생성 초안을 만들 수 없다 (등록 규칙상 PK 필수)");
+        }
+        if (targetType == DbType.DATABRICKS) {
+            if (targetCatalog == null || targetCatalog.isBlank()) {
+                throw new IllegalArgumentException("Databricks 생성 초안에는 catalog가 필요하다");
+            }
+            String q = targetType.quoteIdentifier(targetCatalog) + "." + targetType.quoteIdentifier(targetSchema)
+                    + "." + targetType.quoteIdentifier(targetTable);
+            return "CREATE TABLE %s (%s, CONSTRAINT %s PRIMARY KEY (%s))".formatted(q, String.join(", ", colDefs),
+                    targetType.quoteIdentifier("pk_" + targetTable), String.join(", ", pkCols));
         }
         String qualified = targetType.quoteIdentifier(targetSchema) + "." + targetType.quoteIdentifier(targetTable);
         return "CREATE TABLE %s (%s, PRIMARY KEY (%s))"

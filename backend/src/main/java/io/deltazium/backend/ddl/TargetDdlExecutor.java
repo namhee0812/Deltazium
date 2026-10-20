@@ -6,6 +6,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
 
+import io.deltazium.backend.registry.DatabricksSupport;
 import io.deltazium.backend.registry.DbConnection;
 import io.deltazium.backend.registry.DbType;
 import org.springframework.stereotype.Component;
@@ -28,18 +29,27 @@ import org.springframework.stereotype.Component;
  * |                          | 기존 PostgreSQL 타깃은 이 파일에 분기가 없었다(Oracle 전용 속성을
  * |                          | 무해하게 무시하는 상태 그대로 유지, 이번 범위 밖의 별건 결함)
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | Databricks 타깃 분기 — UID/PWD Properties(DatabricksSupport, 토큰
+ * |                          | 폴백 포함)
+ * --------------------------------------------------
  */
 @Component
 public class TargetDdlExecutor {
 
     public void execute(DbConnection target, String ddl) {
-        Properties props = new Properties();
-        props.setProperty("user", target.username());
-        props.setProperty("password", target.password());
-        if (DbType.find(target.dbType()).orElse(DbType.ORACLE) == DbType.SINGLESTORE) {
+        DbType type = DbType.find(target.dbType()).orElse(DbType.ORACLE);
+        Properties props;
+        if (type == DbType.DATABRICKS) {
+            props = DatabricksSupport.props(target);
+        } else {
+            props = new Properties();
+            props.setProperty("user", target.username());
+            props.setProperty("password", target.password());
+        }
+        if (type == DbType.SINGLESTORE) {
             props.setProperty("connectTimeout", "5000");
             props.setProperty("socketTimeout", "5000");
-        } else {
+        } else if (type != DbType.DATABRICKS) {
             props.setProperty("oracle.net.CONNECT_TIMEOUT", "5000");
         }
         try (Connection conn = DriverManager.getConnection(target.jdbcUrl(), props);

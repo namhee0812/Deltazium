@@ -47,6 +47,8 @@ import static org.mockito.Mockito.when;
  * 26. 09. 27.       | 최남희  | SnapshotNotificationPoller가 소스별(topicPrefix별) 상태로 바뀌며
  * |                          | notifications.status() 스텁을 status("dz")로 수정
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | DW 타깃 재스냅샷 거부 테스트
+ * --------------------------------------------------
  */
 class ResnapshotOrchestratorTest {
 
@@ -181,5 +183,15 @@ class ResnapshotOrchestratorTest {
         assertThatThrownBy(() -> orchestrator.start("NO_DATA", true))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("INITIAL");
+    }
+
+    @Test
+    void DW_타깃이_있으면_재스냅샷을_거부한다() {
+        when(connections.get(20L)).thenReturn(new DbConnection(20L, "dbx", "DATABRICKS", "TARGET", "h", 443,
+                "workspace", "token", "t", null, "/p", "default.v"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> orchestrator.start("INITIAL", false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("재스냅샷을 지원하지 않는다");
     }
 }

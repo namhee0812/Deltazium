@@ -12,6 +12,7 @@ import io.deltazium.backend.registration.RegisteredTable;
 import io.deltazium.backend.registration.RegisteredTableRepository;
 import io.deltazium.backend.registration.RegistrationService;
 import io.deltazium.backend.registry.DbConnectionService;
+import io.deltazium.backend.registry.DbType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -49,6 +50,10 @@ import org.springframework.stereotype.Service;
  * |                          | COLUMN을 인식해 RegistrationService의 컬럼 매핑·재배포로
  * |                          | field.include.list에서 뺀 뒤 재개, 인식 못 하면 재배포 없이
  * |                          | 재개만 한다
+ * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | DW 타깃(Databricks)은 jdbc-sink 커넥터가 없으므로 DDL 승인·건너뛰기·자동 적용·거부에서
+ * |                          | sink 재개/정지(Connect 호출)를 하지 않는다(resumeSink/pauseSink). DW DDL 전파 자체는
+ * |                          | 범위 밖 — 승인은 타깃 DDL 실행까지만
  * --------------------------------------------------
  */
 @Service
@@ -130,8 +135,7 @@ public class DdlEventService {
                     eventId, reason);
             return;
         }
-        String prefix = connections.get(registered.sourceConnectionId()).topicPrefix();
-        connect.resumeAfterDdl(ConnectorNames.jdbcSink(prefix, registered.suffix()));
+        resumeSink(registered);
         String note = "DDL 자동 적용 완료: " + firstLine(ddl);
         repository.decide(eventId, "AUTO_APPLIED", note);
         events.info(registered.schemaName(), registered.tableName(), "DDL_AUTO_APPLIED", note);
@@ -151,8 +155,7 @@ public class DdlEventService {
         boolean fingerprintOrigin = "FINGERPRINT".equals(event.origin());
         String ddl = fingerprintOrigin ? event.ddlText() : rewriteForTarget(event.ddlText(), registered);
         executor.execute(connections.get(registered.targetConnectionId()), ddl);
-        String prefix = connections.get(registered.sourceConnectionId()).topicPrefix();
-        connect.resumeAfterDdl(ConnectorNames.jdbcSink(prefix, registered.suffix()));
+        resumeSink(registered);
         String note = fingerprintOrigin ? "타깃에 DDL 적용 완료(스키마 지문 초안)"
                 : ddl.equals(event.ddlText())
                 ? "타깃에 DDL 적용 완료"
@@ -169,9 +172,14 @@ public class DdlEventService {
         RegisteredTable registered = requireRegistered(event);
         String prefix = connections.get(registered.sourceConnectionId()).topicPrefix();
         String connector = ConnectorNames.jdbcSink(prefix, registered.suffix());
-        connect.pause(connector);
-        repository.decide(id, "REJECTED",
-                "apply 정지 — " + connector + " pause. changelog는 계속 축적됨");
+        if (isDwTarget(registered)) {
+            // DW 타깃은 정지할 sink 커넥터가 없다 — 거부 기록만 남긴다(워커는 계속 적재)
+            repository.decide(id, "REJECTED", "DW 타깃 — 거부 기록만(워커 적재는 계속, 타깃 DDL 미적용)");
+        } else {
+            connect.pause(connector);
+            repository.decide(id, "REJECTED",
+                    "apply 정지 — " + connector + " pause. changelog는 계속 축적됨");
+        }
         events.record(registered.schemaName(), registered.tableName(), "DDL_REJECTED", "WARN",
                 "DDL 거부 — apply 정지: " + firstLine(event.ddlText()), null);
         return repository.findById(id).orElseThrow();
@@ -187,11 +195,24 @@ public class DdlEventService {
         DdlEvent event = pending(id);
         RegisteredTable registered = requireRegistered(event);
         String note = applySkipMapping(event, registered);
-        String prefix = connections.get(registered.sourceConnectionId()).topicPrefix();
-        connect.resumeAfterDdl(ConnectorNames.jdbcSink(prefix, registered.suffix()));
+        resumeSink(registered);
         repository.decide(id, "SKIPPED", note);
         events.info(registered.schemaName(), registered.tableName(), "DDL_SKIPPED", note);
         return repository.findById(id).orElseThrow();
+    }
+
+    private boolean isDwTarget(RegisteredTable registered) {
+        return DbType.find(connections.get(registered.targetConnectionId()).dbType())
+                .map(DbType::dwTarget).orElse(false);
+    }
+
+    /** DDL 처리 후 해당 테이블의 apply 재개 — DW 타깃은 sink 커넥터가 없어 건너뛴다. */
+    private void resumeSink(RegisteredTable registered) {
+        if (isDwTarget(registered)) {
+            return;
+        }
+        String prefix = connections.get(registered.sourceConnectionId()).topicPrefix();
+        connect.resumeAfterDdl(ConnectorNames.jdbcSink(prefix, registered.suffix()));
     }
 
     private String applySkipMapping(DdlEvent event, RegisteredTable registered) {

@@ -35,6 +35,8 @@ import org.springframework.http.MediaType;
  * 26. 09. 28.       | 최남희  | SingleStore(타깃 전용) 추가로 지원 목록이 3종이 됨 —
  * |                          | sourceCapable 필드 검증 추가
  * --------------------------------------------------
+ * 26. 10. 19.       | 최남희  | db-types에 DATABRICKS(타깃 전용) 추가 반영 — 목록 길이 4
+ * --------------------------------------------------
  */
 @WebMvcTest(DbConnectionController.class)
 class DbConnectionControllerTest {
@@ -60,7 +62,7 @@ class DbConnectionControllerTest {
     void db_types는_지원_목록만_내려준다() throws Exception {
         mvc.perform(get("/api/connections/db-types"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(3))
+                .andExpect(jsonPath("$.length()").value(4))
                 .andExpect(jsonPath("$[0].code").value("ORACLE"))
                 .andExpect(jsonPath("$[0].label").value("Oracle"))
                 .andExpect(jsonPath("$[0].sourceCapable").value(true))
@@ -69,7 +71,9 @@ class DbConnectionControllerTest {
                 .andExpect(jsonPath("$[1].sourceCapable").value(true))
                 .andExpect(jsonPath("$[2].code").value("SINGLESTORE"))
                 .andExpect(jsonPath("$[2].label").value("SingleStore"))
-                .andExpect(jsonPath("$[2].sourceCapable").value(false));
+                .andExpect(jsonPath("$[2].sourceCapable").value(false))
+                .andExpect(jsonPath("$[3].code").value("DATABRICKS"))
+                .andExpect(jsonPath("$[3].sourceCapable").value(false));
     }
 
     @Test
