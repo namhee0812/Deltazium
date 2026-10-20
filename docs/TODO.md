@@ -235,9 +235,11 @@
       `DwApplyService`·`/api/dw-apply`, lag 그룹, 타입 매핑·CREATE 초안), UI 연결 폼·워커 배지, rule-check,
       단위 테스트. 설계 변경: 스테이징 테이블·COPY INTO 대신 `read_files` 직접 MERGE, 기본 배치 10초
       (internals.md "④ Databricks 타깃"). **남은 것**: Snowflake 어댑터, 워커의 복구 토픽 구독(DW
-      복구·6.4 DW 리허설), 랜딩만 옵션, DW 사전 점검 확장, DDL 전파, binary 컬럼, **라이브 스모크 미실시**
-      (Databricks 쪽 동작은 공식 문서 기준 — 계정 준비 후 internals.md의 미검증 지점부터 확인),
+      복구·6.4 DW 리허설), 랜딩만 옵션, DW 사전 점검 확장, DDL 전파, binary 컬럼,
       architecture.md 6.5절 개정(메인 세션).
+    - **라이브 스모크(2026-10-20) 통과**: 실계정(Serverless Small)에서 연결·위자드 등록, 라운드 2회
+      Oracle 행 단위 일치, offset 리셋 전체 재적용으로 멱등 증명, 미검증 목록 전부 확인
+      (internals.md "라이브 스모크 결과").
 - [x] **DDL 반영 정책·건너뛰기·타깃 테이블 생성** (2026-09-27, feature/ddl-policy — architecture.md 7·8절)
       테이블별 `ddl_policy` 확인 후(기본)/자동, DDL 이력 [적용 후 재개]/[건너뛰고 재개](sink
       `field.include.list` 재배포, changelog는 무손실)/[정지 유지], 자동 실패·초안 없음은 확인 후로

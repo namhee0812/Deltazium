@@ -173,6 +173,17 @@ CREATE VOLUME IF NOT EXISTS <catalog>.<schema>.<volume>;
 internals.md "④ Databricks 타깃" 절. 워커 런처는 `./gradlew build`(또는 `:dw-apply:installDist`)가
 만든다 — 빌드 후 backend를 재기동해야 새 런처를 쓴다.
 
+**offset 리셋으로 전체 재적용 (멱등 리허설).** 타깃에 같은 changelog를 다시 흘려도 행 집합이
+같음을 확인하는 절차(2026-10-20 라이브 실측: 22레코드 재적용, 결과 동일). 타깃 데이터는 지우지 않는다.
+
+```bash
+pkill -f dw-apply   # 워커 정지 (해당 타깃 워커만 지정할 것)
+kafka-consumer-groups.sh --bootstrap-server <broker> --group dz-dw-apply-<타깃id> --reset-offsets --to-earliest --all-topics --execute
+# 30초 뒤 backend 감시가 워커를 자동 재기동 → 전체 재적용
+```
+
+완료 후 `GET /api/dw-apply`의 skip 카운터가 0인지, 타깃 행 수가 Oracle과 같은지 확인.
+
 ## 운영 시나리오
 
 ### 테이블 정지/재개

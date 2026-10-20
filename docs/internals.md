@@ -1021,9 +1021,8 @@ lag가 줄지 않을 뿐 예외가 나지 않아 30분 타임아웃까지 `DONE`
 ## ④ Databricks 타깃 — DW apply 워커 (2026-10-19, feature/databricks-target)
 
 architecture.md 6.5절의 구현 판단. 코드: `dw-apply/`(플레인 Java 워커), backend `dwapply/`
-(`DwApplyService` 프로세스 관리). 라이브 Databricks 스모크는 아직 하지 않았다 — 아래 내용 중
-Databricks 쪽 동작(read_files 옵션·information_schema·Files API 응답)은 공식 문서 기준이며
-실계정 검증 전이다.
+(`DwApplyService` 프로세스 관리). 2026-10-20 실계정 라이브 스모크 완료(하단 "라이브 스모크
+결과") — Serverless Small warehouse(auto-stop 10분), 세션 TZ UTC, catalog `workspace`.
 
 **read_files 직접 MERGE를 택한 이유.** 설계 초안(6.5절)은 "스테이징 테이블 + COPY INTO + MERGE"였다.
 UC Volume의 JSONL을 `read_files(...)`로 MERGE `USING` 서브쿼리에서 직접 읽으면 스테이징 테이블
@@ -1097,10 +1096,33 @@ backend 기동 시 호출. 감시: 비정상 종료 30초 후 재기동(연속 �
 딕셔너리의 PK를 컬럼 매핑으로 타깃 컬럼명에 옮겨 만든다. lag = consumer group
 `dz-dw-apply-<targetId>` vs 토픽 end offset (`KafkaMetricsService.jdbcLagGroup`).
 
-**Databricks 쪽 미검증 지점(라이브 스모크에서 확인).** read_files `schema`/`schemaEvolutionMode`
-옵션 철자, information_schema의 `key_column_usage` 조인(PK 조회), Files API 디렉터리 목록 응답
-형식(`contents[].path/is_directory`)과 페이지네이션, JDBC `EnableArrow=0`·`socketTimeout` 속성 지원,
-OSS 드라이버의 `--add-opens=java.base/java.nio=ALL-UNNAMED` 필요 여부.
+**라이브 스모크 결과 (2026-10-20).** 연결은 UI 다이얼로그, 테이블은 CDC 등록 위자드(6단계)로
+등록해 둘 다 통과. 연결 테스트 결과 "Databricks 3.3.3 · Volume dz_test.dz_staging 쓰기 확인".
+타깃 3개(Oracle CDC.DBX_ORDERS/ITEMS/EVENTS → workspace.dz_test.dbx_*)를 "소스 스키마로 새로
+생성"으로 만들었고 복합 PK(dbx_events: event_id, seq)도 포함.
+
+- **이전 미검증 항목 전부 확인됨**: `read_files`의 `schema`·`schemaEvolutionMode`·
+  `timestampFormat`(6자리 소수 `SSSSSS` 수용, 마이크로초 `.000001`·`.310684` 보존)·`dateFormat`,
+  information_schema.columns `full_data_type`, Files API PUT/DELETE/디렉터리 목록(응답
+  `contents[].path/is_directory`, 없는 디렉터리는 404), JDBC OSS 3.3.3 접속, PAT 인증.
+- **JDBC 속성**: `EnableArrow=0`은 3.3.x에서 효과 없음(드라이버 로그 "EnableArrow=0 is deprecated and
+  ignored. Arrow serialization is always enabled"). 무해. JSON inline 결과를 원하면
+  `EnableQueryResultDownload=0`. `--add-opens`는 3.3.1+가 JDK16+ Arrow를 지원해 불필요.
+- **정합**: 라운드 1(insert 3·update 2 → 8레코드), 라운드 2(delete 2 · 같은 PK insert→update→delete ·
+  미스냅샷 행 update · 복합 PK delete → 10레코드) 모두 Oracle과 행 단위 일치. 같은 PK 다중 op는
+  배치 안에서 마지막 1건으로 접힌다. 타깃에 없던 행의 `u`는 NOT MATCHED → INSERT로 수렴(after 전체
+  이미지 덕분). TZ 타임스탬프 `14:00:00.25 +09:00` → `05:00:00.250000`(UTC).
+- **멱등 증명**: 워커 정지 → consumer group `dz-dw-apply-20` offset을 earliest로 리셋 → 자동 재기동으로
+  22레코드(tombstone 4 제외 18행) 전체 재적용 → 행 집합 동일(3·2·1행), skip 0.
+- **배치 소요**: 콜드스타트 포함 첫 배치 17.6초(MERGE 12.1초), warm 9.3초·8.8초(테이블 3개 병렬,
+  테이블당 MERGE 3.4~3.7초). 10초 창 기준 체감 지연 약 20초. Volume 파일은 커밋 후 삭제돼 디렉터리가
+  비어 있음을 확인.
+- **발견·수정**: (a) SIGTERM 시 JVM이 main을 기다리지 않아 `consumer.close()`가 불리지 않고 죽은
+  멤버가 session.timeout(45초)까지 그룹에 남음 → 종료 훅이 main.join(15초)으로 기다리게 수정, 수정
+  후 SIGTERM 1초 내 그룹 Empty. (b) 기동 중인 CDC 소스에 테이블을 추가하면 initial 스냅샷이 없어 시드
+  행이 안 넘어옴 — 기존 제약(incremental snapshot 예정), DW와 무관.
+- **남은 제약**: Oracle NUMBER 정밀도 정보 없음(DECIMAL(38,10)), 복구 토픽 미구독, 재스냅샷·
+  pause/resume 거부, DDL 자동 전파 없음, binary 미검증.
 
 ## 개발 환경 특이사항
 

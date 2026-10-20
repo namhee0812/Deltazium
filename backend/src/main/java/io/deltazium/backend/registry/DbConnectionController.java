@@ -32,6 +32,9 @@ import org.springframework.web.bind.annotation.RestController;
  * 26. 09. 28.       | 최남희  | db-types 응답에 sourceCapable 추가(SingleStore 타깃 전용 —
  * |                          | UI가 role=SOURCE 선택 시 목록에서 걸러낸다, architecture.md 8절)
  * --------------------------------------------------
+ * 26. 10. 20.       | 최남희  | db-types 응답에 dwTarget 추가(위자드 요약이 DW 타깃이면 JDBC sink 대신
+ * |                          | DW apply 워커로 표기)
+ * --------------------------------------------------
  */
 @RestController
 @RequestMapping("/api/connections")
@@ -54,7 +57,8 @@ public class DbConnectionController {
     public List<Map<String, Object>> dbTypes() {
         return DbType.supportedTypes().stream()
                 .map(t -> Map.<String, Object>of(
-                        "code", t.name(), "label", t.label(), "sourceCapable", t.sourceCapable()))
+                        "code", t.name(), "label", t.label(), "sourceCapable", t.sourceCapable(),
+                        "dwTarget", t.dwTarget()))
                 .toList();
     }
 

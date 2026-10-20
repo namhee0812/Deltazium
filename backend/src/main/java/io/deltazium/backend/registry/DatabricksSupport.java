@@ -10,8 +10,9 @@ import java.util.function.Function;
  * 설명 : Databricks 타깃 접속 공용 헬퍼 — 토큰 해석(연결의 password, 비어 있으면 backend 환경변수
  * DZ_DATABRICKS_TOKEN 폴백)과 JDBC Properties 조립을 한 곳에서 한다. 연결 테스트·워커 기동·
  * 딕셔너리 조회·DDL 실행이 모두 이 메서드를 거쳐야 토큰 해석 규칙이 갈라지지 않는다.
- * Arrow 결과 포맷은 끈다(EnableArrow=0) — 결과가 작은 문장만 쓰고, JDK 모듈 접근 옵션
- * (--add-opens)을 backend JVM에 요구하지 않기 위함.
+ * EnableArrow=0은 3.3.x에서 효과 없음(드라이버가 "deprecated and ignored, Arrow always enabled"
+ * 로그) — 무해해서 둔다. JSON inline 결과를 원하면 EnableQueryResultDownload=0.
+ * --add-opens는 3.3.1+가 JDK16+ Arrow를 지원해 불필요(라이브 실측).
  *
  * <p>
  * 수정 내역
@@ -19,6 +20,8 @@ import java.util.function.Function;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 10. 19.       | 최남희  | 최초 생성
+ * --------------------------------------------------
+ * 26. 10. 20.       | 최남희  | EnableArrow 속성 제거·주석 정정(라이브 실측: 3.3.x에서 효과 없음)
  * --------------------------------------------------
  */
 public final class DatabricksSupport {
@@ -54,7 +57,6 @@ public final class DatabricksSupport {
         Properties p = new Properties();
         p.setProperty("UID", "token");
         p.setProperty("PWD", token);
-        p.setProperty("EnableArrow", "0");
         return p;
     }
 

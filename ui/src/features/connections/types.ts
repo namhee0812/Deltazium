@@ -18,6 +18,8 @@
  * --------------------------------------------------
  * 26. 10. 19.       | 최남희  | DwApplyInfo.status에 skippedRecords 추가
  * --------------------------------------------------
+ * 26. 10. 20.       | 최남희  | DbTypeOption에 dwTarget 추가
+ * --------------------------------------------------
  */
 export interface DbConnection {
   id: number | null
@@ -55,6 +57,8 @@ export interface DbTypeOption {
   label: string
   /** false면 SOURCE 역할로 선택할 수 없다(예: SingleStore — 타깃 전용, architecture.md 8절). */
   sourceCapable: boolean
+  /** true면 JDBC sink가 아니라 DW apply 워커가 적재하는 타깃(Databricks 등). */
+  dwTarget?: boolean
 }
 
 export interface TestResult {

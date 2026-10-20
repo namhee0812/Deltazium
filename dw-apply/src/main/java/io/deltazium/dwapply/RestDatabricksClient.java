@@ -38,6 +38,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * --------------------------------------------------
  * 26. 10. 19.       | 최남희  | 최초 생성
  * --------------------------------------------------
+ * 26. 10. 20.       | 최남희  | EnableArrow 주석 정정(라이브 실측)
+ * --------------------------------------------------
  */
 public final class RestDatabricksClient implements DatabricksClient {
 
@@ -55,7 +57,8 @@ public final class RestDatabricksClient implements DatabricksClient {
         this.host = host;
         this.catalog = catalog;
         this.token = token;
-        // EnableArrow=0: Arrow 결과 포맷 회피(JDK 모듈 접근 문제 예방). 결과가 작은 문장만 쓴다.
+        // EnableArrow=0은 3.3.x에서 효과 없음(Arrow 항상 사용, --add-opens 불필요). JSON inline을 원하면
+        // EnableQueryResultDownload=0. 무해하므로 유지.
         this.jdbcUrl = "jdbc:databricks://%s:443;httpPath=%s;AuthMech=3;UID=token;EnableArrow=0"
                 .formatted(host, httpPath);
     }

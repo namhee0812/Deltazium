@@ -26,10 +26,12 @@
  * |                          | API로 CREATE TABLE 초안 확인 → 등록 시 createTarget으로 전송,
  * |                          | architecture.md 7·8절)
  * --------------------------------------------------
+ * 26. 10. 20.       | 최남희  | 배포 요약 커넥터 표기 — DW 타깃이면 JDBC sink 대신 DW apply 워커
+ * --------------------------------------------------
  */
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
-import type { DbConnection } from '@/features/connections/types'
+import type { DbConnection, DbTypeOption } from '@/features/connections/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -110,6 +112,7 @@ export function RegistrationWizard({
   const [connections, setConnections] = useState<DbConnection[]>([])
   const [sourceId, setSourceId] = useState<number | null>(null)
   const [targetId, setTargetId] = useState<number | null>(null)
+  const [dwTypes, setDwTypes] = useState<string[]>([])
 
   const [pattern, setPattern] = useState('')
   const [candidates, setCandidates] = useState<SourceTableInfo[] | null>(null)
@@ -146,6 +149,9 @@ export function RegistrationWizard({
     setDdlPolicy('MANUAL')
     setError(null)
     api<DbConnection[]>('/api/connections').then(setConnections).catch(() => setConnections([]))
+    api<DbTypeOption[]>('/api/connections/db-types')
+      .then((t) => setDwTypes(t.filter((x) => x.dwTarget).map((x) => x.code)))
+      .catch(() => setDwTypes([]))
     api<unknown[]>('/api/registrations')
       .then((r) => setExistingCount(r.length))
       .catch(() => setExistingCount(0))
@@ -393,6 +399,8 @@ export function RegistrationWizard({
   // topicPrefix는 비워두면 backend가 이름 슬러그로 채운다 — 저장 전엔 정확한 값을 모르므로
   // 미리보기 라벨로만 쓴다("<자동>" 표기, 실제 값은 배포 완료 후 연결 카드에서 확인).
   const sourcePrefixLabel = connections.find((c) => c.id === sourceId)?.topicPrefix ?? '<자동>'
+  const targetDbType = connections.find((c) => c.id === targetId)?.dbType
+  const targetIsDw = targetDbType != null && dwTypes.includes(targetDbType)
   const sourceDbType = connections.find((c) => c.id === sourceId)?.dbType
   const sourceUser = connections.find((c) => c.id === sourceId)?.username ?? '<캡처계정>'
   // GRANT 문법은 DB 종류별로 다르다 — 점검 항목 렌더링은 범용이지만 실행 가능한 스크립트는
@@ -900,7 +908,10 @@ export function RegistrationWizard({
                   {connections.find((c) => c.id === targetId)?.name}
                 </div>
                 <div className="text-muted-foreground">
-                  커넥터: dz-source-{sourcePrefixLabel} · 테이블별 dz-jdbc-sink-{sourcePrefixLabel}-*
+                  커넥터: dz-source-{sourcePrefixLabel} ·{' '}
+                  {targetIsDw
+                    ? `DW apply 워커(dz-dw-apply-${targetId})`
+                    : `테이블별 dz-jdbc-sink-${sourcePrefixLabel}-*`}{' '}
                   · dz-iceberg-{sourcePrefixLabel}(changelog)
                 </div>
               </div>
