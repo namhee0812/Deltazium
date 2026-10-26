@@ -917,8 +917,9 @@ ack 판정을 함께 끝내고, `warnings()`는 그 `ackedInfoIds`로만 필터�
 SVG `<path>`로 인라인 렌더 — 외부 요청 없음, Vite/Rollup이 사용한 아이콘만 트리셰이킹).
 
 - **simple-icons에 Oracle 글리프가 없다** — 상표 요청으로 제거된 것으로 보인다
-  (2026-09-23 확인: `siOracle` export 없음, `siPostgresql`은 있음). ORACLE은 텍스트만
-  유지하고, PostgreSQL만 아이콘이 붙는다.
+  (2026-09-23 확인: `siOracle` export 없음, `siPostgresql`은 있음). Oracle은 자체 링
+  글리프(단순 기하 도형, 상표 아님, 2026-10-26)를 쓴다. 색은 단색이며 빨간색으로 바꾸려면
+  `DbVendorLogo.tsx` 파일 상단 주석 참고.
 - 색은 브랜드 컬러가 아니라 텍스트와 같은 단색(`var(--ink-2)`) — 다크/라이트 양쪽에서
   읽혀야 하고 상태 점(`--ok`/`--warn`/`--crit`) 색과 헷갈리면 안 되기 때문.
 - `DbVendorLogo`의 `<svg>`는 중첩 가능하게 만들어 `TopologySvg`(부모가 이미 `<svg>`)
