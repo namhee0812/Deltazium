@@ -11,10 +11,12 @@
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 08. 13.       | 최남희  | 최초 생성
+ * 26. 10. 26.       | 최남희  | 요청에 roomId, room 이벤트 추가(대화방 이어 하기)
  * --------------------------------------------------
  */
 
 export type ChatEvent =
+  | { type: 'room'; roomId: number }
   | { type: 'tool'; name: string; input?: unknown }
   | { type: 'answer'; text: string }
   | { type: 'error'; message: string }
@@ -22,13 +24,14 @@ export type ChatEvent =
 
 export async function streamChat(
   question: string,
+  roomId: number | null,
   onEvent: (ev: ChatEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, roomId }),
     signal,
   })
 

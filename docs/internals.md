@@ -437,13 +437,25 @@ total≠running인데 이유가 안 보이는 응답이 되고, 멈춤 유형 �
 
 ## AI 진단 어시스턴트 Claude 연동 (chat 패키지)
 
-`POST /api/chat` (body `{"question":"..."}`, 응답 `text/event-stream`). assist 패키지의
+`POST /api/chat` (body `{"roomId":N|null,"question":"..."}`, 응답 `text/event-stream`). assist 패키지의
 GetOverview·SearchLogs를 Claude API tool use로 묶어 대화형 진단을 만든다. **backend가
 도구를 실행한다** — Claude가 우리 API를 직접 호출하는 게 아니라, backend가 Claude API를
 호출하고(질문 전달) Claude가 tool_use로 돌려준 요청을 backend가 같은 프로세스의
 OverviewService·LogSearchService로 직접 실행해(HTTP 왕복 없음) 결과를 다시 Claude에
 넘기는 왕복을 반복한다. Java SDK의 `BetaToolRunner`가 이 왕복을 자동화한다
 (`client.beta().messages().toolRunner(params)`).
+
+**대화방·이력 정책 (2026-10-26).** 대화는 PG `chat_room`/`chat_message`에 저장하고(`chat_settings`에
+보관 일수 1행), `roomId`로 이어 간다. roomId가 없거나 없는 id면 서버가 새 방을 만들고 첫 SSE
+이벤트 `room {roomId}`로 알린다. 모델에는 그 방의 **최근 20턴(user+assistant 최대 40건)의 텍스트만**
+보낸다 — tool_use/tool_result는 저장도 재전송도 하지 않는다. 도구 결과(GetOverview·SearchLogs
+출력)가 입력 토큰의 대부분이라 이력에 실으면 턴이 쌓일수록 매 질문 비용이 커지고, 상태는 시시각각
+바뀌어 옛 도구 결과는 오히려 낡은 근거가 된다 — 필요하면 모델이 도구를 다시 부른다. 같은 role이
+연속되면(답변 실패로 assistant가 빠진 턴) 앞 메시지를 버려 교대를 보장한다(`ChatService.buildMessages`,
+단위 테스트). 기존 top-level `cacheControl`(prefix 캐시)은 그대로라 시스템 프롬프트·도구 정의는 계속
+캐시 읽기 대상이고, 이력은 대화가 이어질수록 앞부분이 안정적인 prefix가 된다. 오류 답변은 저장하지
+않는다. 보관 정리: `ChatRoomCleaner`가 기동 시 1회 + 1시간마다 `last_active_at`이 보관 일수(기본 3,
+허용 1·3·7·30)보다 오래된 방을 삭제(메시지 cascade). **인증이 없어 방은 전역 공유**다.
 
 **도구는 읽기 전용 2종뿐 — 조치 실행 도구는 의도적으로 없다.** GetOverviewTool·
 SearchLogsTool 모두 assist 패키지 서비스를 호출만 한다. 시스템 프롬프트가 "조치는

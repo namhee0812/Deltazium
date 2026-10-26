@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.deltazium.backend.chat.ChatRoomRepository">
+
+    <resultMap id="chatRoom" type="io.deltazium.backend.chat.ChatRoom">
+        <constructor>
+            <idArg column="id" javaType="_long"/>
+            <arg column="title" javaType="String"/>
+            <arg column="created_at" javaType="java.time.OffsetDateTime"/>
+            <arg column="last_active_at" javaType="java.time.OffsetDateTime"/>
+            <arg column="message_count" javaType="_int"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="chatMessage" type="io.deltazium.backend.chat.ChatMessage">
+        <constructor>
+            <arg column="role" javaType="String"/>
+            <arg column="content" javaType="String"/>
+            <arg column="created_at" javaType="java.time.OffsetDateTime"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insertRoom" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO chat_room (title) VALUES (#{title})
+    </insert>
+
+    <select id="existsRoom" resultType="boolean">
+        SELECT COUNT(*) > 0 FROM chat_room WHERE id = #{id}
+    </select>
+
+    <select id="findRooms" resultMap="chatRoom">
+        SELECT r.id, r.title, r.created_at, r.last_active_at,
+               (SELECT COUNT(*) FROM chat_message m WHERE m.room_id = r.id) AS message_count
+          FROM chat_room r
+         ORDER BY r.last_active_at DESC, r.id DESC
+    </select>
+
+    <update id="setTitleIfNull">
+        UPDATE chat_room SET title = #{title} WHERE id = #{id} AND title IS NULL
+    </update>
+
+    <update id="touchRoom">
+        UPDATE chat_room SET last_active_at = CURRENT_TIMESTAMP WHERE id = #{id}
+    </update>
+
+    <delete id="deleteRoom">
+        DELETE FROM chat_room WHERE id = #{id}
+    </delete>
+
+    <insert id="insertMessage">
+        INSERT INTO chat_message (room_id, role, content) VALUES (#{roomId}, #{role}, #{content})
+    </insert>
+
+    <select id="findMessages" resultMap="chatMessage">
+        SELECT role, content, created_at FROM chat_message WHERE room_id = #{roomId} ORDER BY id
+    </select>
+
+    <select id="findRecentMessages" resultMap="chatMessage">
+        SELECT role, content, created_at FROM (
+            SELECT id, role, content, created_at FROM chat_message
+             WHERE room_id = #{roomId} ORDER BY id DESC LIMIT #{limit}
+        ) recent ORDER BY id
+    </select>
+
+    <select id="retentionDays" resultType="int">
+        SELECT retention_days FROM chat_settings WHERE id = 1
+    </select>
+
+    <update id="updateRetentionDays">
+        UPDATE chat_settings SET retention_days = #{days} WHERE id = 1
+    </update>
+
+    <delete id="deleteInactiveBefore">
+        DELETE FROM chat_room WHERE last_active_at &lt; #{cutoff}
+    </delete>
+
+</mapper>

@@ -1,7 +1,9 @@
 package io.deltazium.backend.chat;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -57,6 +59,7 @@ import io.deltazium.backend.assist.OverviewService;
  * 26. 08. 13.       | 최남희  | prompt caching 적용, 모델 설정화(deltazium.chat.model), 왕복별 usage 로깅
  * 26. 08. 20.       | 최남희  | 시스템 프롬프트에 복구 레인 지식 추가 — recovery-job을 외부 시스템으로 오판한 답변의 재발 방지
  * 26. 09. 23.       | 최남희  | 401(UnauthorizedException)은 raw JSON 대신 키 갱신 조치 문구로 — 만료 키로 "Claude 호출 실패"만 떠 원인을 못 찾던 것
+ * 26. 10. 26.       | 최남희  | 대화방 저장·이어 하기: 질문/답변 텍스트 저장, 최근 20턴 텍스트 이력을 messages로 전달(buildMessages), room 이벤트
  * --------------------------------------------------
  */
 @Service
@@ -96,13 +99,18 @@ public class ChatService {
 
             답변 스타일: 한국어로, 결론부터, 간결하게 답하라.""";
 
+    /** 모델에 보내는 이력 상한 — 20턴(user+assistant 40건). 텍스트만, 도구 호출/결과는 제외(docs/internals.md). */
+    static final int HISTORY_TURNS = 20;
+    private static final int TITLE_MAX = 40;
+
     private final ObjectMapper objectMapper;
+    private final ChatRoomRepository roomRepository;
     private final ExecutorService executor;
     private final String model;
     private volatile AnthropicClient client;
 
     public ChatService(OverviewService overviewService, LogSearchService logSearchService,
-                       ObjectMapper objectMapper,
+                       ObjectMapper objectMapper, ChatRoomRepository roomRepository,
                        @Value("${deltazium.chat.model:claude-sonnet-5}") String model) {
         this.model = model;
         // 도구 클래스는 Jackson이 기본 생성자로 생성해 생성자 주입이 불가능하다 —
@@ -111,6 +119,7 @@ public class ChatService {
         ToolBeans.logSearchService = logSearchService;
         ToolBeans.objectMapper = objectMapper;
         this.objectMapper = objectMapper;
+        this.roomRepository = roomRepository;
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
     }
 
@@ -120,11 +129,42 @@ public class ChatService {
     }
 
     /** 질문 처리를 전용 executor 스레드로 넘긴다 — 호출자(컨트롤러)는 즉시 emitter를 반환한다. */
-    public void streamAnswer(String question, SseEmitter emitter) {
-        executor.execute(() -> run(question, emitter));
+    public void streamAnswer(Long roomId, String question, SseEmitter emitter) {
+        executor.execute(() -> run(roomId, question, emitter));
     }
 
-    private void run(String question, SseEmitter emitter) {
+    /**
+     * 모델에 보낼 messages(텍스트만) 조립 — 순수 함수.
+     * history(시간순)에서 최근 {@link #HISTORY_TURNS}턴(40건)만 취하고, user/assistant 교대를 보장한 뒤
+     * 이번 질문을 user로 붙인다. 같은 role이 연속되면(답변 실패로 assistant가 빠진 턴) 앞의 메시지를 버리고,
+     * 맨 앞이 assistant면 버린다(Messages API는 user로 시작해야 한다).
+     */
+    static List<ChatMessage> buildMessages(List<ChatMessage> history, String question) {
+        int from = Math.max(0, history.size() - HISTORY_TURNS * 2);
+        List<ChatMessage> out = new ArrayList<>();
+        for (ChatMessage m : history.subList(from, history.size())) {
+            if (!out.isEmpty() && out.get(out.size() - 1).role().equals(m.role())) {
+                out.remove(out.size() - 1);
+            }
+            out.add(m);
+        }
+        while (!out.isEmpty() && !"user".equals(out.get(0).role())) {
+            out.remove(0);
+        }
+        if (!out.isEmpty() && "user".equals(out.get(out.size() - 1).role())) {
+            out.remove(out.size() - 1);
+        }
+        out.add(new ChatMessage("user", question, null));
+        return out;
+    }
+
+    /** 방 제목 — 질문 앞 40자, 줄바꿈은 공백으로. */
+    static String titleOf(String question) {
+        String t = question.replaceAll("\\s*[\\r\\n]+\\s*", " ").strip();
+        return t.length() > TITLE_MAX ? t.substring(0, TITLE_MAX) : t;
+    }
+
+    private void run(Long requestedRoomId, String question, SseEmitter emitter) {
         try {
             AnthropicClient anthropicClient = client();
             if (anthropicClient == null) {
@@ -132,6 +172,15 @@ public class ChatService {
                         "ANTHROPIC_API_KEY 미설정 — ~/deltazium-runtime/conf/secrets.env 참고"));
                 return;
             }
+
+            long roomId = requestedRoomId != null && roomRepository.existsRoom(requestedRoomId)
+                    ? requestedRoomId : roomRepository.createRoom(null);
+            emitEvent(emitter, "room", Map.of("roomId", roomId));
+            // 이력은 이번 질문을 저장하기 전에 읽는다
+            List<ChatMessage> history = roomRepository.findRecentMessages(roomId, HISTORY_TURNS * 2);
+            roomRepository.insertMessage(roomId, "user", question);
+            roomRepository.setTitleIfNull(roomId, titleOf(question));
+            roomRepository.touchRoom(roomId);
 
             MessageCreateParams.Builder builder = MessageCreateParams.builder()
                     .model(model)
@@ -142,8 +191,14 @@ public class ChatService {
                     .cacheControl(BetaCacheControlEphemeral.builder().build())
                     .system(SYSTEM_PROMPT)
                     .addTool(GetOverviewTool.class)
-                    .addTool(SearchLogsTool.class)
-                    .addUserMessage(question);
+                    .addTool(SearchLogsTool.class);
+            for (ChatMessage m : buildMessages(history, question)) {
+                if ("assistant".equals(m.role())) {
+                    builder.addAssistantMessage(m.content());
+                } else {
+                    builder.addUserMessage(m.content());
+                }
+            }
             // server-side fallback은 Opus/Fable 계열 전용 — 다른 모델에 붙이면 400
             if (model.startsWith("claude-opus") || model.startsWith("claude-fable")) {
                 builder.addBeta(AnthropicBeta.SERVER_SIDE_FALLBACK_2026_07_01).fallbacksDefault();
@@ -167,7 +222,10 @@ public class ChatService {
             } else if (lastMessage.stopReason().filter(BetaStopReason.REFUSAL::equals).isPresent()) {
                 emitEvent(emitter, "error", Map.of("message", "안전 분류기가 요청을 거절했다"));
             } else {
-                emitEvent(emitter, "answer", Map.of("text", extractText(lastMessage)));
+                String answer = extractText(lastMessage);
+                roomRepository.insertMessage(roomId, "assistant", answer);
+                roomRepository.touchRoom(roomId);
+                emitEvent(emitter, "answer", Map.of("text", answer));
             }
         } catch (Exception e) {
             log.warn("chat 처리 실패", e);

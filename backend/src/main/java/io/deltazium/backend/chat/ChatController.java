@@ -16,8 +16,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  * 작성일자 : 26. 08. 12.
  * 작성자 : 최남희
  * 설명 : AI 진단 어시스턴트 대화 API. POST /api/chat — SSE(text/event-stream)로 진행 상황과
- * 답변을 흘린다. 이 POST는 상태를 바꾸지 않는다(DB·파일 쓰기 없음) — Claude 호출과
- * 읽기 전용 도구 실행뿐이다.
+ * 답변을 흘린다. 대화방(chat_room)에 질문·답변 텍스트를 저장하는 것 외에는 Claude 호출과
+ * 읽기 전용 도구 실행뿐이다(대화방 CRUD는 ChatRoomController).
  *
  * <p>
  * 수정 내역
@@ -25,6 +25,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 08. 12.       | 최남희  | 최초 생성
+ * 26. 10. 26.       | 최남희  | roomId 전달(streamAnswer 시그니처 변경), "쓰기 없음" 설명 정정
  * --------------------------------------------------
  */
 @RestController
@@ -45,7 +46,7 @@ public class ChatController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "question이 비어 있다");
         }
         SseEmitter emitter = new SseEmitter(EMITTER_TIMEOUT_MS);
-        chatService.streamAnswer(request.question(), emitter);
+        chatService.streamAnswer(request.roomId(), request.question(), emitter);
         return emitter;
     }
 }
