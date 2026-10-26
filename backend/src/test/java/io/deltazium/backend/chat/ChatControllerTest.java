@@ -24,6 +24,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 08. 12.       | 최남희  | 최초 생성
+ * 26. 10. 26.       | 최남희  | ChatRequest.roomId 반영
  * --------------------------------------------------
  */
 class ChatControllerTest {
@@ -33,7 +34,7 @@ class ChatControllerTest {
         ChatService chatService = mock(ChatService.class);
         ChatController controller = new ChatController(chatService);
 
-        assertThatThrownBy(() -> controller.chat(new ChatRequest("   ")))
+        assertThatThrownBy(() -> controller.chat(new ChatRequest(null, "   ")))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("400");
 
@@ -45,7 +46,7 @@ class ChatControllerTest {
         ChatService chatService = mock(ChatService.class);
         ChatController controller = new ChatController(chatService);
 
-        assertThatThrownBy(() -> controller.chat(new ChatRequest(null)))
+        assertThatThrownBy(() -> controller.chat(new ChatRequest(null, null)))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("400");
 
@@ -57,10 +58,10 @@ class ChatControllerTest {
         ChatService chatService = mock(ChatService.class);
         ChatController controller = new ChatController(chatService);
 
-        SseEmitter emitter = controller.chat(new ChatRequest("왜 멈췄어?"));
+        SseEmitter emitter = controller.chat(new ChatRequest(7L, "왜 멈췄어?"));
 
         assertThat(emitter).isNotNull();
-        verify(chatService).streamAnswer(org.mockito.ArgumentMatchers.eq("왜 멈췄어?"),
+        verify(chatService).streamAnswer(org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq("왜 멈췄어?"),
                 org.mockito.ArgumentMatchers.any(SseEmitter.class));
     }
 }

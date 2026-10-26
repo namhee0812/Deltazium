@@ -37,6 +37,7 @@ import static org.mockito.Mockito.verify;
  * --------------------------------------------------
  * 26. 08. 12.       | 최남희  | 최초 생성
  * 26. 08. 13.       | 최남희  | ChatService 생성자 변경(model 파라미터) 반영
+ * 26. 10. 26.       | 최남희  | 생성자에 ChatRoomRepository, streamAnswer에 roomId 반영
  * --------------------------------------------------
  */
 class ChatServiceTest {
@@ -57,11 +58,11 @@ class ChatServiceTest {
         assumeTrue(key == null || key.isBlank(),
                 "ANTHROPIC_API_KEY가 설정된 환경에서는 실제 호출을 피하기 위해 이 테스트를 건너뛴다");
 
-        ChatService service = new ChatService(mock(OverviewService.class), mock(LogSearchService.class), JSON, "claude-sonnet-5");
+        ChatService service = new ChatService(mock(OverviewService.class), mock(LogSearchService.class), JSON, mock(ChatRoomRepository.class), "claude-sonnet-5");
 
         SseEmitter emitter = spy(new SseEmitter());
 
-        service.streamAnswer("왜 CDC가 멈췄어?", emitter);
+        service.streamAnswer(null, "왜 CDC가 멈췄어?", emitter);
 
         // emitter는 실제 HTTP 요청 컨텍스트 밖이라 onCompletion 콜백이 안 걸린다 —
         // complete() 호출 자체를 폴링으로 기다린다(전용 executor 스레드에서 비동기 처리).

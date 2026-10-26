@@ -4,7 +4,7 @@ package io.deltazium.backend.chat;
  * 파일명 : ChatRequest.java
  * 작성일자 : 26. 08. 12.
  * 작성자 : 최남희
- * 설명 : POST /api/chat 요청 바디. question 하나뿐 — 상태를 바꾸지 않는 조회성 API다.
+ * 설명 : POST /api/chat 요청 바디. roomId가 없거나 존재하지 않으면 서버가 새 방을 만든다.
  *
  * <p>
  * 수정 내역
@@ -12,9 +12,11 @@ package io.deltazium.backend.chat;
  * 수정일자      | 수정자   | 수정내역
  * --------------------------------------------------
  * 26. 08. 12.       | 최남희  | 최초 생성
+ * 26. 10. 26.       | 최남희  | roomId 추가(대화방 이어 하기)
  * --------------------------------------------------
  *
+ * @param roomId   이어 갈 대화방. null이거나 없는 id면 새 방.
  * @param question 사용자 질문. 공백이면 컨트롤러가 400으로 거부한다.
  */
-public record ChatRequest(String question) {
+public record ChatRequest(Long roomId, String question) {
 }

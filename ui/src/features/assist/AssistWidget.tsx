@@ -3,8 +3,8 @@
  * 작성일자 : 26. 08. 14.
  * 작성자 : 최남희
  * 설명 : AI 진단 채팅 — 우하단 플로팅 위젯(FAB + 패널 440/720px, 마스크 없음·비차단). 질문을
- * /api/chat(SSE)로 보내고 도구 진행 상황·최종 답변을 표시한다. 대화 히스토리는 화면
- * 표시용일 뿐 서버에는 매번 단일 질문만 보낸다(서버는 턴마다 독립 — ChatService 참고).
+ * /api/chat(SSE)로 보내고 도구 진행 상황·최종 답변을 표시한다. 대화는 서버의 대화방
+ * (chat_room)에 저장되고 roomId로 이어 간다 — 이력 정책은 ChatService·docs/internals.md 참고.
  * App.tsx 최상위에 탭 조건부 밖에서 항상 마운트되므로(열림 상태는 App이 소유해 prop으로
  * 내려받고, 닫힘 시에도 이 컴포넌트 자체는 계속 마운트돼 있다), 열림/닫힘·폭 확장은
  * 표시 토글일 뿐 대화 상태(및 진행 중인 스트리밍)는 drawer를 닫아도 유지된다.
@@ -31,13 +31,19 @@
  * 26. 10. 26.       | 최남희  | 최소화 상태에서 answer/error가 도착하면 FAB 우상단에 미읽음 숫자
  * |                          | 배지(9+ 캡), 패널을 열면 리셋. 답변 대기 중 최소화면 FAB 은은한 pulse
  * --------------------------------------------------
+ * 26. 10. 26.       | 최남희  | 대화방 저장·이어 하기: 목록/채팅 뷰, 새 대화, 설정 팝오버(보관 주기·글자 크기),
+ * |                          | 전송에 roomId. 서버가 최근 20턴 텍스트 이력을 모델에 전달하므로 안내 문구 정정
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Maximize2, MessageCircle, Minimize2, Minus } from 'lucide-react'
+import { ArrowLeft, Loader2, Maximize2, MessageCircle, Minimize2, Minus, Plus } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
 import { streamChat } from '@/lib/sse'
+import { api } from '@/lib/api'
+import { AssistRoomList, type ChatRoomInfo } from './AssistRoomList'
+import { AssistSettings, FONT_CLASS, type FontSize } from './AssistSettings'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -98,23 +104,23 @@ const markdownComponents: Components = {
   td: (p) => <td className="px-2 py-1 align-middle" {...p} />,
 }
 
-function MessageBubble({ msg }: { msg: Message }) {
+function MessageBubble({ msg, fontClass }: { msg: Message; fontClass: string }) {
   if (msg.role === 'user') {
     return (
-      <div className="justify-self-end max-w-[85%] rounded-xl bg-accent px-3.5 py-2.5 text-sm text-accent-foreground whitespace-pre-wrap">
+      <div className={`justify-self-end max-w-[85%] rounded-xl bg-accent px-3.5 py-2.5 ${fontClass} text-accent-foreground whitespace-pre-wrap`}>
         {msg.text}
       </div>
     )
   }
   if (msg.role === 'error') {
     return (
-      <div className="justify-self-start max-w-[85%] rounded-xl border border-crit/30 bg-crit/10 px-3.5 py-2.5 text-sm text-crit">
+      <div className={`justify-self-start max-w-[85%] rounded-xl border border-crit/30 bg-crit/10 px-3.5 py-2.5 ${fontClass} text-crit`}>
         {msg.text}
       </div>
     )
   }
   return (
-    <div className="justify-self-start max-w-[85%] rounded-xl bg-card px-3.5 py-2.5 text-sm">
+    <div className={`justify-self-start max-w-[85%] rounded-xl bg-card px-3.5 py-2.5 ${fontClass}`}>
       {msg.tools && msg.tools.length > 0 && (
         <div className="mb-1.5 font-mono text-[10.5px] text-muted-foreground">
           {msg.tools.join(' · ')}
@@ -160,6 +166,91 @@ function savePos(p: WidgetPos) {
 export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
   const [expanded, setExpanded] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
+  const [view, setView] = useState<'list' | 'chat'>('chat')
+  const [rooms, setRooms] = useState<ChatRoomInfo[]>([])
+  const [roomId, setRoomId] = useState<number | null>(null)
+  // 스트리밍 콜백은 옛 클로저를 보므로 현재 보고 있는 방을 ref로 미러링 — 응답 중 다른 방으로 옮겨도 섞이지 않게
+  const roomIdRef = useRef<number | null>(null)
+  const viewRef = useRef<'list' | 'chat'>('chat')
+  roomIdRef.current = roomId
+  viewRef.current = view
+  const [font, setFont] = useState<FontSize>(() => {
+    try {
+      const v = localStorage.getItem('dz.assist.font')
+      if (v === 'sm' || v === 'md' || v === 'lg') return v
+    } catch { /* 무시 */ }
+    return 'md'
+  })
+  const changeFont = (f: FontSize) => {
+    setFont(f)
+    try { localStorage.setItem('dz.assist.font', f) } catch { /* 무시 */ }
+  }
+  const initialized = useRef(false)
+
+  const refreshRooms = useCallback(() => api<ChatRoomInfo[]>('/api/chat/rooms').then((r) => { setRooms(r); return r }), [])
+
+  const openRoom = useCallback((id: number) => {
+    setRoomId(id)
+    roomIdRef.current = id
+    setMessages([])
+    setView('chat')
+    api<{ role: 'user' | 'assistant'; content: string }[]>(`/api/chat/rooms/${id}/messages`)
+      .then((ms) => {
+        if (roomIdRef.current === id) setMessages(ms.map((m) => ({ role: m.role, text: m.content })))
+      })
+      .catch((e: Error) => setMessages([{ role: 'error', text: e.message }]))
+  }, [])
+
+  const blankChat = () => {
+    setRoomId(null)
+    roomIdRef.current = null
+    setMessages([])
+    setView('chat')
+  }
+
+  // 처음 열릴 때 한 번: 0개면 빈 채팅, 1개면 그 방, 2개 이상이면 목록. 이후 열고 닫기는 표시 토글일 뿐.
+  useEffect(() => {
+    if (!open || initialized.current) return
+    initialized.current = true
+    refreshRooms()
+      .then((r) => {
+        if (r.length === 0) blankChat()
+        else if (r.length === 1) openRoom(r[0].id)
+        else setView('list')
+      })
+      .catch(() => blankChat())
+  }, [open, refreshRooms, openRoom])
+
+  const newRoom = () => {
+    if (roomId === null && messages.length === 0 && view === 'chat') return
+    api<{ id: number }>('/api/chat/rooms', { method: 'POST' })
+      .then((r) => {
+        setRoomId(r.id)
+        roomIdRef.current = r.id
+        setMessages([])
+        setView('chat')
+        refreshRooms().catch(() => {})
+      })
+      .catch(() => {})
+  }
+
+  const deleteRoom = (id: number) => {
+    api(`/api/chat/rooms/${id}`, { method: 'DELETE' })
+      .then(() => refreshRooms())
+      .then((r) => {
+        if (id === roomIdRef.current) {
+          setRoomId(null)
+          roomIdRef.current = null
+          setMessages([])
+          setView(r.length === 0 ? 'chat' : 'list')
+        } else if (r.length === 0) {
+          blankChat()
+        }
+      })
+      .catch(() => {})
+  }
+
+  const goList = () => { refreshRooms().catch(() => {}); setView('list') }
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
@@ -186,20 +277,29 @@ export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
 
     const toolsUsed: string[] = []
 
-    streamChat(question, (ev) => {
-      if (ev.type === 'tool') {
+    // 이 질문이 속한 방 — room 이벤트로 확정된다. 사용자가 다른 방으로 옮겼으면 화면에는 붙이지 않는다
+    // (서버에는 이미 저장돼 그 방을 열면 보인다).
+    let streamRoom: number | null = roomIdRef.current
+    const here = () => viewRef.current === 'chat' && roomIdRef.current === streamRoom
+    streamChat(question, roomIdRef.current, (ev) => {
+      if (ev.type === 'room') {
+        streamRoom = ev.roomId
+        setRoomId(ev.roomId)
+        roomIdRef.current = ev.roomId
+      } else if (ev.type === 'tool') {
         const label = describeTool(ev.name, ev.input)
         toolsUsed.push(label)
         setProgress(label)
       } else if (ev.type === 'answer') {
-        setMessages((prev) => [...prev, { role: 'assistant', text: ev.text, tools: [...toolsUsed] }])
+        if (here()) setMessages((prev) => [...prev, { role: 'assistant', text: ev.text, tools: [...toolsUsed] }])
         markUnread()
       } else if (ev.type === 'error') {
-        setMessages((prev) => [...prev, { role: 'error', text: ev.message }])
+        if (here()) setMessages((prev) => [...prev, { role: 'error', text: ev.message }])
         markUnread()
       } else if (ev.type === 'done') {
         setBusy(false)
         setProgress(null)
+        refreshRooms().catch(() => {})
       }
     }).catch((e: Error) => {
       setMessages((prev) => [...prev, { role: 'error', text: e.message }])
@@ -207,7 +307,7 @@ export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
       setBusy(false)
       setProgress(null)
     })
-  }, [input, busy])
+  }, [input, busy, refreshRooms])
 
   // --- 위치: 뷰포트 우하단 기준 offset(px). FAB·패널이 같은 값을 써서 열고 닫아도 자리가 유지된다.
   // 드래그 핸들은 FAB 자체와 패널 헤더. 4px 이상 움직여야 드래그로 보고, 그 미만은 클릭이다.
@@ -297,8 +397,25 @@ export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
         onPointerDown={(e) => startDrag(e, panelRef.current)}
         title="드래그로 이동"
       >
-        <span className="text-[15px] font-semibold">AI 진단</span>
-        <div className="ml-auto flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>
+        {view === 'chat' && rooms.length >= 2 && (
+          <button
+            className="mr-1 text-rail-ink-2 hover:text-rail-ink"
+            onClick={goList}
+            title="목록"
+            aria-label="목록"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <ArrowLeft className="size-4.5" />
+          </button>
+        )}
+        <span className="truncate text-[15px] font-semibold">
+          {view === 'list' ? 'AI 진단' : rooms.find((r) => r.id === roomId)?.title ?? '새 대화'}
+        </span>
+        <div className="ml-auto flex shrink-0 items-center gap-2" onPointerDown={(e) => e.stopPropagation()}>
+          <button className="text-rail-ink-2 hover:text-rail-ink" onClick={newRoom} title="새 대화" aria-label="새 대화">
+            <Plus className="size-4.5" />
+          </button>
+          <AssistSettings font={font} onFont={changeFont} />
           <button
             className="text-rail-ink-2 hover:text-rail-ink"
             onClick={() => setExpanded((v) => !v)}
@@ -313,17 +430,17 @@ export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        {messages.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            CDC 파이프라인 상태에 대해 물어보세요. 지난 대화는 기억하지 않으니 질문마다 필요한
-            맥락을 함께 적어주세요.
-          </p>
+        {view === 'list' && (
+          <AssistRoomList rooms={rooms} onOpen={openRoom} onNew={newRoom} onDelete={deleteRoom} />
+        )}
+        {view === 'chat' && messages.length === 0 && (
+          <p className="text-sm text-muted-foreground">CDC 파이프라인 상태에 대해 물어보세요.</p>
         )}
         {/* [&>*]:min-w-0 — grid item의 min-width:auto가 code block 폭만큼 버블을 밀어내
             drawer 밖으로 넘치는 것 방지 (pre의 overflow-x-auto가 동작하려면 필수) */}
-        <div className="grid gap-3 [&>*]:min-w-0">
+        <div className={`grid gap-3 [&>*]:min-w-0 ${view === 'list' ? 'hidden' : ''}`}>
           {messages.map((m, i) => (
-            <MessageBubble key={i} msg={m} />
+            <MessageBubble key={i} msg={m} fontClass={FONT_CLASS[font]} />
           ))}
           {busy && (
             <div className="justify-self-start flex max-w-[85%] items-center gap-2 rounded-xl bg-card px-3.5 py-2.5 text-sm text-muted-foreground">
@@ -335,7 +452,7 @@ export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
         <div ref={endRef} />
       </div>
 
-      <div className="flex gap-2 border-t border-border bg-surface-2 p-3">
+      {view === 'chat' && <div className="flex gap-2 border-t border-border bg-surface-2 p-3">
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -352,7 +469,7 @@ export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
         <Button onClick={send} disabled={busy || !input.trim()}>
           전송
         </Button>
-      </div>
+      </div>}
     </div>
   )
 }
