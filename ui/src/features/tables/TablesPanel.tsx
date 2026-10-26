@@ -59,6 +59,10 @@
  * 26. 09. 27.       | 최남희  | 상세 drawer 상태 kv에 "DDL 반영"(정책: 자동/확인 후) 표시 추가
  * |                          | (architecture.md 7절 — 정책 변경 UI는 이번 범위 밖)
  * --------------------------------------------------
+ * 26. 10. 26.       | 최남희  | DW 타깃(Databricks) 테이블이 "미배포"로 보이던 결함 수정 — jdbc-sink가
+ * |                          | 없는 타깃은 /api/dw-apply 워커 상태(running·lastError)로 판정.
+ * |                          | DW 행의 정지/재개는 비활성(워커 단위 제어는 연결 화면), 재시도는 워커 재시작
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -86,7 +90,7 @@ import { Input } from '@/components/ui/input'
 import { StatusPill } from '@/components/ui/status-pill'
 import type { StatusPillVariant } from '@/components/ui/status-pill'
 import { api } from '@/lib/api'
-import type { DbConnection } from '@/features/connections/types'
+import type { DbConnection, DwApplyInfo } from '@/features/connections/types'
 import { useSettings } from '@/features/system/useSettings'
 import { causeLine, effectiveState, traceOf } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
@@ -149,6 +153,9 @@ interface Row {
   /** 소스·타깃 커넥션 이름 — /api/connections 조회 전이거나 삭제된 커넥션이면 null */
   sourceName: string | null
   targetName: string | null
+  /** 타깃이 DW(Databricks)면 jdbc-sink 대신 DW apply 워커로 상태를 판정한다 */
+  targetConnectionId: number
+  isDw: boolean
   targetSchema: string
   targetTable: string
   ddlPolicy: string
@@ -184,6 +191,7 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   const [metrics, setMetrics] = useState<TableMetrics[] | null>(null)
   const [connectors, setConnectors] = useState<ConnectorStates>({})
   const [connections, setConnections] = useState<DbConnection[]>([])
+  const [dwApply, setDwApply] = useState<DwApplyInfo[]>([])
   const [changelog, setChangelog] = useState<ChangelogInfo[] | null>(null)
   const [tableEvents, setTableEvents] = useState<TableEvent[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -234,12 +242,23 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     return () => clearInterval(id)
   }, [])
 
+  // DW 타깃(Databricks)은 jdbc-sink가 없다 — 워커 상태를 같은 5초 주기로 가져온다(DW 타깃이 없으면 호출 생략)
+  const hasDwTarget = connections.some((c) => c.dbType === 'DATABRICKS')
+  useEffect(() => {
+    if (!hasDwTarget) { setDwApply([]); return }
+    const poll = () => api<DwApplyInfo[]>('/api/dw-apply').then(setDwApply).catch(() => {})
+    poll()
+    const id = setInterval(poll, 5000)
+    return () => clearInterval(id)
+  }, [hasDwTarget, refreshKey])
+
   const rows = useMemo<Row[] | null>(() => {
     if (registered === null) return null
     // 지표는 토픽(<prefix>.<schema>.<table>)으로 맞춘다 — schema.table만 쓰면 소스가 다른
     // 같은 이름의 테이블이 서로의 지표를 가져간다(다중 소스)
     const byTopic = new Map((metrics ?? []).map((m) => [m.topic, m]))
     const nameOf = new Map(connections.map((c) => [c.id, c.name]))
+    const dwIds = new Set(connections.filter((c) => c.dbType === 'DATABRICKS').map((c) => c.id))
     return registered.map((r) => ({
       id: r.id,
       schemaName: r.schemaName,
@@ -247,6 +266,8 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       sourceTopicPrefix: r.sourceTopicPrefix,
       sourceName: nameOf.get(r.sourceConnectionId) ?? null,
       targetName: nameOf.get(r.targetConnectionId) ?? null,
+      targetConnectionId: r.targetConnectionId,
+      isDw: dwIds.has(r.targetConnectionId),
       targetSchema: r.targetSchemaName || r.schemaName,
       targetTable: r.targetTableName || r.tableName,
       ddlPolicy: r.ddlPolicy,
@@ -287,7 +308,17 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceBroken])
 
+  /** DW 워커 정보 — 없으면 undefined(아직 미조회·미기동) */
+  const dwInfoOf = (m: Row) => (m.isDw ? dwApply.find((d) => d.targetId === m.targetConnectionId) : undefined)
+  const dwError = (d: DwApplyInfo | undefined) => d?.status?.lastError ?? d?.error ?? null
+
   const sinkState = (m: Row) => {
+    if (m.isDw) {
+      const d = dwInfoOf(m)
+      if (!d) return 'N/A'
+      if (!d.running) return 'PAUSED'
+      return dwError(d) ? 'FAILED' : 'RUNNING'
+    }
     const name = jdbcSinkName(m)
     const info = name ? connectors[name] : undefined
     return info ? effectiveState(info) : 'N/A'
@@ -380,7 +411,8 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         const variant: StatusPillVariant = b === 'ok' ? 'ok' : b === 'warn' ? 'warn' : 'stop'
         const label =
           st === 'FAILED' ? '장애' : st === 'PAUSED' ? '정지' : st === 'N/A' ? '미배포' : 'streaming'
-        return <StatusPill variant={variant}>{label}</StatusPill>
+        const tip = row.original.isDw && st === 'FAILED' ? dwError(dwInfoOf(row.original)) ?? undefined : undefined
+        return <span title={tip}><StatusPill variant={variant}>{label}</StatusPill></span>
       },
     }),
     columnHelper.accessor((m) => `${m.schemaName}.${m.tableName}`, {
@@ -662,7 +694,10 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
             row={selected}
             bucket={bucketOf(selected)}
             sinkState={sinkState(selected)}
-            sourceCause={causeLine(jdbcSinkName(selected) ? connectors[jdbcSinkName(selected)!] : undefined)}
+            sourceCause={selected.isDw
+              ? dwError(dwInfoOf(selected))
+              : causeLine(jdbcSinkName(selected) ? connectors[jdbcSinkName(selected)!] : undefined)}
+            isDw={selected.isDw}
             lastCommitAtMs={
               changelog?.find((c) => c.table === `${selected.schemaName}.${selected.tableName}`)
                 ?.lastCommitAtMs ?? null
@@ -676,7 +711,11 @@ export function TablesPanel({ refreshKey = 0 }: { refreshKey?: number }) {
             onResnapshot={() => setResnapDialog('routine')}
             onDelete={() => { setDropChangelog(false); setDeleting(selected) }}
             onRetry={() =>
-              act(() => api(`/api/connectors/${jdbcSinkName(selected)}/restart`, { method: 'POST' }))
+              act(() => api(
+                selected.isDw
+                  ? `/api/dw-apply/${selected.targetConnectionId}/restart`
+                  : `/api/connectors/${jdbcSinkName(selected)}/restart`,
+                { method: 'POST' }))
             }
           />
         )}
@@ -733,6 +772,7 @@ function TableDetailDrawer({
   row,
   bucket,
   sinkState,
+  isDw,
   sourceCause,
   lastCommitAtMs,
   events,
@@ -746,6 +786,8 @@ function TableDetailDrawer({
   row: Row
   bucket: Bucket
   sinkState: string
+  /** DW 타깃 — 정지/재개는 워커 단위라 이 화면에선 비활성 */
+  isDw: boolean
   sourceCause: string | null
   lastCommitAtMs: number | null
   events: TableEvent[]
@@ -799,7 +841,7 @@ function TableDetailDrawer({
             <h4 className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">상태</h4>
           </div>
           <div className="grid grid-cols-[96px_1fr] gap-x-3 gap-y-1.5 px-3.5 py-3 text-[12.5px]">
-            <span className="text-ink-3">JDBC sink</span>
+            <span className="text-ink-3">{isDw ? 'DW apply' : 'JDBC sink'}</span>
             <span className="font-mono text-[12px]">
               {sinkState} · lag {row.metrics ? row.metrics.jdbcLag.toLocaleString() : '—'}건
             </span>
@@ -869,7 +911,7 @@ function TableDetailDrawer({
             재시도
           </GhostButton>
         )}
-        <GhostButton className="h-8.5 px-3.5" disabled={busy || sinkState === 'N/A'} onClick={onPauseResume}>
+        <GhostButton className="h-8.5 px-3.5" disabled={busy || isDw || sinkState === 'N/A'} onClick={onPauseResume}>
           {sinkState === 'PAUSED' ? '재개' : '정지'}
         </GhostButton>
         <GhostButton className="h-8.5 px-3.5" disabled={busy} onClick={onResnapshot}>

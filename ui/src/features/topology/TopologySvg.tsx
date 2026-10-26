@@ -4,8 +4,8 @@
  * 작성자 : 최남희
  * 설명 : 파이프라인 토폴로지 — 자체 SVG (React Flow 대체).
  * 소스·타깃 커넥션 개수만큼 노드를 동적으로 배치한다: 좌측 열 = 소스 커넥션별 노드,
- * 중앙 = Kafka 1개, 우측 상단 열 = 타깃 커넥션별 노드, 우측 하단 = Iceberg/MinIO 1개 +
- * recovery-job(점선, 평시 정지). 직교 라우팅으로 교차를 없앴고, 팬/줌은 라이브러리 없이
+ * 중앙 = Kafka 1개 + 그 아래 Iceberg/MinIO 1개 + recovery-job(점선, 평시 정지),
+ * 우측 열 = 타깃 커넥션별 노드만(Iceberg는 적재 타깃이 아니라 changelog·복구 원본이므로 Kafka 열 소속). 직교 라우팅으로 교차를 없앴고, 팬/줌은 라이브러리 없이
  * <g transform="translate scale">로 직접 구현한다(뷰포트 상태는 이 컴포넌트 로컬).
  *
  * 수정 내역
@@ -30,6 +30,10 @@
  * |                          | 라벨 줄 오른쪽 끝 작은 태그로 — sub가 여전히 잘린다는 지적 반영
  * |                          | (보완2) 노드 안 sub·meta·타입 태그·레인 주석이 흐려 안 보인다는
  * |                          | 지적 — 색을 chart-dim(ink-3)에서 ink-2로, 글자 크기 1px씩 올림
+ * --------------------------------------------------
+ * 26. 10. 26.       | 최남희  | Iceberg/recovery-job을 타깃 열에서 Kafka 열(Kafka 아래)로 이동 —
+ * |                          | 타깃과 동일선상이면 적재 타깃으로 오해됨(architecture.md 2.1). viewBox
+ * |                          | 높이는 세 열 중 최대 기준, Kafka 열 블록은 세로 중앙 정렬
  * --------------------------------------------------
  * 26. 09. 23.       | 최남희  | typeTag 옆에 DB 벤더 글리프(DbVendorLogo, simple-icons) 추가 —
  * |                          | PostgreSQL만 아이콘 있음(simple-icons에 Oracle 미등재), Oracle은
@@ -75,7 +79,7 @@ const NH = 64
 const PAD = 24
 const VGAP = 18 // 같은 열에서 노드 사이 간격
 const COLGAP = 170 // 열과 열 사이 간격(간선이 꺾이는 공간 포함)
-const SECTION_GAP = 40 // 타깃 블록 → Iceberg → recovery 사이 간격
+const SECTION_GAP = 40 // Kafka → Iceberg 사이 간격(레인 라벨 자리)
 
 interface PositionedNode {
   node: TopoNode
@@ -103,21 +107,22 @@ function computeLayout(data: TopoData): Layout {
 
   const leftBlockH = n * NH + (n - 1) * VGAP
   const targetsBlockH = m * NH + (m - 1) * VGAP
-  const rightBlockH = targetsBlockH + SECTION_GAP + NH + SECTION_GAP + NH // 타깃 + iceberg + recovery
+  const kafkaBlockH = NH + SECTION_GAP + NH + VGAP + NH // kafka + iceberg + recovery
 
-  const contentH = Math.max(leftBlockH, rightBlockH, NH)
+  const contentH = Math.max(leftBlockH, targetsBlockH, kafkaBlockH)
   const height = PAD * 2 + contentH
   const width = rightX + NW + PAD
 
   const leftTop = PAD + (contentH - leftBlockH) / 2
   const sources = data.sources.map((node, i) => ({ node, x: sourcesX, y: leftTop + i * (NH + VGAP) }))
 
-  const rightTop = PAD + (contentH - rightBlockH) / 2
+  const rightTop = PAD + (contentH - targetsBlockH) / 2
   const targets = data.targets.map((node, j) => ({ node, x: rightX, y: rightTop + j * (NH + VGAP) }))
-  const icebergY = rightTop + targetsBlockH + SECTION_GAP
-  const recoveryY = icebergY + NH + SECTION_GAP
 
-  const kafkaY = PAD + contentH / 2 - NH / 2
+  // Kafka 열: Kafka + Iceberg + recovery 블록 전체를 세로 중앙 정렬
+  const kafkaY = PAD + (contentH - kafkaBlockH) / 2
+  const icebergY = kafkaY + NH + SECTION_GAP
+  const recoveryY = icebergY + NH + VGAP
 
   return {
     width,
@@ -125,8 +130,8 @@ function computeLayout(data: TopoData): Layout {
     sources,
     kafka: { node: data.kafka, x: kafkaX, y: kafkaY },
     targets,
-    iceberg: { node: data.iceberg, x: rightX, y: icebergY },
-    recovery: { node: data.recovery, x: rightX, y: recoveryY },
+    iceberg: { node: data.iceberg, x: kafkaX, y: icebergY },
+    recovery: { node: data.recovery, x: kafkaX, y: recoveryY },
   }
 }
 
@@ -321,7 +326,7 @@ export function TopologySvg({
   const kafkaR = right(layout.kafka)
   const midX1 = PAD + NW + COLGAP / 2
   const midX2 = layout.kafka.x + NW + COLGAP / 2
-  const midX3 = layout.kafka.x + NW + COLGAP * 0.35
+  const midX3 = layout.kafka.x - 28 // recovery → Kafka 점선이 도는 수직선 (소스 간선 midX1보다 Kafka에 가깝다)
 
   const edges: { d: string; active: boolean; dashed?: boolean }[] = []
   for (const s of layout.sources) {
@@ -330,7 +335,7 @@ export function TopologySvg({
   for (const t of layout.targets) {
     edges.push({ d: ortho([kafkaR, [midX2, kafkaR[1]], [midX2, left(t)[1]], left(t)]), active: t.node.status === 'ok' })
   }
-  edges.push({ d: ortho([kafkaR, [midX2, kafkaR[1]], [midX2, layout.iceberg.y + NH / 2], left(layout.iceberg)]), active: layout.iceberg.node.status === 'ok' })
+  edges.push({ d: ortho([bottom(layout.kafka), top(layout.iceberg)]), active: layout.iceberg.node.status === 'ok' })
 
   return (
     <div className="flex h-full w-full flex-col">
@@ -368,7 +373,7 @@ export function TopologySvg({
           {/* 복구 레인 (평시 점선): Iceberg → recovery-job → Kafka */}
           <EdgePath dashed active={false} d={ortho([bottom(layout.iceberg), top(layout.recovery)])} />
           <EdgePath dashed active={false}
-            d={ortho([left(layout.recovery), [midX3, left(layout.recovery)[1]], [midX3, bottom(layout.kafka)[1]], bottom(layout.kafka)])} />
+            d={ortho([left(layout.recovery), [midX3, left(layout.recovery)[1]], [midX3, layout.kafka.y + NH * 0.75], [layout.kafka.x, layout.kafka.y + NH * 0.75]])} />
 
           {layout.sources.map((p, i) => (
             <Node key={p.node.id} p={p} clipId={`${uid}-src${i}`} onClick={(rect) => handleNodeClick(p.node.id, rect)} />
@@ -384,8 +389,7 @@ export function TopologySvg({
           {layout.targets[0] && (
             <text x={layout.targets[0].x + 2} y={layout.targets[0].y - 8} fontSize="9.5" fill="var(--ink-2)">실 적재 (현재 상태)</text>
           )}
-          <text x={layout.iceberg.x + 2} y={layout.iceberg.y - 8} fontSize="9.5" fill="var(--ink-2)">changelog (복구 원본)</text>
-          <text x={layout.recovery.x + 2} y={layout.recovery.y - 8} fontSize="9.5" fill="var(--ink-2)">복구 재발행 (평시 정지)</text>
+          <text x={layout.iceberg.x + 2} y={layout.iceberg.y - 8} fontSize="9.5" fill="var(--ink-2)">changelog · 복구</text>
         </g>
       </svg>
     </div>

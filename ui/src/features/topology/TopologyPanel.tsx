@@ -64,13 +64,18 @@
  * |                          | 스냅샷이 쏟아내는 대량 이벤트가 장애처럼 보이던 문제(2026-09-23
  * |                          | NH_CDC_TEST_5 lag 430K 실측) 수정. 제외분은 최대 lag 카드 부제에 표기
  * --------------------------------------------------
+ * 26. 10. 26.       | 최남희  | Databricks 타깃 노드가 jdbc-sink 집계로 crit·"jdbc-sink N개"로 보이던 결함 —
+ * |                          | DATABRICKS 타깃은 /api/dw-apply 워커 상태(running·lastError)와
+ * |                          | "dw-apply 워커 · 테이블 N개"로 조립(DATABRICKS 연결 없으면 호출 생략).
+ * |                          | 상단 커넥터 집계는 그대로
+ * --------------------------------------------------
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
 import { api } from '@/lib/api'
 import { causeLine, effectiveState } from '@/lib/connect'
 import type { ConnectorStates } from '@/lib/connect'
-import type { DbConnection } from '@/features/connections/types'
+import type { DbConnection, DwApplyInfo } from '@/features/connections/types'
 import { CHART_SERIES_COLORS, LineChart } from '@/components/LineChart'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { GhostButton } from '@/components/ui/ghost-button'
@@ -208,6 +213,7 @@ export function TopologyPanel({
   const { lagWarnRecords: LAG_WARN } = useSettings()
   const [connectors, setConnectors] = useState<ConnectorStates | null>(null)
   const [connections, setConnections] = useState<DbConnection[]>([])
+  const [dwApply, setDwApply] = useState<DwApplyInfo[]>([])
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
   const [events, setEvents] = useState<Ev[]>([])
   const [registrations, setRegistrations] = useState<Registration[]>([])
@@ -236,6 +242,16 @@ export function TopologyPanel({
     const id = setInterval(load, 5000)
     return () => clearInterval(id)
   }, [])
+
+  // DW 타깃(Databricks)은 jdbc-sink가 없어 워커 상태로 본다 — DATABRICKS 연결이 없으면 호출 생략
+  const hasDwTarget = connections.some((c) => c.dbType === 'DATABRICKS')
+  useEffect(() => {
+    if (!hasDwTarget) { setDwApply([]); return }
+    const poll = () => api<DwApplyInfo[]>('/api/dw-apply').then(setDwApply).catch(() => {})
+    poll()
+    const id = setInterval(poll, 5000)
+    return () => clearInterval(id)
+  }, [hasDwTarget])
 
   // 정보 카드 바깥 클릭·Esc로 닫기
   useEffect(() => {
@@ -314,6 +330,19 @@ export function TopologyPanel({
       ? [{ id: 'target:none', label: 'TGT', sub: '연결 미등록', status: 'none' }]
       : targetConns.map((c) => {
           const regs = regsByTarget.get(c.id!) ?? []
+          if (c.dbType === 'DATABRICKS') {
+            const d = dwApply.find((w) => w.targetId === c.id)
+            const status: NodeStatus = !d || !d.running ? 'none' : (d.status?.lastError ?? d.error) ? 'crit' : 'ok'
+            return {
+              id: `target:${c.id}`,
+              label: c.name,
+              typeTag: c.dbType,
+              sub: `${c.host}:${c.port}/${c.databaseName}`,
+              meta: `dw-apply 워커 · 테이블 ${regs.length}개`,
+              status,
+              clickable: true,
+            }
+          }
           const sinkNames = regs
             .filter((r) => r.sourceTopicPrefix)
             .map((r) => `dz-jdbc-sink-${r.sourceTopicPrefix}-${suffixOf(r.schemaName, r.tableName)}`)
@@ -351,7 +380,7 @@ export function TopologyPanel({
         status: 'none',
       },
     }
-  }, [connectors, connections, registrations, iceAgg])
+  }, [connectors, connections, registrations, iceAgg, dwApply])
 
   const nodeInfo = (id: string): NodeInfo | null => {
     const m = id.match(/^(source|target):(\d+)$/)
@@ -375,6 +404,10 @@ export function TopologyPanel({
     }
 
     const regs = registrations.filter((r) => r.targetConnectionId === connectionId && r.sourceTopicPrefix)
+    if (connection.dbType === 'DATABRICKS') {
+      // jdbc-sink 커넥터가 없다 — 워커 상태는 노드 점과 DB 연결 화면에서 본다
+      return { kind, connection, registeredCount: regs.length, connectors: [] }
+    }
     return {
       kind,
       connection,

@@ -28,6 +28,9 @@
  * |                          | FAB·패널 헤더 드래그로 위치 이동(뷰포트 안으로 클램프, localStorage
  * |                          | 저장) — 플로팅이 테이블 drawer 하단 버튼을 가릴 때 비켜 놓기 위함.
  * --------------------------------------------------
+ * 26. 10. 26.       | 최남희  | 최소화 상태에서 answer/error가 도착하면 FAB 우상단에 미읽음 숫자
+ * |                          | 배지(9+ 캡), 패널을 열면 리셋. 답변 대기 중 최소화면 FAB 은은한 pulse
+ * --------------------------------------------------
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, Maximize2, MessageCircle, Minimize2, Minus } from 'lucide-react'
@@ -161,6 +164,12 @@ export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
+  // 최소화 중 도착한 답변 수 — SSE 콜백 클로저는 옛 open을 보므로 ref로 최신값을 미러링한다
+  const [unread, setUnread] = useState(0)
+  const openRef = useRef(open)
+  openRef.current = open
+  useEffect(() => { if (open) setUnread(0) }, [open])
+  const markUnread = () => { if (!openRef.current) setUnread((n) => n + 1) }
 
   useEffect(() => {
     if (open) endRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -184,14 +193,17 @@ export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
         setProgress(label)
       } else if (ev.type === 'answer') {
         setMessages((prev) => [...prev, { role: 'assistant', text: ev.text, tools: [...toolsUsed] }])
+        markUnread()
       } else if (ev.type === 'error') {
         setMessages((prev) => [...prev, { role: 'error', text: ev.message }])
+        markUnread()
       } else if (ev.type === 'done') {
         setBusy(false)
         setProgress(null)
       }
     }).catch((e: Error) => {
       setMessages((prev) => [...prev, { role: 'error', text: e.message }])
+      markUnread()
       setBusy(false)
       setProgress(null)
     })
@@ -254,12 +266,20 @@ export function AssistWidget({ open, onOpen, onClose }: AssistWidgetProps) {
       <button
         onClick={() => { if (justDragged.current) { justDragged.current = false; return } onOpen() }}
         onPointerDown={(e) => startDrag(e, e.currentTarget)}
-        aria-label="AI 진단 열기"
+        aria-label={unread > 0 ? `AI 진단 열기 — 읽지 않은 답변 ${unread}개` : 'AI 진단 열기'}
         title="AI 진단 (드래그로 이동)"
-        className="fixed z-50 flex size-13 touch-none select-none items-center justify-center rounded-full bg-primary text-white shadow-lg transition-transform hover:scale-105"
+        className={`fixed z-50 flex size-13 touch-none select-none items-center justify-center rounded-full bg-primary text-white shadow-lg transition-transform hover:scale-105 ${busy ? 'animate-pulse' : ''}`}
         style={posStyle}
       >
         <MessageCircle className="size-6" />
+        {unread > 0 && (
+          <span
+            aria-hidden="true"
+            className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-crit px-1 font-mono text-[11px] font-semibold leading-none text-white"
+          >
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
       </button>
     )
   }
